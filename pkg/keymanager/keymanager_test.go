@@ -1,6 +1,9 @@
 package keymanager_test
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,12 +20,15 @@ func TestKeyManager(t *testing.T) {
 
 var _ = Describe("Keymanager", func() {
 	var (
-		//manager *keymanager.Manager
+		manager *keymanager.Manager
+		ctx     context.Context
+		cancel  context.CancelFunc
 		config  keymanager.ManagerConfig
 		tempDir string
 	)
 
 	BeforeEach(func() {
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 		tempDir = GinkgoT().TempDir()
 
 		config = keymanager.ManagerConfig{
@@ -34,12 +40,12 @@ var _ = Describe("Keymanager", func() {
 	})
 
 	AfterEach(func() {
-		/*if cancel != nil {
-		      cancel()
-		  }
-		  if manager != nil && manager.IsRunning() {
-		      manager.Shutdown(ctx)
-		  }*/
+		if cancel != nil {
+			cancel()
+		}
+		if manager != nil && manager.IsRunning() {
+			manager.Shutdown(ctx)
+		}
 	})
 
 	// === TEST DEFAULTS DIRECTLY ===
@@ -144,6 +150,109 @@ var _ = Describe("Keymanager", func() {
 				_, err := keymanager.NewManager(config)
 				Expect(err).To(MatchError(ContainSubstring("overlap duration")))
 			})
+		})
+	})
+
+	// === PHASE 2: Start/Initialization ===
+	Describe("Start", func() {
+		BeforeEach(func() {
+			var err error
+			manager, err = keymanager.NewManager(config)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should start successfully", func() {
+			err := manager.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(manager.IsRunning()).To(BeTrue())
+		})
+
+		It("shoud generate initial key pair on first start", func() {
+			err := manager.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should have at least one key
+			privateKey, keyID, err := manager.GetCurrentSigningKey()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(privateKey).NotTo(BeNil())
+			Expect(keyID).NotTo(BeEmpty())
+		})
+
+		Context("testing defaults are applied", func() {
+			It("should generate key with default size when KeySize is zero", func() {
+				config.KeySize = 0 // Should get default 2048
+				mgr, _ := keymanager.NewManager(config)
+
+				err := mgr.Start(ctx)
+				Expect(err).NotTo(HaveOccurred())
+
+				privateKey, _, _ := mgr.GetCurrentSigningKey()
+				keySize := privateKey.N.BitLen()
+				Expect(keySize).To(Equal(2048)) // Default applied!
+			})
+
+			It("should use custom key size when explicitly provided", func() {
+				config.KeySize = 4096 // Explicit value
+				mgr, _ := keymanager.NewManager(config)
+
+				err := mgr.Start(ctx)
+				Expect(err).NotTo(HaveOccurred())
+
+				privateKey, _, _ := mgr.GetCurrentSigningKey()
+				keySize := privateKey.N.BitLen()
+				Expect(keySize).To(Equal(4096)) // Custom value used!
+			})
+		})
+
+		It("should load existing keys on restart", func() {
+			// First start
+			err := manager.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, originalKeyID, _ := manager.GetCurrentSigningKey()
+
+			// Shutdown
+			manager.Shutdown(ctx)
+
+			// Create new manager with same directory
+			manager2, _ := keymanager.NewManager(config)
+			err = manager2.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should have loaded the same key
+			_, loadedKeyID, _ := manager2.GetCurrentSigningKey()
+			Expect(loadedKeyID).To(Equal(originalKeyID))
+
+			manager2.Shutdown(ctx)
+		})
+
+		It("should return error on double start", func() {
+			manager.Start(ctx)
+			err := manager.Start(ctx)
+			Expect(err).To(MatchError(keymanager.ErrAlreadyRunning))
+		})
+
+		It("should respect context cancellation during start", func() {
+			cancelCtx, cancelFn := context.WithCancel(context.Background())
+			cancelFn() // Cancel immediately
+
+			err := manager.Start(cancelCtx)
+			Expect(err).To(MatchError(context.Canceled))
+		})
+
+		It("should create a key directory if not exists", func() {
+			newDir := filepath.Join(tempDir, "newDir")
+			config.KeyDirectory = newDir
+
+			mgr, _ := keymanager.NewManager(config)
+			err := mgr.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify directory is created
+			_, err = os.Stat(newDir)
+			Expect(err).NotTo(HaveOccurred())
+
+			mgr.Shutdown(ctx)
 		})
 	})
 })
