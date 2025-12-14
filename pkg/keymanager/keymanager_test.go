@@ -254,5 +254,93 @@ var _ = Describe("Keymanager", func() {
 
 			mgr.Shutdown(ctx)
 		})
+
+		It("should start automatic rotation scheduler", func() {
+			err := manager.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify scheduler is running (internal state check)
+			Expect(manager.IsRotationSchedulerActive()).To(BeTrue())
+		})
+	})
+
+	// === PHASE 3: Key Retrieval (Core Operation) ===
+	Describe("GetCurrentSigningKey", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			err := manager.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return current private key and ID", func() {
+			privateKey, keyID, err := manager.GetCurrentSigningKey()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(privateKey).NotTo(BeNil())
+			Expect(keyID).NotTo(BeEmpty())
+			Expect(privateKey.N).NotTo(BeNil()) // RSA modulus
+		})
+
+		It("should return same key on multiple calls", func() {
+			key1, id1, _ := manager.GetCurrentSigningKey()
+			key2, id2, _ := manager.GetCurrentSigningKey()
+
+			Expect(key1).To(Equal(key2))
+			Expect(id1).To(Equal(id2))
+		})
+
+		It("should return key with correct size", func() {
+			privateKey, _, err := manager.GetCurrentSigningKey()
+			Expect(err).NotTo(HaveOccurred())
+
+			keysize := privateKey.N.BitLen()
+			Expect(keysize).To(Equal(2048))
+		})
+
+		It("should return key with correct custom size", func() {
+			config.KeySize = 4096
+			mgr, _ := keymanager.NewManager(config)
+			mgr.Start(ctx)
+			defer mgr.Shutdown(ctx)
+
+			privateKey, _, _ := mgr.GetCurrentSigningKey()
+			keysize := privateKey.N.BitLen()
+			Expect(keysize).To(Equal(4096))
+		})
+	})
+
+	Describe("GetPublicKey", func() {
+		var currentKeyID string
+
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			_, currentKeyID, _ = manager.GetCurrentSigningKey()
+		})
+
+		It("should return public key for valid key ID", func() {
+			publicKey, err := manager.GetPublicKey(currentKeyID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(publicKey).NotTo(BeNil())
+			Expect(publicKey.N).NotTo(BeNil())
+		})
+
+		It("should return erro for unknown key ID", func() {
+			_, err := manager.GetPublicKey("unkown-key-id")
+			Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+		})
+
+		It("should return error for empty key ID", func() {
+			_, err := manager.GetPublicKey("")
+			Expect(err).To(MatchError(ContainSubstring("key ID")))
+		})
+
+		It("should return matching public key for private key", func() {
+			privateKey, keyID, _ := manager.GetCurrentSigningKey()
+			publicKey, err := manager.GetPublicKey(keyID)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(publicKey.N).To(Equal(privateKey.PublicKey.N))
+			Expect(publicKey.E).To(Equal(privateKey.PublicKey.E))
+		})
 	})
 })

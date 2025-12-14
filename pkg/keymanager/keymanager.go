@@ -23,10 +23,11 @@ const (
 )
 
 type Manager struct {
-	config       ManagerConfig
-	state        int32 //0 stopped 1 running
-	currentKey   *rsa.PrivateKey
-	currentKeyID string
+	config                  ManagerConfig
+	state                   int32 //0 stopped 1 running
+	currentKey              *rsa.PrivateKey
+	currentKeyID            string
+	rotationSchedulerActive atomic.Bool
 }
 
 type ManagerConfig struct {
@@ -44,7 +45,7 @@ func ConfigDefault() ManagerConfig {
 	}
 }
 
-// Sentiner Errors
+// Sentinel Errors
 var (
 	ErrInvalidKeyDirectory        = errors.New("invalid key directory")
 	ErrInvalidKeySize             = errors.New("invalid key size")
@@ -52,6 +53,8 @@ var (
 	ErrInvalidKeyOverlapDuration  = errors.New("invalid key overlap duration")
 	ErrAlreadyRunning             = errors.New("manager is already running")
 	ErrManagerNotRunning          = errors.New("manager is not running")
+	ErrKeyNotFound                = errors.New("key not found")
+	ErrInvalidKeyID               = errors.New("invalid key ID")
 )
 
 // IsRunning tells caller if the manager is currently running
@@ -123,9 +126,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 
 	// 3. Try to load existing keys from disk first
-	exitingKey, existingKeyID, err := m.loadKeyFromDisk()
+	existingKey, existingKeyID, err := m.loadKeyFromDisk()
 	if err == nil {
-		m.currentKey = exitingKey
+		m.currentKey = existingKey
 		m.currentKeyID = existingKeyID
 		return nil
 	}
@@ -149,6 +152,8 @@ func (m *Manager) Start(ctx context.Context) error {
 		atomic.StoreInt32(&m.state, StateStopped)
 		return fmt.Errorf("generate key: %w", err)
 	}
+
+	m.rotationSchedulerActive.Store(true)
 
 	return nil
 }
@@ -187,6 +192,11 @@ func (m *Manager) loadKeyFromDisk() (*rsa.PrivateKey, string, error) {
 	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
 		return nil, "", fmt.Errorf("parse private key: %w", err)
+	}
+
+	// validate if the key found is the same size as configuration says
+	if privateKey.N.BitLen() != m.config.KeySize {
+		return nil, "", errors.New("key found is incorrect size")
 	}
 
 	return privateKey, keyID, nil
@@ -230,4 +240,61 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	return nil
+}
+
+func (m *Manager) IsRotationSchedulerActive() bool {
+	return m.rotationSchedulerActive.Load()
+}
+
+// loadKeyFromDisk searched for persisted keys by keyID and returns public key
+func (m *Manager) loadPublicKeyFromDisk(keyID string) (*rsa.PublicKey, error) {
+
+	// Extract key ID from filename
+	keyFile := filepath.Join(m.config.KeyDirectory, keyID+".pem")
+
+	// Read and parse key
+	pemData, err := os.ReadFile(keyFile)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrKeyNotFound
+		}
+		return nil, fmt.Errorf("read key file: %w", err)
+	}
+
+	block, _ := pem.Decode(pemData)
+	if block == nil {
+		return nil, fmt.Errorf("invalid PEM format")
+	}
+
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse private key: %w", err)
+	}
+
+	// validate if the key found is the same size as configuration says
+	if privateKey.N.BitLen() != m.config.KeySize {
+		return nil, errors.New("key found is incorrect size")
+	}
+
+	return &privateKey.PublicKey, nil
+}
+
+func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
+
+	keyID = strings.Trim(keyID, " ")
+	if len(keyID) == 0 {
+		return nil, ErrInvalidKeyID
+	}
+
+	if keyID == m.currentKeyID {
+		return &m.currentKey.PublicKey, nil
+	}
+
+	publicKey, err := m.loadPublicKeyFromDisk(keyID)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return publicKey, nil
 }
