@@ -5,12 +5,15 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +31,8 @@ type Manager struct {
 	currentKey              *rsa.PrivateKey
 	currentKeyID            string
 	rotationSchedulerActive atomic.Bool
+	mu                      sync.RWMutex
+	keys                    map[string]*KeyPair
 }
 
 type ManagerConfig struct {
@@ -43,6 +48,28 @@ func ConfigDefault() ManagerConfig {
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		KeyOverlapDuration:  1 * time.Hour,
 	}
+}
+
+type JKWS struct {
+	Keys []JWK `json:"keys"`
+}
+
+type JWK struct {
+	KeyID     string `json:"kid"` // Key ID
+	KeyType   string `json:"kty"` // "RSA"
+	Algorithm string `json:"alg"` // "RS256"
+	Use       string `json:"use"` // "sig"
+	N         string `json:"n"`   // RSA modulus (base64url)
+	E         string `json:"e"`   // RSA exponent (base64url)
+}
+
+type KeyPair struct {
+	ID         string
+	PrivateKey *rsa.PrivateKey
+	PublicKey  *rsa.PublicKey
+	CreatedAt  time.Time
+	ExpiresAt  time.Time // Zero value = never expires
+	cachedJWK  *JWK      // cache JWK
 }
 
 // Sentinel Errors
@@ -101,6 +128,7 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 
 	return &Manager{
 		config: config,
+		keys:   make(map[string]*KeyPair), // Initialize the map
 	}, nil
 }
 
@@ -130,6 +158,15 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err == nil {
 		m.currentKey = existingKey
 		m.currentKeyID = existingKeyID
+		// store in keys
+		m.keys[m.currentKeyID] = &KeyPair{
+			ID:         existingKeyID,
+			PrivateKey: m.currentKey,
+			PublicKey:  &m.currentKey.PublicKey,
+			CreatedAt:  time.Now(), // TODO load date from JSON metadata or PEM file
+			ExpiresAt:  time.Now().Add(m.config.KeyRotationInterval).Add(m.config.KeyOverlapDuration),
+			cachedJWK:  m.getJWK(m.currentKey, m.currentKeyID),
+		}
 		return nil
 	}
 
@@ -146,6 +183,16 @@ func (m *Manager) Start(ctx context.Context) error {
 	// 6. Store in memory
 	m.currentKey = privateKey
 	m.currentKeyID = keyID
+
+	// 6.a store in keys
+	m.keys[m.currentKeyID] = &KeyPair{
+		ID:         keyID,
+		PrivateKey: m.currentKey,
+		PublicKey:  &m.currentKey.PublicKey,
+		CreatedAt:  time.Now(),
+		ExpiresAt:  time.Now().Add(m.config.KeyRotationInterval).Add(m.config.KeyOverlapDuration),
+		cachedJWK:  m.getJWK(m.currentKey, keyID),
+	}
 
 	// 7. Save to disk for persistence
 	if err := m.saveKeyToDisk(privateKey, keyID); err != nil {
@@ -171,8 +218,26 @@ func (m *Manager) loadKeyFromDisk() (*rsa.PrivateKey, string, error) {
 		return nil, "", fmt.Errorf("no keys found")
 	}
 
-	// Use the first key found
-	keyFile := matches[0]
+	// Find the most recently modified file
+	var newestFile string
+	var newestTime time.Time
+
+	for _, file := range matches {
+		info, err := os.Stat(file)
+		if err != nil {
+			continue
+		}
+		if newestFile == "" || info.ModTime().After(newestTime) {
+			newestFile = file
+			newestTime = info.ModTime()
+		}
+	}
+
+	if newestFile == "" {
+		return nil, "", fmt.Errorf("no valid keys found")
+	}
+
+	keyFile := newestFile
 
 	// Extract key ID from filename
 	filename := filepath.Base(keyFile)
@@ -226,6 +291,7 @@ func (m *Manager) saveKeyToDisk(privateKey *rsa.PrivateKey, keyID string) error 
 	return nil
 }
 
+// GetCurrentSigningKey. Returns the manager's current privatekey
 func (m *Manager) GetCurrentSigningKey() (*rsa.PrivateKey, string, error) {
 	if !m.IsRunning() {
 		return nil, "", ErrManagerNotRunning
@@ -233,6 +299,7 @@ func (m *Manager) GetCurrentSigningKey() (*rsa.PrivateKey, string, error) {
 	return m.currentKey, m.currentKeyID, nil
 }
 
+// Shutdown. Gracefully shutsdown the key manager.
 func (m *Manager) Shutdown(ctx context.Context) error {
 
 	if !atomic.CompareAndSwapInt32(&m.state, StateStarted, StateStopped) {
@@ -279,6 +346,7 @@ func (m *Manager) loadPublicKeyFromDisk(keyID string) (*rsa.PublicKey, error) {
 	return &privateKey.PublicKey, nil
 }
 
+// GetPublicKey returns publickey by key ID
 func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 
 	keyID = strings.Trim(keyID, " ")
@@ -286,9 +354,15 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 		return nil, ErrInvalidKeyID
 	}
 
-	if keyID == m.currentKeyID {
-		return &m.currentKey.PublicKey, nil
+	m.mu.RLock()
+	keyPair, exists := m.keys[keyID]
+	m.mu.RUnlock()
+
+	if exists {
+		return keyPair.PublicKey, nil
 	}
+
+	// fallback to disk
 
 	publicKey, err := m.loadPublicKeyFromDisk(keyID)
 
@@ -297,4 +371,112 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 	}
 
 	return publicKey, nil
+}
+
+func base64urlEncode(data []byte) string {
+	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+// GetJKWS returns Manager public keys
+func (m *Manager) GetJWKS() (*JKWS, error) {
+
+	// 1 check if running
+	if !m.IsRunning() {
+		return nil, ErrManagerNotRunning
+	}
+
+	// 2 aquire lock
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	keys := make([]JWK, 0, len(m.keys))
+	for _, key := range m.keys {
+		// skip expired keys
+		if !key.ExpiresAt.IsZero() && time.Now().After(key.ExpiresAt) {
+			continue
+		}
+		keys = append(keys, *key.cachedJWK)
+	}
+
+	return &JKWS{
+		Keys: keys,
+	}, nil
+}
+
+// getJWK returns a properly formatted token
+func (m *Manager) getJWK(key *rsa.PrivateKey, keyID string) *JWK {
+	publicKey := key.PublicKey
+	return &JWK{
+		KeyID:     keyID,
+		KeyType:   "RSA",
+		Algorithm: "RS256",
+		Use:       "sig",
+		N:         base64urlEncode(publicKey.N.Bytes()),
+		E:         base64urlEncode(big.NewInt(int64(publicKey.E)).Bytes()),
+	}
+}
+
+// GetKeyInfo. returns meta data information for stored key by keyID
+func (m *Manager) GetKeyInfo(keyID string) (*KeyPair, error) {
+	// check if the manager is running
+	if !m.IsRunning() {
+		return nil, ErrManagerNotRunning
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	keyPair, exists := m.keys[keyID]
+
+	if !exists {
+		return nil, ErrKeyNotFound
+	}
+
+	return keyPair, nil
+}
+
+// RotateKeys
+func (m *Manager) RotateKeys(ctx context.Context) error {
+	//1. Acquire lock
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// 2. check if manager is running
+	if !m.IsRunning() {
+		return ErrManagerNotRunning
+	}
+	// 2. Generate new RSA key pair
+	privatekey, err := rsa.GenerateKey(rand.Reader, m.config.KeySize)
+	if err != nil {
+		atomic.StoreInt32(&m.state, StateStopped)
+		return fmt.Errorf("generate key: %w", err)
+	}
+	// 3. Generate new key ID (UUID)
+	keyID := uuid.New().String() // Generate ID here
+
+	// 4. Save to disk for persistence
+	if err := m.saveKeyToDisk(privatekey, keyID); err != nil {
+		atomic.StoreInt32(&m.state, StateStopped)
+		return fmt.Errorf("generate key: %w", err)
+	}
+
+	// Update old key expiration before switching
+	oldKeyID := m.currentKeyID
+	if oldKey, exists := m.keys[oldKeyID]; exists {
+		oldKey.ExpiresAt = time.Now().Add(m.config.KeyOverlapDuration)
+	}
+
+	// 5. Store in memory
+	m.currentKey = privatekey
+	m.currentKeyID = keyID
+
+	// 6. add new key to keys
+	m.keys[keyID] = &KeyPair{
+		ID:         keyID,
+		PrivateKey: m.currentKey,
+		PublicKey:  &m.currentKey.PublicKey,
+		CreatedAt:  time.Now(),
+		ExpiresAt:  time.Now().Add(m.config.KeyRotationInterval).Add(m.config.KeyOverlapDuration),
+		cachedJWK:  m.getJWK(privatekey, keyID),
+	}
+
+	return nil
 }

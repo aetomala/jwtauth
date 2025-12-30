@@ -343,4 +343,174 @@ var _ = Describe("Keymanager", func() {
 			Expect(publicKey.E).To(Equal(privateKey.PublicKey.E))
 		})
 	})
+
+	// === PHASE 4: JWKS (JSON Web Key Set) ===
+	Describe("GetJWKS", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+		})
+
+		It("should return JKWS with at least one key", func() {
+			jwks, err := manager.GetJWKS()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(jwks).ToNot(BeNil())
+			Expect(len(jwks.Keys)).To(BeNumerically(">=", 1))
+		})
+
+		It("should include current signing key in JWS", func() {
+			_, currentKeyID, _ := manager.GetCurrentSigningKey()
+
+			jwks, err := manager.GetJWKS()
+			Expect(err).NotTo(HaveOccurred())
+
+			// Find current key in JWKS
+			found := false
+			for _, jwk := range jwks.Keys {
+				if jwk.KeyID == currentKeyID {
+					found = true
+					break
+				}
+			}
+			Expect(found).To(BeTrue())
+		})
+
+		It("should have the correct JWK structure", func() {
+			jwks, err := manager.GetJWKS()
+			Expect(err).NotTo(HaveOccurred())
+
+			jwk := jwks.Keys[0]
+			Expect(jwk.KeyID).NotTo(BeEmpty())
+			Expect(jwk.KeyType).To(Equal("RSA"))
+			Expect(jwk.Algorithm).To(Equal("RS256"))
+			Expect(jwk.Use).To(Equal("sig"))
+			Expect(jwk.N).NotTo(BeEmpty())
+			Expect(jwk.E).NotTo(BeEmpty())
+		})
+		// Perhaps premature test
+		It("should only include valid (non-expired) keys", func() {
+			jwks, err := manager.GetJWKS()
+			Expect(err).NotTo(HaveOccurred())
+
+			now := time.Now()
+			for _, jwk := range jwks.Keys {
+				// Getl full key into a check expiration
+				key, _ := manager.GetKeyInfo(jwk.KeyID)
+				if !key.ExpiresAt.IsZero() {
+					Expect(key.ExpiresAt).To(BeTemporally(">", now))
+				}
+			}
+		})
+	})
+
+	// == PHASE 5: Key Rotation ==
+	Describe("RotationKeys", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+		})
+
+		It("should generate a new key pair", func() {
+			_, oldKey, _ := manager.GetCurrentSigningKey()
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, newKeyID, _ := manager.GetCurrentSigningKey()
+			Expect(newKeyID).NotTo(Equal(oldKey))
+		})
+
+		It("should keep old key valid during overlap period", func() {
+			_, oldKeyID, _ := manager.GetCurrentSigningKey()
+
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Old key should still be retrivable
+			oldPublicKey, err := manager.GetPublicKey(oldKeyID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(oldPublicKey).NotTo(BeNil())
+		})
+
+		It("should include both keys in JWKS during overlap", func() {
+			_, oldKeyID, _ := manager.GetCurrentSigningKey()
+
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, newKeyID, _ := manager.GetCurrentSigningKey()
+
+			jwks, _ := manager.GetJWKS()
+			keyIDs := make([]string, len(jwks.Keys))
+			for i, jwk := range jwks.Keys {
+				keyIDs[i] = jwk.KeyID
+			}
+
+			Expect(keyIDs).To(ContainElement(oldKeyID))
+			Expect(keyIDs).To(ContainElement(newKeyID))
+		})
+
+		It("should persist rotated keys to disk", func() {
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, newKeyID, _ := manager.GetCurrentSigningKey()
+
+			// Shutdown and restart
+			manager.Shutdown(ctx)
+
+			manager2, _ := keymanager.NewManager(config)
+			manager2.Start(ctx)
+
+			// should load the new key
+			_, loadKeyID, _ := manager2.GetCurrentSigningKey()
+			Expect(loadKeyID).To(Equal(newKeyID))
+
+			manager2.Shutdown(ctx)
+		})
+
+		It("should set expiration on old key", func() {
+			_, oldKeyID, _ := manager.GetCurrentSigningKey()
+
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			//Get old Key info
+			oldKey, _ := manager.GetKeyInfo(oldKeyID)
+			expextedExpiry := time.Now().Add(config.KeyOverlapDuration)
+
+			Expect(oldKey.ExpiresAt).To(BeTemporally("~", expextedExpiry, 5*time.Second))
+		})
+
+		It("should handle multiple rotations", func() {
+			keyIDs := make([]string, 3)
+
+			_, keyIDs[0], _ = manager.GetCurrentSigningKey()
+
+			manager.RotateKeys(ctx)
+			_, keyIDs[1], _ = manager.GetCurrentSigningKey()
+
+			manager.RotateKeys(ctx)
+			_, keyIDs[2], _ = manager.GetCurrentSigningKey()
+
+			// All should be unique
+			Expect(keyIDs[0]).NotTo(Equal(keyIDs[1]))
+			Expect(keyIDs[1]).NotTo(Equal(keyIDs[2]))
+			Expect(keyIDs[0]).NotTo(Equal(keyIDs[2]))
+		})
+
+		It("should use default key size after rotation when zero provided", func() {
+			config.KeySize = 0 // Should use default
+			mgr, _ := keymanager.NewManager(config)
+			mgr.Start(ctx)
+			defer mgr.Shutdown(ctx)
+
+			// Rotate
+			mgr.RotateKeys(ctx)
+
+			// New key should have default size
+			privateKey, _, _ := mgr.GetCurrentSigningKey()
+			keySize := privateKey.N.BitLen()
+			Expect(keySize).To(Equal(2048)) // Default
+		})
+	})
 })
