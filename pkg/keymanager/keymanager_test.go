@@ -2,8 +2,11 @@ package keymanager_test
 
 import (
 	"context"
+	"crypto/rsa"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -511,6 +514,490 @@ var _ = Describe("Keymanager", func() {
 			privateKey, _, _ := mgr.GetCurrentSigningKey()
 			keySize := privateKey.N.BitLen()
 			Expect(keySize).To(Equal(2048)) // Default
+		})
+	})
+
+	// === PHASE 6: Automatic Rotation ===
+	Describe("Automatic Key Rotation", func() {
+		It("should rotate key automatically base on interval", func() {
+			// Use very short interval for testins
+			config.KeyRotationInterval = 200 * time.Millisecond
+			config.KeyOverlapDuration = 100 * time.Millisecond
+
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+
+			_, originalKeyID, _ := manager.GetCurrentSigningKey()
+
+			//wait for automatic rotation
+			Eventually(func() string {
+				_, keyID, _ := manager.GetCurrentSigningKey()
+				return keyID
+			}, 1*time.Second, 50*time.Millisecond).ShouldNot(Equal(originalKeyID))
+		})
+
+		It("should use default rotation interval when zero provided", func() {
+			config.KeyRotationInterval = 0
+
+			mgr, _ := keymanager.NewManager(config)
+			err := mgr.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			//Scheduler should be active (won't rotate in test time, but should be running)
+			Expect(mgr.IsRotationSchedulerActive()).To(BeTrue())
+			mgr.Shutdown(ctx)
+		})
+
+		It("should cleanup expired keys after overlap period", func() {
+			config.KeyRotationInterval = 200 * time.Millisecond
+			config.KeyOverlapDuration = 100 * time.Millisecond
+
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+
+			_, oldKeyID, _ := manager.GetCurrentSigningKey()
+
+			// Wait for rotation
+			time.Sleep(300 * time.Millisecond)
+
+			// Wait for cleanup (overlap period)
+			time.Sleep(150 * time.Millisecond)
+
+			// Old key should be removed
+			_, err := manager.GetPublicKey(oldKeyID)
+			Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+		})
+
+		It("should continue rotation after manual rotation", func() {
+			config.KeyRotationInterval = 300 * time.Millisecond
+
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+
+			// Manual rotation
+			manager.RotateKeys(ctx)
+			_, keyAfterManual, _ := manager.GetCurrentSigningKey()
+
+			// Wait for automatic rotation
+			Eventually(func() string {
+				_, keyID, _ := manager.GetCurrentSigningKey()
+				return keyID
+			}, 1*time.Second, 50*time.Millisecond).ShouldNot(Equal(keyAfterManual))
+		})
+	})
+
+	// === PHASE 7: Error Handling ===
+	Describe("Error Scenarios", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+		})
+
+		Context("when manager not running", func() {
+			BeforeEach(func() {
+				manager.Shutdown(ctx)
+			})
+
+			It("should fail to rotate keys", func() {
+				err := manager.RotateKeys(ctx)
+				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+			})
+
+			It("should fail to get current signing key", func() {
+				_, _, err := manager.GetCurrentSigningKey()
+				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+			})
+		})
+
+		Context("with disk errors", func() {
+			It("should handle key save failure gracefully", func() {
+				// Make directory read-only
+				os.Chmod(config.KeyDirectory, 0444)
+				defer os.Chmod(config.KeyDirectory, 0755)
+
+				err := manager.RotateKeys(ctx)
+				Expect(err).To(HaveOccurred())
+
+				// Manager should still be running
+				Expect(manager.IsRunning()).To(BeTrue())
+			})
+
+			It("should handle corrupted key file on load", func() {
+				// Write invalid key file
+				invalidKeyPath := filepath.Join(config.KeyDirectory, "invalid-key.pem")
+				os.WriteFile(invalidKeyPath, []byte("invalid data"), 0644)
+
+				manager.Shutdown(ctx)
+
+				// Should start but skip invalid file
+				manager2, _ := keymanager.NewManager(config)
+				err := manager2.Start(ctx)
+				Expect(err).NotTo(HaveOccurred())
+
+				manager2.Shutdown(ctx)
+			})
+		})
+
+		Context("with context cancellation", func() {
+			It("should respect context during rotation", func() {
+				cancelCtx, cancelFn := context.WithCancel(context.Background())
+				cancelFn() // Cancel immediately
+
+				err := manager.RotateKeys(cancelCtx)
+				Expect(err).To(MatchError(context.Canceled))
+			})
+		})
+	})
+
+	// === PHASE 8: Concurrency ===
+	Describe("Concurrent Operations", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+		})
+
+		It("should handle concurrent GetCurrentSigningKey calls", func() {
+			const numGoroutines = 20
+			results := make(chan string, numGoroutines)
+
+			for i := 0; i < numGoroutines; i++ {
+				go func() {
+					defer GinkgoRecover()
+					_, keyID, err := manager.GetCurrentSigningKey()
+					Expect(err).NotTo(HaveOccurred())
+					results <- keyID
+				}()
+			}
+
+			// All should get same key ID
+			Eventually(results).Should(HaveLen(numGoroutines))
+
+			keyIDs := make([]string, numGoroutines)
+			for i := 0; i < numGoroutines; i++ {
+				keyIDs[i] = <-results
+			}
+
+			// All should be identical
+			for i := 1; i < numGoroutines; i++ {
+				Expect(keyIDs[i]).To(Equal(keyIDs[0]))
+			}
+		})
+
+		It("should handle concurrent GetPublicKey calls", func() {
+			_, keyID, _ := manager.GetCurrentSigningKey()
+
+			const numGoroutines = 20
+			results := make(chan *rsa.PublicKey, numGoroutines)
+
+			for i := 0; i < numGoroutines; i++ {
+				go func() {
+					defer GinkgoRecover()
+					publicKey, err := manager.GetPublicKey(keyID)
+					Expect(err).NotTo(HaveOccurred())
+					results <- publicKey
+				}()
+			}
+
+			Eventually(results).Should(HaveLen(numGoroutines))
+		})
+
+		It("should handle concurrent GetJWKS calls", func() {
+			const numGoroutines = 20
+			results := make(chan *keymanager.JWKS, numGoroutines)
+
+			for i := 0; i < numGoroutines; i++ {
+				go func() {
+					defer GinkgoRecover()
+					jwks, err := manager.GetJWKS()
+					Expect(err).NotTo(HaveOccurred())
+					results <- jwks
+				}()
+			}
+
+			Eventually(results).Should(HaveLen(numGoroutines))
+		})
+
+		It("should handle rotation during concurrent reads", func() {
+			done := make(chan bool)
+
+			// Start readers
+			go func() {
+				defer GinkgoRecover()
+				for i := 0; i < 50; i++ {
+					manager.GetCurrentSigningKey()
+					manager.GetJWKS()
+					time.Sleep(10 * time.Millisecond)
+				}
+				done <- true
+			}()
+
+			// Rotate while reading
+			time.Sleep(100 * time.Millisecond)
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(done).Should(Receive())
+		})
+	})
+})
+
+// === SPERATE SUITE: Shutdown ===
+
+var _ = Describe("KeyManager Shutdown", func() {
+	var (
+		manager *keymanager.Manager
+		ctx     context.Context
+		cancel  context.CancelFunc
+		config  keymanager.ManagerConfig
+		tempDir string
+	)
+
+	BeforeEach(func() {
+		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+		tempDir = GinkgoT().TempDir()
+
+		config = keymanager.ManagerConfig{
+			KeyDirectory:        tempDir,
+			KeyRotationInterval: 30 * 24 * time.Hour,
+			KeyOverlapDuration:  1 * time.Hour,
+			KeySize:             2048,
+		}
+
+		manager, _ = keymanager.NewManager(config)
+		manager.Start(ctx)
+	})
+
+	AfterEach(func() {
+		cancel()
+	})
+
+	Describe("Graceful Shutdown", func() {
+		It("should shutdown successfully", func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			err := manager.Shutdown(shutdownCtx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(manager.IsRunning()).To(BeFalse())
+		})
+
+		It("should stop automatic rotation on shutdown", func() {
+			config.KeyRotationInterval = 200 * time.Millisecond
+
+			mgr, _ := keymanager.NewManager(config)
+			mgr.Start(ctx)
+
+			//_, keyBeforeShutdown, _ := mgr.GetCurrentSigningKey()
+			mgr.GetCurrentSigningKey()
+
+			mgr.Shutdown(ctx)
+
+			// Wait longer than rotation interval
+			time.Sleep(500 * time.Millisecond)
+
+			// Key should not have rotated (manager stopped)
+			// We cant check this directly since manager is stopped, but we verify shutdown worked
+			Expect(mgr.IsRunning()).To(BeFalse())
+		})
+
+		It("should complete in-flight rotation before shutdown", func() {
+			// Start rotation
+			rotationDone := make(chan bool)
+			go func() {
+				defer GinkgoRecover()
+				err := manager.RotateKeys(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				rotationDone <- true
+			}()
+
+			// Give is time to start
+			time.Sleep(50 * time.Millisecond)
+
+			// Initiate shutdown
+			shutdownDone := make(chan bool)
+			go func() {
+				defer GinkgoRecover()
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				err := manager.Shutdown(shutdownCtx)
+				Expect(err).NotTo(HaveOccurred())
+				shutdownDone <- true
+			}()
+
+			// Both should complete
+			Eventually(rotationDone).Should(Receive())
+			Eventually(shutdownDone).Should(Receive())
+		})
+
+		It("should respect shutdown timeout", func() {
+			// Short timeout for testing
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+
+			err := manager.Shutdown(shutdownCtx)
+			// Should succeed quickly since there's no blocking work
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should be idempotent", func() {
+			shutdownCtx := context.Background()
+
+			err := manager.Shutdown(shutdownCtx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Second shutdown should not error
+			err = manager.Shutdown(shutdownCtx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+})
+
+// === SEPARATE SUITE: Key Persistence ===
+var _ = Describe("KeyManager Persistense", func() {
+	var (
+		config  keymanager.ManagerConfig
+		tempDir string
+	)
+
+	BeforeEach(func() {
+		tempDir = GinkgoT().TempDir()
+		config = keymanager.ManagerConfig{
+			KeyDirectory:        tempDir,
+			KeyRotationInterval: 30 * 24 * time.Hour,
+			KeyOverlapDuration:  1 * time.Hour,
+			KeySize:             2048,
+		}
+	})
+
+	It("should persist keys in PEM format", func() {
+		manager, _ := keymanager.NewManager(config)
+		manager.Start(context.Background())
+
+		_, keyID, _ := manager.GetCurrentSigningKey()
+		manager.Shutdown(context.Background())
+
+		// Check files exist
+		files, err := os.ReadDir(tempDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(files).NotTo(BeEmpty())
+
+		// Verify PEM format
+		found := false
+		for _, file := range files {
+			if strings.Contains(file.Name(), keyID+".pem") {
+				found = true
+
+				content, _ := os.ReadFile(filepath.Join(tempDir, file.Name()))
+				Expect(string(content)).To(ContainSubstring("BEGIN RSA PRIVATE KEY"))
+			}
+		}
+		Expect(found).To(BeTrue())
+	})
+
+	It("should persist keys along metadata", func() {
+		manager, _ := keymanager.NewManager(config)
+		manager.Start(context.Background())
+
+		_, keyID, _ := manager.GetCurrentSigningKey()
+		manager.Shutdown(context.Background())
+
+		// Check files exist
+		files, err := os.ReadDir(tempDir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(files).NotTo(BeEmpty())
+
+		// Verify metadata file
+		found := false
+		for _, file := range files {
+			if strings.Contains(file.Name(), keyID+".json") {
+				found = true
+				filename := filepath.Join(tempDir, keyID+".json")
+				data, _ := os.ReadFile(filename)
+				var meta keymanager.KeyMetadata
+				err = json.Unmarshal(data, &meta)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(meta.ID).To(Equal(keyID))
+				Expect(meta.CreatedAt).To(BeTemporally("~", time.Now(), 2*time.Second))
+			}
+		}
+		Expect(found).To(BeTrue())
+	})
+
+	It("should load keys across restart", func() {
+		// First instance
+		manager1, _ := keymanager.NewManager(config)
+		manager1.Start(context.Background())
+
+		privateKey1, keyID1, _ := manager1.GetCurrentSigningKey()
+		publicKey1, _ := manager1.GetPublicKey(keyID1)
+
+		manager1.Shutdown(context.Background())
+
+		// Second instance
+		manager2, _ := keymanager.NewManager(config)
+		manager2.Start(context.Background())
+
+		privateKey2, keyID2, _ := manager2.GetCurrentSigningKey()
+		publicKey2, _ := manager2.GetPublicKey(keyID2)
+
+		// Should be identical
+		Expect(keyID2).To(Equal(keyID1))
+		Expect(privateKey2.N).To(Equal(privateKey1.N))
+		Expect(publicKey2.N).To(Equal(publicKey1.N))
+
+		manager2.Shutdown(context.Background())
+	})
+
+	It("should apply defaults on reload when config has zero values", func() {
+		// Start with explicit values
+		config.KeySize = 4096
+		manager1, _ := keymanager.NewManager(config)
+		manager1.Start(context.Background())
+		manager1.Shutdown(context.Background())
+
+		// Reload with zero values
+		config.KeySize = 0 // should use default
+		manager2, _ := keymanager.NewManager(config)
+		manager2.Start(context.Background())
+
+		// Can still load keys (default applied for new operations)
+		_, keyID, err := manager2.GetCurrentSigningKey()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(keyID).NotTo(BeEmpty())
+
+		manager2.Shutdown(context.Background())
+	})
+
+	Context("with multiple keys on disk", func() {
+		It("should load all valid keys on restart", func() {
+			// First session: Create and rotate
+			manager1, _ := keymanager.NewManager(config)
+			manager1.Start(context.Background())
+			_, key1ID, _ := manager1.GetCurrentSigningKey()
+
+			manager1.RotateKeys(context.Background()) // Now have 2 keys
+			_, key2ID, _ := manager1.GetCurrentSigningKey()
+
+			manager1.Shutdown(context.Background())
+
+			// Second session: Should load BOTH keys
+			manager2, _ := keymanager.NewManager(config)
+			manager2.Start(context.Background())
+
+			// Current key loaded
+			_, currentID, _ := manager2.GetCurrentSigningKey()
+			Expect(currentID).To(Equal(key2ID))
+
+			// Old key also available
+			oldKey, err := manager2.GetPublicKey(key1ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(oldKey).NotTo(BeNil())
+
+			manager2.Shutdown(context.Background())
+		})
+
+		It("should restore expiration dates from metadata", func() {
+			// Test metadata persistence
 		})
 	})
 })

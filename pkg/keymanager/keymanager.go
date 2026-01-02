@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -28,11 +29,13 @@ const (
 type Manager struct {
 	config                  ManagerConfig
 	state                   int32 //0 stopped 1 running
-	currentKey              *rsa.PrivateKey
 	currentKeyID            string
 	rotationSchedulerActive atomic.Bool
 	mu                      sync.RWMutex
 	keys                    map[string]*KeyPair
+	stopRotationCh          chan struct{}  // Signal to stop rotation goroutine
+	rotationWG              sync.WaitGroup // Wait for goroutine to exit
+	rotationTicker          *time.Ticker   // Store ticker so we can stop it
 }
 
 type ManagerConfig struct {
@@ -50,7 +53,13 @@ func ConfigDefault() ManagerConfig {
 	}
 }
 
-type JKWS struct {
+type KeyMetadata struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type JWKS struct {
 	Keys []JWK `json:"keys"`
 }
 
@@ -75,7 +84,7 @@ type KeyPair struct {
 // Sentinel Errors
 var (
 	ErrInvalidKeyDirectory        = errors.New("invalid key directory")
-	ErrInvalidKeySize             = errors.New("invalid key size")
+	ErrInvalidKeySize             = errors.New("invalid key size: must be at least 2048 bits")
 	ErrInvalidKeyRotationInterval = errors.New("invalid key rotation interval")
 	ErrInvalidKeyOverlapDuration  = errors.New("invalid key overlap duration")
 	ErrAlreadyRunning             = errors.New("manager is already running")
@@ -127,8 +136,9 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	}
 
 	return &Manager{
-		config: config,
-		keys:   make(map[string]*KeyPair), // Initialize the map
+		config:         config,
+		keys:           make(map[string]*KeyPair), // Initialize the map
+		stopRotationCh: make(chan struct{}),       // ← Initialize once
 	}, nil
 }
 
@@ -156,17 +166,21 @@ func (m *Manager) Start(ctx context.Context) error {
 	// 3. Try to load existing keys from disk first
 	existingKey, existingKeyID, err := m.loadKeyFromDisk()
 	if err == nil {
-		m.currentKey = existingKey
 		m.currentKeyID = existingKeyID
 		// store in keys
 		m.keys[m.currentKeyID] = &KeyPair{
 			ID:         existingKeyID,
-			PrivateKey: m.currentKey,
-			PublicKey:  &m.currentKey.PublicKey,
+			PrivateKey: existingKey,
+			PublicKey:  &existingKey.PublicKey,
 			CreatedAt:  time.Now(), // TODO load date from JSON metadata or PEM file
-			ExpiresAt:  time.Now().Add(m.config.KeyRotationInterval).Add(m.config.KeyOverlapDuration),
-			cachedJWK:  m.getJWK(m.currentKey, m.currentKeyID),
+			ExpiresAt:  time.Time{},
+			cachedJWK:  m.getJWK(existingKey, m.currentKeyID),
 		}
+		// Start rotation scheduler
+		m.rotationSchedulerActive.Store(true)
+		m.stopRotationCh = make(chan struct{})
+		m.rotationWG.Add(1)
+		go m.rotationSchedulerLoop(ctx)
 		return nil
 	}
 
@@ -181,26 +195,29 @@ func (m *Manager) Start(ctx context.Context) error {
 	keyID := uuid.New().String() // Generate ID here
 
 	// 6. Store in memory
-	m.currentKey = privateKey
 	m.currentKeyID = keyID
 
 	// 6.a store in keys
 	m.keys[m.currentKeyID] = &KeyPair{
 		ID:         keyID,
-		PrivateKey: m.currentKey,
-		PublicKey:  &m.currentKey.PublicKey,
+		PrivateKey: privateKey,
+		PublicKey:  &privateKey.PublicKey,
 		CreatedAt:  time.Now(),
-		ExpiresAt:  time.Now().Add(m.config.KeyRotationInterval).Add(m.config.KeyOverlapDuration),
-		cachedJWK:  m.getJWK(m.currentKey, keyID),
+		ExpiresAt:  time.Time{},
+		cachedJWK:  m.getJWK(privateKey, keyID),
 	}
 
 	// 7. Save to disk for persistence
-	if err := m.saveKeyToDisk(privateKey, keyID); err != nil {
+	if err := m.saveKeyToDisk(ctx, privateKey, keyID); err != nil {
 		atomic.StoreInt32(&m.state, StateStopped)
 		return fmt.Errorf("generate key: %w", err)
 	}
 
+	// START ROTATION SCHEDULER
 	m.rotationSchedulerActive.Store(true)
+	m.stopRotationCh = make(chan struct{})
+	m.rotationWG.Add(1)
+	go m.rotationSchedulerLoop(ctx)
 
 	return nil
 }
@@ -267,7 +284,14 @@ func (m *Manager) loadKeyFromDisk() (*rsa.PrivateKey, string, error) {
 	return privateKey, keyID, nil
 }
 
-func (m *Manager) saveKeyToDisk(privateKey *rsa.PrivateKey, keyID string) error {
+func (m *Manager) saveKeyToDisk(ctx context.Context, privateKey *rsa.PrivateKey, keyID string) error {
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	// 1. Encode private key to PEM format
 	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
 	pemBlock := &pem.Block{
@@ -288,6 +312,24 @@ func (m *Manager) saveKeyToDisk(privateKey *rsa.PrivateKey, keyID string) error 
 		return fmt.Errorf("write key file: %w", err)
 	}
 
+	// save meta data
+	meta := KeyMetadata{
+		ID:        keyID,
+		CreatedAt: time.Now(),
+	}
+	if err := m.saveMetadata(keyID, meta); err != nil {
+		return fmt.Errorf("write key meta file %w", err)
+	}
+
+	return nil
+}
+
+func (m *Manager) deleteKeyFromDisk(keyID string) error {
+	filename := filepath.Join(m.config.KeyDirectory, keyID+".pem")
+	err := os.Remove(filename)
+	if err != nil {
+		return fmt.Errorf("deleting key from disk: %w", err)
+	}
 	return nil
 }
 
@@ -296,7 +338,15 @@ func (m *Manager) GetCurrentSigningKey() (*rsa.PrivateKey, string, error) {
 	if !m.IsRunning() {
 		return nil, "", ErrManagerNotRunning
 	}
-	return m.currentKey, m.currentKeyID, nil
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	keyPair, found := m.keys[m.currentKeyID]
+
+	if !found {
+		return nil, "", ErrKeyNotFound
+	}
+	return keyPair.PrivateKey, m.currentKeyID, nil
 }
 
 // Shutdown. Gracefully shutsdown the key manager.
@@ -306,6 +356,26 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		// Already stopped
 		return nil
 	}
+
+	// Signal the rotation goroutine to stop
+	close(m.stopRotationCh)
+
+	// wiat for goroutine to exit (with timeout)
+	done := make(chan struct{})
+
+	go func() {
+		m.rotationWG.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Goroutine exited cleanly
+	case <-ctx.Done():
+		// Timeout - goroutine didn't exit in time
+		return ctx.Err()
+	}
+
 	return nil
 }
 
@@ -348,26 +418,38 @@ func (m *Manager) loadPublicKeyFromDisk(keyID string) (*rsa.PublicKey, error) {
 
 // GetPublicKey returns publickey by key ID
 func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
-
 	keyID = strings.Trim(keyID, " ")
 	if len(keyID) == 0 {
 		return nil, ErrInvalidKeyID
 	}
 
+	// Check cache first
 	m.mu.RLock()
-	keyPair, exists := m.keys[keyID]
-	m.mu.RUnlock()
-
-	if exists {
+	if keyPair, exists := m.keys[keyID]; exists {
+		m.mu.RUnlock()
 		return keyPair.PublicKey, nil
 	}
+	m.mu.RUnlock()
 
-	// fallback to disk
-
+	// Load from disk (outside lock)
 	publicKey, err := m.loadPublicKeyFromDisk(keyID)
-
 	if err != nil {
 		return nil, err
+	}
+
+	// Cache with double-check pattern
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Double-check: another goroutine might have loaded it
+	if keyPair, exists := m.keys[keyID]; exists {
+		return keyPair.PublicKey, nil // Use the one already cached
+	}
+
+	// Still not there, cache our loaded version
+	m.keys[keyID] = &KeyPair{
+		ID:        keyID,
+		PublicKey: publicKey,
 	}
 
 	return publicKey, nil
@@ -377,8 +459,8 @@ func base64urlEncode(data []byte) string {
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
-// GetJKWS returns Manager public keys
-func (m *Manager) GetJWKS() (*JKWS, error) {
+// GetJWKS returns Manager public keys
+func (m *Manager) GetJWKS() (*JWKS, error) {
 
 	// 1 check if running
 	if !m.IsRunning() {
@@ -398,7 +480,7 @@ func (m *Manager) GetJWKS() (*JKWS, error) {
 		keys = append(keys, *key.cachedJWK)
 	}
 
-	return &JKWS{
+	return &JWKS{
 		Keys: keys,
 	}, nil
 }
@@ -436,6 +518,12 @@ func (m *Manager) GetKeyInfo(keyID string) (*KeyPair, error) {
 
 // RotateKeys
 func (m *Manager) RotateKeys(ctx context.Context) error {
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	//1. Acquire lock
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -446,16 +534,14 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 	// 2. Generate new RSA key pair
 	privatekey, err := rsa.GenerateKey(rand.Reader, m.config.KeySize)
 	if err != nil {
-		atomic.StoreInt32(&m.state, StateStopped)
 		return fmt.Errorf("generate key: %w", err)
 	}
 	// 3. Generate new key ID (UUID)
 	keyID := uuid.New().String() // Generate ID here
 
 	// 4. Save to disk for persistence
-	if err := m.saveKeyToDisk(privatekey, keyID); err != nil {
-		atomic.StoreInt32(&m.state, StateStopped)
-		return fmt.Errorf("generate key: %w", err)
+	if err := m.saveKeyToDisk(ctx, privatekey, keyID); err != nil {
+		return fmt.Errorf("save key: %w", err)
 	}
 
 	// Update old key expiration before switching
@@ -465,18 +551,108 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 	}
 
 	// 5. Store in memory
-	m.currentKey = privatekey
 	m.currentKeyID = keyID
 
 	// 6. add new key to keys
 	m.keys[keyID] = &KeyPair{
 		ID:         keyID,
-		PrivateKey: m.currentKey,
-		PublicKey:  &m.currentKey.PublicKey,
+		PrivateKey: privatekey,
+		PublicKey:  &privatekey.PublicKey,
 		CreatedAt:  time.Now(),
-		ExpiresAt:  time.Now().Add(m.config.KeyRotationInterval).Add(m.config.KeyOverlapDuration),
+		ExpiresAt:  time.Time{},
 		cachedJWK:  m.getJWK(privatekey, keyID),
 	}
 
 	return nil
+}
+
+// rotationSchedulerLoop Sets up the infinite loop that will automatically rotake keys
+func (m *Manager) rotationSchedulerLoop(ctx context.Context) {
+	m.rotationTicker = time.NewTicker(m.config.KeyRotationInterval)
+
+	// Cleanup ticker - check frequently enough to catch expiration
+	// For tests with short overlap (100ms), we need frequent checks
+	// For production (1 hour overlap), less frequent is fine
+	cleanupInterval := m.config.KeyOverlapDuration / 4
+	if cleanupInterval > 1*time.Minute {
+		cleanupInterval = 1 * time.Minute // Max 1 minute in production
+	}
+	if cleanupInterval < 10*time.Millisecond {
+		cleanupInterval = 10 * time.Millisecond // Min for tests
+	}
+
+	cleanupTicker := time.NewTicker(cleanupInterval)
+
+	m.rotationSchedulerActive.Store(true)
+
+	defer m.rotationWG.Done()
+	defer m.rotationSchedulerActive.Store(false)
+	defer m.rotationTicker.Stop()
+	defer cleanupTicker.Stop() // Critical: prevent cleanup ticker leak!
+
+	for {
+		select {
+		case <-m.rotationTicker.C:
+			// Rotation time!
+			if err := m.RotateKeys(ctx); err != nil {
+				fmt.Printf("rotation failed: %v\n", err)
+			}
+			// Also cleanup right after rotation
+			m.cleanupExpiredKeys()
+
+		case <-cleanupTicker.C:
+			// Periodic cleanup
+			m.cleanupExpiredKeys()
+
+		case <-ctx.Done():
+			return
+		case <-m.stopRotationCh:
+			return
+		}
+	}
+}
+
+func (m *Manager) cleanupExpiredKeys() {
+	if !m.IsRunning() {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	for keyID, key := range m.keys {
+		// Never remove current key
+		if keyID == m.currentKeyID {
+			continue
+		}
+		// Remove is expired
+		if !key.ExpiresAt.IsZero() && now.After(key.ExpiresAt) {
+			// remove from memory
+			delete(m.keys, keyID)
+			// remove from disk
+			if err := m.deleteKeyFromDisk(keyID); err != nil {
+				fmt.Printf("delete key failed: %v\n", err)
+			}
+		}
+	}
+}
+
+// Save alongside PEM
+func (m *Manager) saveMetadata(keyID string, meta KeyMetadata) error {
+	filename := filepath.Join(m.config.KeyDirectory, keyID+".json")
+	data, _ := json.Marshal(meta)
+	return os.WriteFile(filename, data, 0600)
+}
+
+// Load with PEM
+func (m *Manager) loadMetadata(keyID string) (KeyMetadata, error) {
+	filename := filepath.Join(m.config.KeyDirectory, keyID+".json")
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return KeyMetadata{}, err
+	}
+
+	var meta KeyMetadata
+	err = json.Unmarshal(data, &meta)
+	return meta, err
 }
