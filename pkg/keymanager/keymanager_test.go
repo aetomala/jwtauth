@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -560,12 +561,14 @@ var _ = Describe("Keymanager", func() {
 			// Wait for rotation
 			time.Sleep(300 * time.Millisecond)
 
-			// Wait for cleanup (overlap period)
-			time.Sleep(150 * time.Millisecond)
+			// Wait for cleanup (overlap period + extra buffer for race detector)
+			time.Sleep(200 * time.Millisecond)
 
-			// Old key should be removed
-			_, err := manager.GetPublicKey(oldKeyID)
-			Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+			// Old key should be removed (use Eventually for robustness)
+			Eventually(func() error {
+				_, err := manager.GetPublicKey(oldKeyID)
+				return err
+			}, 500*time.Millisecond, 50*time.Millisecond).Should(MatchError(keymanager.ErrKeyNotFound))
 		})
 
 		It("should continue rotation after manual rotation", func() {
@@ -659,23 +662,29 @@ var _ = Describe("Keymanager", func() {
 		It("should handle concurrent GetCurrentSigningKey calls", func() {
 			const numGoroutines = 20
 			results := make(chan string, numGoroutines)
+			var wg sync.WaitGroup
 
 			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
 				go func() {
 					defer GinkgoRecover()
+					defer wg.Done()
 					_, keyID, err := manager.GetCurrentSigningKey()
 					Expect(err).NotTo(HaveOccurred())
 					results <- keyID
 				}()
 			}
 
-			// All should get same key ID
-			Eventually(results).Should(HaveLen(numGoroutines))
+			wg.Wait()
+			close(results)
 
-			keyIDs := make([]string, numGoroutines)
-			for i := 0; i < numGoroutines; i++ {
-				keyIDs[i] = <-results
+			// Collect all results
+			keyIDs := make([]string, 0, numGoroutines)
+			for keyID := range results {
+				keyIDs = append(keyIDs, keyID)
 			}
+
+			Expect(keyIDs).To(HaveLen(numGoroutines))
 
 			// All should be identical
 			for i := 1; i < numGoroutines; i++ {
@@ -688,33 +697,55 @@ var _ = Describe("Keymanager", func() {
 
 			const numGoroutines = 20
 			results := make(chan *rsa.PublicKey, numGoroutines)
+			var wg sync.WaitGroup
 
 			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
 				go func() {
 					defer GinkgoRecover()
+					defer wg.Done()
 					publicKey, err := manager.GetPublicKey(keyID)
 					Expect(err).NotTo(HaveOccurred())
 					results <- publicKey
 				}()
 			}
 
-			Eventually(results).Should(HaveLen(numGoroutines))
+			wg.Wait()
+			close(results)
+
+			// Count results
+			count := 0
+			for range results {
+				count++
+			}
+			Expect(count).To(Equal(numGoroutines))
 		})
 
 		It("should handle concurrent GetJWKS calls", func() {
 			const numGoroutines = 20
 			results := make(chan *keymanager.JWKS, numGoroutines)
+			var wg sync.WaitGroup
 
 			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
 				go func() {
 					defer GinkgoRecover()
+					defer wg.Done()
 					jwks, err := manager.GetJWKS()
 					Expect(err).NotTo(HaveOccurred())
 					results <- jwks
 				}()
 			}
 
-			Eventually(results).Should(HaveLen(numGoroutines))
+			wg.Wait()
+			close(results)
+
+			// Count results
+			count := 0
+			for range results {
+				count++
+			}
+			Expect(count).To(Equal(numGoroutines))
 		})
 
 		It("should handle rotation during concurrent reads", func() {
