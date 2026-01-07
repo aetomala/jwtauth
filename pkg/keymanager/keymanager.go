@@ -138,7 +138,7 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	return &Manager{
 		config:         config,
 		keys:           make(map[string]*KeyPair), // Initialize the map
-		stopRotationCh: make(chan struct{}),       // ← Initialize once
+		stopRotationCh: make(chan struct{}),       // Initialize once no restart support
 	}, nil
 }
 
@@ -164,21 +164,11 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 
 	// 3. Try to load existing keys from disk first
-	existingKey, existingKeyID, err := m.loadKeyFromDisk()
+	//existingKey, existingKeyID, err := m.loadKeyFromDisk()
+	err := m.loadAllKeysFromDisk()
 	if err == nil {
-		m.currentKeyID = existingKeyID
-		// store in keys
-		m.keys[m.currentKeyID] = &KeyPair{
-			ID:         existingKeyID,
-			PrivateKey: existingKey,
-			PublicKey:  &existingKey.PublicKey,
-			CreatedAt:  time.Now(), // TODO load date from JSON metadata or PEM file
-			ExpiresAt:  time.Time{},
-			cachedJWK:  m.getJWK(existingKey, m.currentKeyID),
-		}
 		// Start rotation scheduler
 		m.rotationSchedulerActive.Store(true)
-		m.stopRotationCh = make(chan struct{})
 		m.rotationWG.Add(1)
 		go m.rotationSchedulerLoop(ctx)
 		return nil
@@ -215,7 +205,6 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	// START ROTATION SCHEDULER
 	m.rotationSchedulerActive.Store(true)
-	m.stopRotationCh = make(chan struct{})
 	m.rotationWG.Add(1)
 	go m.rotationSchedulerLoop(ctx)
 
@@ -223,49 +212,13 @@ func (m *Manager) Start(ctx context.Context) error {
 }
 
 // loadKeyFromDisk searched for persisted keys and returns currentKey
-func (m *Manager) loadKeyFromDisk() (*rsa.PrivateKey, string, error) {
-	// 1. Read all files in key directory
-	pattern := filepath.Join(m.config.KeyDirectory, "*.pem")
-	matches, err := filepath.Glob(pattern)
-
-	if err != nil {
-		return nil, "", fmt.Errorf("glob key files: %w", err)
-	}
-	if len(matches) == 0 {
-		return nil, "", fmt.Errorf("no keys found")
-	}
-
-	// Find the most recently modified file
-	var newestFile string
-	var newestTime time.Time
-
-	for _, file := range matches {
-		info, err := os.Stat(file)
-		if err != nil {
-			continue
-		}
-		if newestFile == "" || info.ModTime().After(newestTime) {
-			newestFile = file
-			newestTime = info.ModTime()
-		}
-	}
-
-	if newestFile == "" {
-		return nil, "", fmt.Errorf("no valid keys found")
-	}
-
-	keyFile := newestFile
-
-	// Extract key ID from filename
-	filename := filepath.Base(keyFile)
-	keyID := strings.TrimSuffix(filename, ".pem")
-
+func (m *Manager) loadKeyFromDisk(keyFile string) (*rsa.PrivateKey, string, error) {
 	// Read and parse key
 	pemData, err := os.ReadFile(keyFile)
 	if err != nil {
 		return nil, "", fmt.Errorf("read key file: %w", err)
 	}
-
+	keyID := strings.TrimSuffix(filepath.Base(keyFile), ".pem")
 	block, _ := pem.Decode(pemData)
 	if block == nil {
 		return nil, "", fmt.Errorf("invalid PEM format")
@@ -318,6 +271,8 @@ func (m *Manager) saveKeyToDisk(ctx context.Context, privateKey *rsa.PrivateKey,
 		CreatedAt: time.Now(),
 	}
 	if err := m.saveMetadata(keyID, meta); err != nil {
+		// roll back save pem
+		os.Remove(filename)
 		return fmt.Errorf("write key meta file %w", err)
 	}
 
@@ -328,7 +283,13 @@ func (m *Manager) deleteKeyFromDisk(keyID string) error {
 	filename := filepath.Join(m.config.KeyDirectory, keyID+".pem")
 	err := os.Remove(filename)
 	if err != nil {
-		return fmt.Errorf("deleting key from disk: %w", err)
+		return fmt.Errorf("deleting key file from disk: %w", err)
+	}
+
+	metaFilename := filepath.Join(m.config.KeyDirectory, keyID+".json")
+	err = os.Remove(metaFilename)
+	if err != nil {
+		return fmt.Errorf("deleting metadata file from disk: %w", err)
 	}
 	return nil
 }
@@ -360,7 +321,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	// Signal the rotation goroutine to stop
 	close(m.stopRotationCh)
 
-	// wiat for goroutine to exit (with timeout)
+	// wait for goroutine to exit (with timeout)
 	done := make(chan struct{})
 
 	go func() {
@@ -375,7 +336,8 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		// Timeout - goroutine didn't exit in time
 		return ctx.Err()
 	}
-
+	// Recreate channel for potential restart
+	m.stopRotationCh = make(chan struct{})
 	return nil
 }
 
@@ -407,10 +369,13 @@ func (m *Manager) loadPublicKeyFromDisk(keyID string) (*rsa.PublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse private key: %w", err)
 	}
-
-	// validate if the key found is the same size as configuration says
+	// Validate key size is not less than default
+	if privateKey.N.BitLen() < ConfigDefault().KeySize {
+		return nil, fmt.Errorf("key size %d below minimum %d", privateKey.N.BitLen(), ConfigDefault().KeySize)
+	}
+	// Different size OK - just warn
 	if privateKey.N.BitLen() != m.config.KeySize {
-		return nil, errors.New("key found is incorrect size")
+		fmt.Printf("warning: loaded key %s has size %d, config expects %d\n", keyID, privateKey.N.BitLen(), m.config.KeySize)
 	}
 
 	return &privateKey.PublicKey, nil
@@ -431,10 +396,21 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 	}
 	m.mu.RUnlock()
 
-	// Load from disk (outside lock)
+	// Load from disk for resilience (outside lock)
 	publicKey, err := m.loadPublicKeyFromDisk(keyID)
 	if err != nil {
 		return nil, err
+	}
+
+	// Load matadata from json
+	metadata, err := m.loadMetadata(keyID)
+	if err != nil {
+		return nil, ErrKeyNotFound // Metadata missing = key not found
+	}
+
+	// Don't return expired keys
+	if !metadata.ExpiresAt.IsZero() && time.Now().After(metadata.ExpiresAt) {
+		return nil, ErrKeyNotFound
 	}
 
 	// Cache with double-check pattern
@@ -450,9 +426,75 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 	m.keys[keyID] = &KeyPair{
 		ID:        keyID,
 		PublicKey: publicKey,
+		CreatedAt: metadata.CreatedAt,
+		ExpiresAt: metadata.ExpiresAt,
 	}
 
 	return publicKey, nil
+}
+
+// loadAllKeysFromDisk
+func (m *Manager) loadAllKeysFromDisk() error {
+	pattern := filepath.Join(m.config.KeyDirectory, "*.pem")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return fmt.Errorf("glob key files: %w", err)
+	}
+
+	if len(matches) == 0 {
+		return fmt.Errorf("no keys found")
+	}
+
+	var mostRecentKeyID string
+	var mostRecentTime time.Time
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Load ALL keys
+	for _, file := range matches {
+		privateKey, keyID, err := m.loadKeyFromDisk(file)
+		if err != nil {
+			// Skip corrupted files
+			fmt.Printf("warning: failed to load key %s: %v\n", filepath.Base(file), err)
+			continue
+		}
+		// Get keymetadata
+		metadata, err := m.loadMetadata(keyID)
+		if err != nil {
+			// Skip corrupted metadata
+			fmt.Printf("warning: failed to load key metadata %s: %v\n", filepath.Base(file), err)
+			continue
+		}
+
+		// Skip already-expired keys
+		if !metadata.ExpiresAt.IsZero() && time.Now().After(metadata.ExpiresAt) {
+			fmt.Printf("info: skipped expired key %s (expired at %s)\n", keyID, metadata.ExpiresAt.Format(time.RFC3339))
+			continue
+		}
+
+		// Add to keys map
+		m.keys[keyID] = &KeyPair{
+			ID:         keyID,
+			PrivateKey: privateKey,
+			PublicKey:  &privateKey.PublicKey,
+			CreatedAt:  metadata.CreatedAt,
+			ExpiresAt:  metadata.ExpiresAt,
+			cachedJWK:  m.getJWK(privateKey, keyID),
+		}
+
+		if mostRecentKeyID == "" || metadata.CreatedAt.After(mostRecentTime) {
+			mostRecentKeyID = keyID
+			mostRecentTime = metadata.CreatedAt
+		}
+	}
+
+	if mostRecentKeyID == "" {
+		return fmt.Errorf("no valid keys loaded")
+	}
+
+	m.currentKeyID = mostRecentKeyID
+	return nil
 }
 
 func base64urlEncode(data []byte) string {
@@ -467,7 +509,7 @@ func (m *Manager) GetJWKS() (*JWKS, error) {
 		return nil, ErrManagerNotRunning
 	}
 
-	// 2 aquire lock
+	// 2 acquire lock
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -548,6 +590,18 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 	oldKeyID := m.currentKeyID
 	if oldKey, exists := m.keys[oldKeyID]; exists {
 		oldKey.ExpiresAt = time.Now().Add(m.config.KeyOverlapDuration)
+
+		// CRITICAL: Persist the expiration to disk!
+		updatedMeta := KeyMetadata{
+			ID:        oldKeyID,
+			CreatedAt: oldKey.CreatedAt,
+			ExpiresAt: oldKey.ExpiresAt, // ← Now includes expiration
+		}
+		if err := m.saveMetadata(oldKeyID, updatedMeta); err != nil {
+			// Log error but continue - better to have key expire in memory only
+			// than to fail the entire rotation
+			fmt.Printf("warning: failed to persist expiration for old key %s: %v\n", oldKeyID, err)
+		}
 	}
 
 	// 5. Store in memory
@@ -566,7 +620,7 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 	return nil
 }
 
-// rotationSchedulerLoop Sets up the infinite loop that will automatically rotake keys
+// rotationSchedulerLoop Sets up the infinite loop that will automatically rotate keys
 func (m *Manager) rotationSchedulerLoop(ctx context.Context) {
 	m.rotationTicker = time.NewTicker(m.config.KeyRotationInterval)
 
@@ -625,7 +679,7 @@ func (m *Manager) cleanupExpiredKeys() {
 		if keyID == m.currentKeyID {
 			continue
 		}
-		// Remove is expired
+		// Remove if expired
 		if !key.ExpiresAt.IsZero() && now.After(key.ExpiresAt) {
 			// remove from memory
 			delete(m.keys, keyID)
@@ -640,7 +694,11 @@ func (m *Manager) cleanupExpiredKeys() {
 // Save alongside PEM
 func (m *Manager) saveMetadata(keyID string, meta KeyMetadata) error {
 	filename := filepath.Join(m.config.KeyDirectory, keyID+".json")
-	data, _ := json.Marshal(meta)
+	data, err := json.Marshal(meta)
+
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
+	}
 	return os.WriteFile(filename, data, 0600)
 }
 
