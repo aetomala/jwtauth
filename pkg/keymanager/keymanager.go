@@ -29,21 +29,21 @@ const (
 
 type Manager struct {
 	mu                      sync.RWMutex
-	rotationWG              sync.WaitGroup // Wait for goroutine to exit
+	rotationWG              sync.WaitGroup
 	config                  ManagerConfig
-	keys                    map[string]*KeyPair
-	currentKeyID            string
-	stopRotationCh          chan struct{}  // Signal to stop rotation goroutine
-	rotationTicker          *time.Ticker   // Store ticker so we can stop it
-	state                   int32          //0 stopped 1 running
 	rotationSchedulerActive atomic.Bool
+	currentKeyID            string
+	stopRotationCh          chan struct{}
+	rotationTicker          *time.Ticker
+	keys                    map[string]*KeyPair
+	state                   int32
 }
 
 type ManagerConfig struct {
-	KeyRotationInterval time.Duration
-	KeyOverlapDuration  time.Duration
 	Logger              logging.Logger
 	KeyDirectory        string
+	KeyRotationInterval time.Duration
+	KeyOverlapDuration  time.Duration
 	KeySize             int
 }
 
@@ -77,7 +77,7 @@ type JWK struct {
 type KeyPair struct {
 	PrivateKey *rsa.PrivateKey
 	PublicKey  *rsa.PublicKey
-	cachedJWK  *JWK      // cache JWK
+	cachedJWK  *JWK // cache JWK
 	CreatedAt  time.Time
 	ExpiresAt  time.Time // Zero value = never expires
 	ID         string
