@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/google/uuid"
 )
 
@@ -43,6 +44,7 @@ type ManagerConfig struct {
 	KeyRotationInterval time.Duration
 	KeyOverlapDuration  time.Duration
 	KeySize             int
+	Logger              logging.Logger
 }
 
 func ConfigDefault() ManagerConfig {
@@ -171,6 +173,14 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.rotationSchedulerActive.Store(true)
 		m.rotationWG.Add(1)
 		go m.rotationSchedulerLoop(ctx)
+
+		if m.config.Logger != nil {
+			m.config.Logger.Info("generated new RSA key pair",
+				"keyID", m.currentKeyID,
+				"keySize", m.config.KeySize,
+				"duration", time.Since(m.keys[m.currentKeyID].CreatedAt))
+		}
+
 		return nil
 	}
 
@@ -178,6 +188,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	privateKey, err := rsa.GenerateKey(rand.Reader, m.config.KeySize)
 	if err != nil {
 		atomic.StoreInt32(&m.state, StateStopped)
+		if m.config.Logger != nil {
+			m.config.Logger.Error("failed to generate initial key",
+				"error", err)
+		}
 		return fmt.Errorf("generate key: %w", err)
 	}
 
@@ -200,6 +214,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	// 7. Save to disk for persistence
 	if err := m.saveKeyToDisk(ctx, privateKey, keyID); err != nil {
 		atomic.StoreInt32(&m.state, StateStopped)
+		if m.config.Logger != nil {
+			m.config.Logger.Error("failed to save initial key to disk",
+				"error", err)
+		}
 		return fmt.Errorf("generate key: %w", err)
 	}
 
@@ -207,6 +225,19 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.rotationSchedulerActive.Store(true)
 	m.rotationWG.Add(1)
 	go m.rotationSchedulerLoop(ctx)
+
+	if m.config.Logger != nil {
+		m.config.Logger.Info("generated new RSA key pair",
+			"keyID", m.currentKeyID,
+			"keySize", m.config.KeySize,
+			"duration", time.Since(m.keys[m.currentKeyID].CreatedAt))
+	}
+
+	if m.config.Logger != nil {
+		m.config.Logger.Info("key manager started",
+			"keyDirectory", m.config.KeyDirectory,
+			"rotationInterval", m.config.KeyRotationInterval)
+	}
 
 	return nil
 }
@@ -221,6 +252,11 @@ func (m *Manager) loadKeyFromDisk(keyFile string) (*rsa.PrivateKey, string, erro
 	keyID := strings.TrimSuffix(filepath.Base(keyFile), ".pem")
 	block, _ := pem.Decode(pemData)
 	if block == nil {
+		if m.config.Logger != nil {
+			m.config.Logger.Warn("failed to load key file",
+				"file", filepath.Base(keyFile),
+				"error", "invalid PEM format")
+		}
 		return nil, "", fmt.Errorf("invalid PEM format")
 	}
 
@@ -273,7 +309,15 @@ func (m *Manager) saveKeyToDisk(ctx context.Context, privateKey *rsa.PrivateKey,
 	if err := m.saveMetadata(keyID, meta); err != nil {
 		// roll back save pem
 		os.Remove(filename)
+		if m.config.Logger != nil {
+			m.config.Logger.Warn("failed to save key metadata",
+				"keyID", keyID)
+		}
 		return fmt.Errorf("write key meta file %w", err)
+	}
+	if m.config.Logger != nil {
+		m.config.Logger.Info("saved key metadata",
+			"keyID", keyID)
 	}
 
 	return nil
@@ -318,6 +362,10 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		return nil
 	}
 
+	if m.config.Logger != nil {
+		m.config.Logger.Info("initiating graceful shutdown")
+	}
+
 	// Signal the rotation goroutine to stop
 	close(m.stopRotationCh)
 
@@ -338,6 +386,10 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	}
 	// Recreate channel for potential restart
 	m.stopRotationCh = make(chan struct{})
+
+	if m.config.Logger != nil {
+		m.config.Logger.Info("key manager stopped")
+	}
 	return nil
 }
 
@@ -362,6 +414,11 @@ func (m *Manager) loadPublicKeyFromDisk(keyID string) (*rsa.PublicKey, error) {
 
 	block, _ := pem.Decode(pemData)
 	if block == nil {
+		if m.config.Logger != nil {
+			m.config.Logger.Warn("failed to load key file",
+				"file", filepath.Base(keyFile),
+				"error", "invalid PEM format")
+		}
 		return nil, fmt.Errorf("invalid PEM format")
 	}
 
@@ -375,7 +432,12 @@ func (m *Manager) loadPublicKeyFromDisk(keyID string) (*rsa.PublicKey, error) {
 	}
 	// Different size OK - just warn
 	if privateKey.N.BitLen() != m.config.KeySize {
-		fmt.Printf("warning: loaded key %s has size %d, config expects %d\n", keyID, privateKey.N.BitLen(), m.config.KeySize)
+		if m.config.Logger != nil {
+			m.config.Logger.Warn("loaded key",
+				"keyId", keyID,
+				"size", privateKey.N.BitLen(),
+				"configSize", m.config.KeySize)
+		}
 	}
 
 	return &privateKey.PublicKey, nil
@@ -456,20 +518,32 @@ func (m *Manager) loadAllKeysFromDisk() error {
 		privateKey, keyID, err := m.loadKeyFromDisk(file)
 		if err != nil {
 			// Skip corrupted files
-			fmt.Printf("warning: failed to load key %s: %v\n", filepath.Base(file), err)
+			if m.config.Logger != nil {
+				m.config.Logger.Warn("failed to load key",
+					"keyID", m.currentKeyID,
+					"error", err)
+			}
 			continue
 		}
 		// Get keymetadata
 		metadata, err := m.loadMetadata(keyID)
 		if err != nil {
 			// Skip corrupted metadata
-			fmt.Printf("warning: failed to load key metadata %s: %v\n", filepath.Base(file), err)
+			if m.config.Logger != nil {
+				m.config.Logger.Warn("failed to load key metadata",
+					"keyID", filepath.Base(file),
+					"error", err)
+			}
 			continue
 		}
 
 		// Skip already-expired keys
 		if !metadata.ExpiresAt.IsZero() && time.Now().After(metadata.ExpiresAt) {
-			fmt.Printf("info: skipped expired key %s (expired at %s)\n", keyID, metadata.ExpiresAt.Format(time.RFC3339))
+			if m.config.Logger != nil {
+				m.config.Logger.Info("fskipped expired key",
+					"keyID", keyID,
+					"expiredAt", metadata.ExpiresAt.Format(time.RFC3339))
+			}
 			continue
 		}
 
@@ -494,6 +568,14 @@ func (m *Manager) loadAllKeysFromDisk() error {
 	}
 
 	m.currentKeyID = mostRecentKeyID
+
+	if m.config.Logger != nil {
+		m.config.Logger.Info("set current key", "keyID", m.currentKeyID)
+	}
+
+	if m.config.Logger != nil {
+		m.config.Logger.Info("loaded keys from disk", "count", len(m.keys))
+	}
 	return nil
 }
 
@@ -563,9 +645,13 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
+		if m.config.Logger != nil {
+			m.config.Logger.Warn("operation cancelled")
+		}
 		return ctx.Err()
 	default:
 	}
+	startTime := time.Now()
 	//1. Acquire lock
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -576,6 +662,10 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 	// 2. Generate new RSA key pair
 	privatekey, err := rsa.GenerateKey(rand.Reader, m.config.KeySize)
 	if err != nil {
+		if m.config.Logger != nil {
+			m.config.Logger.Error("key rotation failed",
+				"error", err)
+		}
 		return fmt.Errorf("generate key: %w", err)
 	}
 	// 3. Generate new key ID (UUID)
@@ -583,12 +673,17 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 
 	// 4. Save to disk for persistence
 	if err := m.saveKeyToDisk(ctx, privatekey, keyID); err != nil {
+		if m.config.Logger != nil {
+			m.config.Logger.Error("key rotation failed",
+				"error", err)
+		}
 		return fmt.Errorf("save key: %w", err)
 	}
 
 	// Update old key expiration before switching
 	oldKeyID := m.currentKeyID
-	if oldKey, exists := m.keys[oldKeyID]; exists {
+	oldKey, exists := m.keys[oldKeyID]
+	if exists {
 		oldKey.ExpiresAt = time.Now().Add(m.config.KeyOverlapDuration)
 
 		// CRITICAL: Persist the expiration to disk!
@@ -600,7 +695,15 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 		if err := m.saveMetadata(oldKeyID, updatedMeta); err != nil {
 			// Log error but continue - better to have key expire in memory only
 			// than to fail the entire rotation
-			fmt.Printf("warning: failed to persist expiration for old key %s: %v\n", oldKeyID, err)
+			if m.config.Logger != nil {
+				m.config.Logger.Warn("failed to persist expiration for old key",
+					"oldKey", oldKeyID,
+					"error", err)
+			}
+		}
+		if m.config.Logger != nil {
+			m.config.Logger.Info("saved key metadata",
+				"keyID", oldKeyID)
 		}
 	}
 
@@ -615,6 +718,15 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 		CreatedAt:  time.Now(),
 		ExpiresAt:  time.Time{},
 		cachedJWK:  m.getJWK(privatekey, keyID),
+	}
+	if m.config.Logger != nil {
+		m.config.Logger.Info("key rotation successful",
+			"newKeyID", keyID,
+			"oldKeyID", oldKeyID,
+			"duration", time.Since(startTime),
+		)
+		m.config.Logger.Info("old key marked for expiration",
+			"expiresAt", oldKey.ExpiresAt)
 	}
 
 	return nil
@@ -648,8 +760,14 @@ func (m *Manager) rotationSchedulerLoop(ctx context.Context) {
 		select {
 		case <-m.rotationTicker.C:
 			// Rotation time!
+			if m.config.Logger != nil {
+				m.config.Logger.Info("automatic rotation triggered")
+			}
 			if err := m.RotateKeys(ctx); err != nil {
-				fmt.Printf("rotation failed: %v\n", err)
+				if m.config.Logger != nil {
+					m.config.Logger.Error("rotation failed",
+						"error", err)
+				}
 			}
 			// Also cleanup right after rotation
 			m.cleanupExpiredKeys()
@@ -674,6 +792,8 @@ func (m *Manager) cleanupExpiredKeys() {
 	defer m.mu.Unlock()
 
 	now := time.Now()
+	count := 0
+	deletedKeys := []string{}
 	for keyID, key := range m.keys {
 		// Never remove current key
 		if keyID == m.currentKeyID {
@@ -685,8 +805,22 @@ func (m *Manager) cleanupExpiredKeys() {
 			delete(m.keys, keyID)
 			// remove from disk
 			if err := m.deleteKeyFromDisk(keyID); err != nil {
-				fmt.Printf("delete key failed: %v\n", err)
+				if m.config.Logger != nil {
+					m.config.Logger.Error("delete key failed",
+						"error", err)
+				}
+			} else {
+				count++
 			}
+			deletedKeys = append(deletedKeys, keyID)
+		}
+	}
+	if m.config.Logger != nil {
+		m.config.Logger.Info("expired key cleanup executed",
+			"deletedCount", count)
+		for _, key := range deletedKeys {
+			m.config.Logger.Info("deleted expired key",
+				"keyID", key)
 		}
 	}
 }

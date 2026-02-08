@@ -1,6 +1,9 @@
 package logging
 
-import "log/slog"
+import (
+	"log/slog"
+	"os"
+)
 
 // SlogAdapter adapts Go's standard library log/slog to the Logger interface.
 // This is the recommended logger for production use as it has no external
