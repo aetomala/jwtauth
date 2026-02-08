@@ -1,0 +1,38 @@
+# Git
+.git
+.gitignore
+.github
+
+# Documentation
+*.md
+doc/
+docs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test coverage
+coverage.txt
+coverage-ginkgo.txt
+*.out
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Keys (generated at runtime)
+keys/
+*.pem
+*.json
+
+# CI/CD
+.github/
+
+# Examples (keep source but ignore binaries)
+examples/**/main
+examples/**/*.exe
