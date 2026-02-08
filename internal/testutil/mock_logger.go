@@ -36,16 +36,16 @@ var _ logging.Logger = (*MockLogger)(nil)
 //			t.Error("Expected rotation log with keyID field")
 //	}
 type MockLogger struct {
-	mu     sync.RWMutex
 	logs   []LogEntry
+	mu     sync.RWMutex
 	enable bool
 }
 
 // LogEntry represents a single log entry captured by MockLogger.
 type LogEntry struct {
+	Fields  map[string]interface{} // Structured fields (key-value pairs)
 	Level   string                 // "info","warn","error"
 	Message string                 // Log message
-	Fields  map[string]interface{} // Structured fields (key-value pairs)
 }
 
 // NewMockLogger create a new MockLogger instance.
@@ -155,7 +155,7 @@ func (m *MockLogger) HasLog(level, message string) bool {
 //
 // Example:
 //
-//	if mockLogger.HasLogWithField("info", "key rotation successfull", "keyID"){
+//	if mockLogger.HasLogWithField("info", "key rotation successful", "keyID"){
 //			// Test passes - log had keyID field
 //	}
 func (m *MockLogger) HasLogWithField(level string, message string, fieldKey string) bool {
