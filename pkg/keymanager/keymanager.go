@@ -100,6 +100,18 @@ func (m *Manager) IsRunning() bool {
 	return atomic.LoadInt32(&m.state) == StateStarted
 }
 
+// Mu returns the manager's read-write mutex for testing purposes.
+// This is exported only for use in tests that need to manipulate the cache.
+func (m *Manager) Mu() *sync.RWMutex {
+	return &m.mu
+}
+
+// Keys returns the manager's key cache map for testing purposes.
+// This is exported only for use in tests that need to inspect or manipulate the cache.
+func (m *Manager) Keys() map[string]*KeyPair {
+	return m.keys
+}
+
 // NewManager KeyManager constructor
 func NewManager(config ManagerConfig) (*Manager, error) {
 	// 1. Validate required fields
