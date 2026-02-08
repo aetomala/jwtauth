@@ -28,13 +28,13 @@ const (
 )
 
 type Manager struct {
-	config                  ManagerConfig
-	mu                      sync.RWMutex
-	rotationWG              sync.WaitGroup
 	keys                    map[string]*KeyPair
-	currentKeyID            string
 	stopRotationCh          chan struct{}
 	rotationTicker          *time.Ticker
+	currentKeyID            string
+	config                  ManagerConfig
+	rotationWG              sync.WaitGroup
+	mu                      sync.RWMutex
 	rotationSchedulerActive atomic.Bool
 	state                   int32
 }
