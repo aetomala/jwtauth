@@ -26,7 +26,6 @@ linters-settings:
     check-type-assertions: true
 
   govet:
-    check-shadowing: true
     enable-all: true
 
   revive:
@@ -49,6 +48,7 @@ issues:
   max-same-issues: 0
 
 output:
-  format: colored-line-number
+  formats:
+    - format: github-actions
   print-issued-lines: true
   print-linter-name: true
