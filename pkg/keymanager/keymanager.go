@@ -28,23 +28,23 @@ const (
 )
 
 type Manager struct {
-	config                  ManagerConfig
-	state                   int32 //0 stopped 1 running
-	currentKeyID            string
-	rotationSchedulerActive atomic.Bool
 	mu                      sync.RWMutex
-	keys                    map[string]*KeyPair
-	stopRotationCh          chan struct{}  // Signal to stop rotation goroutine
 	rotationWG              sync.WaitGroup // Wait for goroutine to exit
+	config                  ManagerConfig
+	keys                    map[string]*KeyPair
+	currentKeyID            string
+	stopRotationCh          chan struct{}  // Signal to stop rotation goroutine
 	rotationTicker          *time.Ticker   // Store ticker so we can stop it
+	state                   int32          //0 stopped 1 running
+	rotationSchedulerActive atomic.Bool
 }
 
 type ManagerConfig struct {
-	KeyDirectory        string
 	KeyRotationInterval time.Duration
 	KeyOverlapDuration  time.Duration
-	KeySize             int
 	Logger              logging.Logger
+	KeyDirectory        string
+	KeySize             int
 }
 
 func ConfigDefault() ManagerConfig {
@@ -56,9 +56,9 @@ func ConfigDefault() ManagerConfig {
 }
 
 type KeyMetadata struct {
-	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+	ID        string    `json:"id"`
 }
 
 type JWKS struct {
@@ -75,12 +75,12 @@ type JWK struct {
 }
 
 type KeyPair struct {
-	ID         string
 	PrivateKey *rsa.PrivateKey
 	PublicKey  *rsa.PublicKey
+	cachedJWK  *JWK      // cache JWK
 	CreatedAt  time.Time
 	ExpiresAt  time.Time // Zero value = never expires
-	cachedJWK  *JWK      // cache JWK
+	ID         string
 }
 
 // Sentinel Errors

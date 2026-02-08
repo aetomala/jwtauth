@@ -329,8 +329,8 @@ var _ = Describe("Keymanager", func() {
 			Expect(publicKey.N).NotTo(BeNil())
 		})
 
-		It("should return erro for unknown key ID", func() {
-			_, err := manager.GetPublicKey("unkown-key-id")
+		It("should return error for unknown key ID", func() {
+			_, err := manager.GetPublicKey("unknown-key-id")
 			Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
 		})
 
@@ -885,7 +885,7 @@ var _ = Describe("KeyManager Shutdown", func() {
 })
 
 // === SEPARATE SUITE: Key Persistence ===
-var _ = Describe("KeyManager Persistense", func() {
+var _ = Describe("KeyManager Persistence", func() {
 	var (
 		config  keymanager.ManagerConfig
 		tempDir string
@@ -1076,10 +1076,10 @@ var _ = Describe("KeyManager Logging", func() {
 	Describe("Logger Integration", func() {
 		Context("when logger is provided", func() {
 			It("should use the provided logger", func() {
-				manager, err := keymanager.NewManager(config)
+				mgr, err := keymanager.NewManager(config)
 				Expect(err).NotTo(HaveOccurred())
 
-				err = manager.Start(ctx)
+				err = mgr.Start(ctx)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Should have some logs from startup
@@ -1089,8 +1089,8 @@ var _ = Describe("KeyManager Logging", func() {
 			})
 
 			It("should log structured key-value pairs", func() {
-				manager, _ = keymanager.NewManager(config)
-				manager.Start(ctx)
+				mgr, _ := keymanager.NewManager(config)
+				mgr.Start(ctx)
 
 				// All logs should have fields (key-value pairs)
 				logs := mockLogger.GetLogs()
@@ -1098,18 +1098,21 @@ var _ = Describe("KeyManager Logging", func() {
 					// Each log entry should have a message
 					Expect(log.Message).NotTo(BeEmpty())
 				}
+				mgr.Shutdown(ctx)
 			})
 		})
 		Context("when logger is nil", func() {
 			It("should work without logging", func() {
 				config.Logger = nil
-				manager, err := keymanager.NewManager(config)
+				mgr, err := keymanager.NewManager(config)
 				Expect(err).NotTo(HaveOccurred())
 
-				err = manager.Start(ctx)
+				err = mgr.Start(ctx)
+				Expect(err).NotTo(HaveOccurred())
 
 				// Should work fine without logger
-				Expect(manager.IsRunning()).To(BeTrue())
+				Expect(mgr.IsRunning()).To(BeTrue())
+				mgr.Shutdown(ctx)
 			})
 		})
 	})
