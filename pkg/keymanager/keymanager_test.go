@@ -387,325 +387,325 @@ var _ = Describe("Keymanager", func() {
 			Expect(publicKey.E).To(Equal(privateKey.PublicKey.E))
 		})
 
-	Context("with whitespace in keyID", func() {
-		It("should trim leading whitespace", func() {
-			publicKey, err := manager.GetPublicKey("  " + currentKeyID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(publicKey).NotTo(BeNil())
-		})
-
-		It("should trim trailing whitespace", func() {
-			publicKey, err := manager.GetPublicKey(currentKeyID + "  ")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(publicKey).NotTo(BeNil())
-		})
-
-		It("should trim both leading and trailing whitespace", func() {
-			publicKey, err := manager.GetPublicKey("  " + currentKeyID + "  ")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(publicKey).NotTo(BeNil())
-		})
-	})
-
-	Context("with cache scenarios", func() {
-		It("should return cached key on subsequent calls", func() {
-			publicKey1, err1 := manager.GetPublicKey(currentKeyID)
-			Expect(err1).NotTo(HaveOccurred())
-
-			publicKey2, err2 := manager.GetPublicKey(currentKeyID)
-			Expect(err2).NotTo(HaveOccurred())
-
-			Expect(publicKey1.N).To(Equal(publicKey2.N))
-			Expect(publicKey1.E).To(Equal(publicKey2.E))
-		})
-
-		It("should handle concurrent cache access", func() {
-			const numGoroutines = 20
-			var wg sync.WaitGroup
-			results := make(chan error, numGoroutines)
-
-			for i := 0; i < numGoroutines; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					defer GinkgoRecover()
-					_, err := manager.GetPublicKey(currentKeyID)
-					results <- err
-				}()
-			}
-
-			wg.Wait()
-			close(results)
-
-			for err := range results {
+		Context("with whitespace in keyID", func() {
+			It("should trim leading whitespace", func() {
+				publicKey, err := manager.GetPublicKey("  " + currentKeyID)
 				Expect(err).NotTo(HaveOccurred())
-			}
-		})
-	})
+				Expect(publicKey).NotTo(BeNil())
+			})
 
-	Context("error handling", func() {
-		It("should return ErrInvalidKeyID for whitespace-only keyID", func() {
-			_, err := manager.GetPublicKey("   ")
-			Expect(err).To(MatchError(ContainSubstring("key ID")))
-		})
+			It("should trim trailing whitespace", func() {
+				publicKey, err := manager.GetPublicKey(currentKeyID + "  ")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(publicKey).NotTo(BeNil())
+			})
 
-		It("should return error for non-existent key", func() {
-			_, err := manager.GetPublicKey("non-existent-key-id-12345")
-			Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
-		})
-	})
-
-	Context("disk loading (cache miss)", func() {
-		It("should load key from disk when not in cache", func() {
-			// Get the current key and ensure it's cached
-			publicKey1, err := manager.GetPublicKey(currentKeyID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(publicKey1).NotTo(BeNil())
-
-			// Clear the cache to force disk loading
-			manager.Mu().Lock()
-			delete(manager.Keys(), currentKeyID)
-			manager.Mu().Unlock()
-
-			// Load again - should load from disk
-			publicKey2, err := manager.GetPublicKey(currentKeyID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(publicKey2).NotTo(BeNil())
-			// Should be the same key
-			Expect(publicKey2.N).To(Equal(publicKey1.N))
-			Expect(publicKey2.E).To(Equal(publicKey1.E))
+			It("should trim both leading and trailing whitespace", func() {
+				publicKey, err := manager.GetPublicKey("  " + currentKeyID + "  ")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(publicKey).NotTo(BeNil())
+			})
 		})
 
-		It("should re-cache key after loading from disk", func() {
-			// Get key and cache it
-			_, err := manager.GetPublicKey(currentKeyID)
-			Expect(err).NotTo(HaveOccurred())
+		Context("with cache scenarios", func() {
+			It("should return cached key on subsequent calls", func() {
+				publicKey1, err1 := manager.GetPublicKey(currentKeyID)
+				Expect(err1).NotTo(HaveOccurred())
 
-			// Clear cache
-			manager.Mu().Lock()
-			delete(manager.Keys(), currentKeyID)
-			manager.Mu().Unlock()
+				publicKey2, err2 := manager.GetPublicKey(currentKeyID)
+				Expect(err2).NotTo(HaveOccurred())
 
-			// Load again - should reload from disk and re-cache
-			_, err = manager.GetPublicKey(currentKeyID)
-			Expect(err).NotTo(HaveOccurred())
+				Expect(publicKey1.N).To(Equal(publicKey2.N))
+				Expect(publicKey1.E).To(Equal(publicKey2.E))
+			})
 
-			// Verify it's back in cache
-			manager.Mu().RLock()
-			_, exists := manager.Keys()[currentKeyID]
-			manager.Mu().RUnlock()
-			Expect(exists).To(BeTrue())
-		})
-	})
+			It("should handle concurrent cache access", func() {
+				const numGoroutines = 20
+				var wg sync.WaitGroup
+				results := make(chan error, numGoroutines)
 
-	Context("expired keys", func() {
-		It("should return ErrKeyNotFound for expired key", func() {
-			// Get the current key to ensure files exist
-			publicKey1, err := manager.GetPublicKey(currentKeyID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(publicKey1).NotTo(BeNil())
-
-			// Clear cache
-			manager.Mu().Lock()
-			delete(manager.Keys(), currentKeyID)
-			manager.Mu().Unlock()
-
-			// Modify the metadata file to have an expiration in the past
-			metadataFile := filepath.Join(config.KeyDirectory, currentKeyID+".json")
-			expiredMeta := keymanager.KeyMetadata{
-				ID:        currentKeyID,
-				CreatedAt: time.Now().Add(-48 * time.Hour),
-				ExpiresAt: time.Now().Add(-24 * time.Hour), // Expired yesterday
-			}
-			metaBytes, err := json.Marshal(expiredMeta)
-			Expect(err).NotTo(HaveOccurred())
-			err = os.WriteFile(metadataFile, metaBytes, 0644)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Try to load expired key
-			_, err = manager.GetPublicKey(currentKeyID)
-			Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
-		})
-	})
-
-	Context("missing metadata", func() {
-		It("should return ErrKeyNotFound when metadata file is missing", func() {
-			// Get the current key to ensure PEM file exists
-			publicKey1, err := manager.GetPublicKey(currentKeyID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(publicKey1).NotTo(BeNil())
-
-			// Clear cache
-			manager.Mu().Lock()
-			delete(manager.Keys(), currentKeyID)
-			manager.Mu().Unlock()
-
-			// Delete the metadata file
-			metadataFile := filepath.Join(config.KeyDirectory, currentKeyID+".json")
-			err = os.Remove(metadataFile)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Try to load key without metadata
-			_, err = manager.GetPublicKey(currentKeyID)
-			Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
-		})
-	})
-
-	Context("double-check locking pattern", func() {
-		It("should handle race condition when multiple goroutines load same key", func() {
-			// Clear cache to force disk loading
-			manager.Mu().Lock()
-			delete(manager.Keys(), currentKeyID)
-			manager.Mu().Unlock()
-
-			const numGoroutines = 10
-			var wg sync.WaitGroup
-			results := make(chan *rsa.PublicKey, numGoroutines)
-			errChan := make(chan error, numGoroutines)
-
-			// Launch multiple goroutines to load the same non-cached key concurrently
-			for i := 0; i < numGoroutines; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					defer GinkgoRecover()
-					key, err := manager.GetPublicKey(currentKeyID)
-					results <- key
-					errChan <- err
-				}()
-			}
-
-			wg.Wait()
-			close(results)
-			close(errChan)
-
-			// Verify all goroutines succeeded and got the same key
-			var firstKey *rsa.PublicKey
-			for key := range results {
-				Expect(key).NotTo(BeNil())
-				if firstKey == nil {
-					firstKey = key
-				} else {
-					Expect(key.N).To(Equal(firstKey.N))
-					Expect(key.E).To(Equal(firstKey.E))
+				for i := 0; i < numGoroutines; i++ {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						defer GinkgoRecover()
+						_, err := manager.GetPublicKey(currentKeyID)
+						results <- err
+					}()
 				}
-			}
 
-			for err := range errChan {
+				wg.Wait()
+				close(results)
+
+				for err := range results {
+					Expect(err).NotTo(HaveOccurred())
+				}
+			})
+		})
+
+		Context("error handling", func() {
+			It("should return ErrInvalidKeyID for whitespace-only keyID", func() {
+				_, err := manager.GetPublicKey("   ")
+				Expect(err).To(MatchError(ContainSubstring("key ID")))
+			})
+
+			It("should return error for non-existent key", func() {
+				_, err := manager.GetPublicKey("non-existent-key-id-12345")
+				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+			})
+		})
+
+		Context("disk loading (cache miss)", func() {
+			It("should load key from disk when not in cache", func() {
+				// Get the current key and ensure it's cached
+				publicKey1, err := manager.GetPublicKey(currentKeyID)
 				Expect(err).NotTo(HaveOccurred())
-			}
+				Expect(publicKey1).NotTo(BeNil())
 
-			// Verify key is in cache after concurrent load
-			manager.Mu().RLock()
-			_, exists := manager.Keys()[currentKeyID]
-			manager.Mu().RUnlock()
-			Expect(exists).To(BeTrue())
-		})
-	})
+				// Clear the cache to force disk loading
+				manager.Mu().Lock()
+				delete(manager.Keys(), currentKeyID)
+				manager.Mu().Unlock()
 
-	Context("loadPublicKeyFromDisk error paths", func() {
-		var keyIDWithBadPEM string
+				// Load again - should load from disk
+				publicKey2, err := manager.GetPublicKey(currentKeyID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(publicKey2).NotTo(BeNil())
+				// Should be the same key
+				Expect(publicKey2.N).To(Equal(publicKey1.N))
+				Expect(publicKey2.E).To(Equal(publicKey1.E))
+			})
 
-		BeforeEach(func() {
-			manager, _ = keymanager.NewManager(config)
-			manager.Start(ctx)
-			keyIDWithBadPEM = "bad-pem-key"
-		})
+			It("should re-cache key after loading from disk", func() {
+				// Get key and cache it
+				_, err := manager.GetPublicKey(currentKeyID)
+				Expect(err).NotTo(HaveOccurred())
 
-		It("should return error for invalid PEM format", func() {
-			// Create a PEM file with invalid format
-			pemFile := filepath.Join(config.KeyDirectory, keyIDWithBadPEM+".pem")
-			badPEM := []byte("-----BEGIN INVALID-----\ngarbage data\n-----END INVALID-----")
-			err := os.WriteFile(pemFile, badPEM, 0644)
-			Expect(err).NotTo(HaveOccurred())
+				// Clear cache
+				manager.Mu().Lock()
+				delete(manager.Keys(), currentKeyID)
+				manager.Mu().Unlock()
 
-			// Create metadata file so metadata loading succeeds
-			metadataFile := filepath.Join(config.KeyDirectory, keyIDWithBadPEM+".json")
-			metaData := keymanager.KeyMetadata{
-				ID:        keyIDWithBadPEM,
-				CreatedAt: time.Now(),
-				ExpiresAt: time.Time{},
-			}
-			metaBytes, _ := json.Marshal(metaData)
-			os.WriteFile(metadataFile, metaBytes, 0644)
+				// Load again - should reload from disk and re-cache
+				_, err = manager.GetPublicKey(currentKeyID)
+				Expect(err).NotTo(HaveOccurred())
 
-			// Try to load key with bad PEM
-			_, err = manager.GetPublicKey(keyIDWithBadPEM)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("invalid PEM"))
+				// Verify it's back in cache
+				manager.Mu().RLock()
+				_, exists := manager.Keys()[currentKeyID]
+				manager.Mu().RUnlock()
+				Expect(exists).To(BeTrue())
+			})
 		})
 
-		It("should return error for key below minimum size", func() {
-			// Generate a 1024-bit key (below minimum 2048)
-			smallKey, err := rsa.GenerateKey(rand.Reader, 1024)
-			Expect(err).NotTo(HaveOccurred())
+		Context("expired keys", func() {
+			It("should return ErrKeyNotFound for expired key", func() {
+				// Get the current key to ensure files exist
+				publicKey1, err := manager.GetPublicKey(currentKeyID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(publicKey1).NotTo(BeNil())
 
-			// Encode as PEM
-			keyBytes := x509.MarshalPKCS1PrivateKey(smallKey)
-			pemBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
-			pemFile := filepath.Join(config.KeyDirectory, "small-key.pem")
-			pemData := pem.EncodeToMemory(pemBlock)
-			err = os.WriteFile(pemFile, pemData, 0644)
-			Expect(err).NotTo(HaveOccurred())
+				// Clear cache
+				manager.Mu().Lock()
+				delete(manager.Keys(), currentKeyID)
+				manager.Mu().Unlock()
 
-			// Create metadata
-			metadataFile := filepath.Join(config.KeyDirectory, "small-key.json")
-			metaData := keymanager.KeyMetadata{
-				ID:        "small-key",
-				CreatedAt: time.Now(),
-				ExpiresAt: time.Time{},
-			}
-			metaBytes, _ := json.Marshal(metaData)
-			os.WriteFile(metadataFile, metaBytes, 0644)
+				// Modify the metadata file to have an expiration in the past
+				metadataFile := filepath.Join(config.KeyDirectory, currentKeyID+".json")
+				expiredMeta := keymanager.KeyMetadata{
+					ID:        currentKeyID,
+					CreatedAt: time.Now().Add(-48 * time.Hour),
+					ExpiresAt: time.Now().Add(-24 * time.Hour), // Expired yesterday
+				}
+				metaBytes, err := json.Marshal(expiredMeta)
+				Expect(err).NotTo(HaveOccurred())
+				err = os.WriteFile(metadataFile, metaBytes, 0644)
+				Expect(err).NotTo(HaveOccurred())
 
-			// Try to load undersized key
-			_, err = manager.GetPublicKey("small-key")
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("below minimum"))
+				// Try to load expired key
+				_, err = manager.GetPublicKey(currentKeyID)
+				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+			})
 		})
 
-		It("should return error when PEM file is unreadable", func() {
-			// Create a PEM file and make it unreadable
-			pemFile := filepath.Join(config.KeyDirectory, "unreadable.pem")
-			err := os.WriteFile(pemFile, []byte("test"), 0000)
-			Expect(err).NotTo(HaveOccurred())
-			defer os.Chmod(pemFile, 0644) // Cleanup
+		Context("missing metadata", func() {
+			It("should return ErrKeyNotFound when metadata file is missing", func() {
+				// Get the current key to ensure PEM file exists
+				publicKey1, err := manager.GetPublicKey(currentKeyID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(publicKey1).NotTo(BeNil())
 
-			// Try to load unreadable key
-			_, err = manager.GetPublicKey("unreadable")
-			Expect(err).To(HaveOccurred())
+				// Clear cache
+				manager.Mu().Lock()
+				delete(manager.Keys(), currentKeyID)
+				manager.Mu().Unlock()
+
+				// Delete the metadata file
+				metadataFile := filepath.Join(config.KeyDirectory, currentKeyID+".json")
+				err = os.Remove(metadataFile)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Try to load key without metadata
+				_, err = manager.GetPublicKey(currentKeyID)
+				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+			})
 		})
 
-		It("should warn when key size differs from config", func() {
-			// Generate a 4096-bit key when config expects 2048
-			largeKey, err := rsa.GenerateKey(rand.Reader, 4096)
-			Expect(err).NotTo(HaveOccurred())
+		Context("double-check locking pattern", func() {
+			It("should handle race condition when multiple goroutines load same key", func() {
+				// Clear cache to force disk loading
+				manager.Mu().Lock()
+				delete(manager.Keys(), currentKeyID)
+				manager.Mu().Unlock()
 
-			// Encode as PEM
-			keyBytes := x509.MarshalPKCS1PrivateKey(largeKey)
-			pemBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
-			pemFile := filepath.Join(config.KeyDirectory, "large-key.pem")
-			pemData := pem.EncodeToMemory(pemBlock)
-			err = os.WriteFile(pemFile, pemData, 0644)
-			Expect(err).NotTo(HaveOccurred())
+				const numGoroutines = 10
+				var wg sync.WaitGroup
+				results := make(chan *rsa.PublicKey, numGoroutines)
+				errChan := make(chan error, numGoroutines)
 
-			// Create metadata
-			metadataFile := filepath.Join(config.KeyDirectory, "large-key.json")
-			metaData := keymanager.KeyMetadata{
-				ID:        "large-key",
-				CreatedAt: time.Now(),
-				ExpiresAt: time.Time{},
-			}
-			metaBytes, _ := json.Marshal(metaData)
-			os.WriteFile(metadataFile, metaBytes, 0644)
+				// Launch multiple goroutines to load the same non-cached key concurrently
+				for i := 0; i < numGoroutines; i++ {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						defer GinkgoRecover()
+						key, err := manager.GetPublicKey(currentKeyID)
+						results <- key
+						errChan <- err
+					}()
+				}
 
-			// Load key - should succeed but with warning
-			publicKey, err := manager.GetPublicKey("large-key")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(publicKey).NotTo(BeNil())
-			Expect(publicKey.N.BitLen()).To(Equal(4096))
+				wg.Wait()
+				close(results)
+				close(errChan)
+
+				// Verify all goroutines succeeded and got the same key
+				var firstKey *rsa.PublicKey
+				for key := range results {
+					Expect(key).NotTo(BeNil())
+					if firstKey == nil {
+						firstKey = key
+					} else {
+						Expect(key.N).To(Equal(firstKey.N))
+						Expect(key.E).To(Equal(firstKey.E))
+					}
+				}
+
+				for err := range errChan {
+					Expect(err).NotTo(HaveOccurred())
+				}
+
+				// Verify key is in cache after concurrent load
+				manager.Mu().RLock()
+				_, exists := manager.Keys()[currentKeyID]
+				manager.Mu().RUnlock()
+				Expect(exists).To(BeTrue())
+			})
 		})
-	})
+
+		Context("loadPublicKeyFromDisk error paths", func() {
+			var keyIDWithBadPEM string
+
+			BeforeEach(func() {
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+				keyIDWithBadPEM = "bad-pem-key"
+			})
+
+			It("should return error for invalid PEM format", func() {
+				// Create a PEM file with invalid format
+				pemFile := filepath.Join(config.KeyDirectory, keyIDWithBadPEM+".pem")
+				badPEM := []byte("-----BEGIN INVALID-----\ngarbage data\n-----END INVALID-----")
+				err := os.WriteFile(pemFile, badPEM, 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create metadata file so metadata loading succeeds
+				metadataFile := filepath.Join(config.KeyDirectory, keyIDWithBadPEM+".json")
+				metaData := keymanager.KeyMetadata{
+					ID:        keyIDWithBadPEM,
+					CreatedAt: time.Now(),
+					ExpiresAt: time.Time{},
+				}
+				metaBytes, _ := json.Marshal(metaData)
+				os.WriteFile(metadataFile, metaBytes, 0644)
+
+				// Try to load key with bad PEM
+				_, err = manager.GetPublicKey(keyIDWithBadPEM)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("invalid PEM"))
+			})
+
+			It("should return error for key below minimum size", func() {
+				// Generate a 1024-bit key (below minimum 2048)
+				smallKey, err := rsa.GenerateKey(rand.Reader, 1024)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Encode as PEM
+				keyBytes := x509.MarshalPKCS1PrivateKey(smallKey)
+				pemBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
+				pemFile := filepath.Join(config.KeyDirectory, "small-key.pem")
+				pemData := pem.EncodeToMemory(pemBlock)
+				err = os.WriteFile(pemFile, pemData, 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create metadata
+				metadataFile := filepath.Join(config.KeyDirectory, "small-key.json")
+				metaData := keymanager.KeyMetadata{
+					ID:        "small-key",
+					CreatedAt: time.Now(),
+					ExpiresAt: time.Time{},
+				}
+				metaBytes, _ := json.Marshal(metaData)
+				os.WriteFile(metadataFile, metaBytes, 0644)
+
+				// Try to load undersized key
+				_, err = manager.GetPublicKey("small-key")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("below minimum"))
+			})
+
+			It("should return error when PEM file is unreadable", func() {
+				// Create a PEM file and make it unreadable
+				pemFile := filepath.Join(config.KeyDirectory, "unreadable.pem")
+				err := os.WriteFile(pemFile, []byte("test"), 0000)
+				Expect(err).NotTo(HaveOccurred())
+				defer os.Chmod(pemFile, 0644) // Cleanup
+
+				// Try to load unreadable key
+				_, err = manager.GetPublicKey("unreadable")
+				Expect(err).To(HaveOccurred())
+			})
+
+			It("should warn when key size differs from config", func() {
+				// Generate a 4096-bit key when config expects 2048
+				largeKey, err := rsa.GenerateKey(rand.Reader, 4096)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Encode as PEM
+				keyBytes := x509.MarshalPKCS1PrivateKey(largeKey)
+				pemBlock := &pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes}
+				pemFile := filepath.Join(config.KeyDirectory, "large-key.pem")
+				pemData := pem.EncodeToMemory(pemBlock)
+				err = os.WriteFile(pemFile, pemData, 0644)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Create metadata
+				metadataFile := filepath.Join(config.KeyDirectory, "large-key.json")
+				metaData := keymanager.KeyMetadata{
+					ID:        "large-key",
+					CreatedAt: time.Now(),
+					ExpiresAt: time.Time{},
+				}
+				metaBytes, _ := json.Marshal(metaData)
+				os.WriteFile(metadataFile, metaBytes, 0644)
+
+				// Load key - should succeed but with warning
+				publicKey, err := manager.GetPublicKey("large-key")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(publicKey).NotTo(BeNil())
+				Expect(publicKey.N.BitLen()).To(Equal(4096))
+			})
+		})
 	})
 
 	// === PHASE 4: JWKS (JSON Web Key Set) ===
