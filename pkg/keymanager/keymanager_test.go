@@ -392,7 +392,7 @@ var _ = Describe("Keymanager", func() {
 			Expect(jwk.N).NotTo(BeEmpty())
 			Expect(jwk.E).NotTo(BeEmpty())
 		})
-		// Perhaps premature test
+
 		It("should only include valid (non-expired) keys", func() {
 			jwks, err := manager.GetJWKS()
 			Expect(err).NotTo(HaveOccurred())
