@@ -28,23 +28,23 @@ const (
 )
 
 type Manager struct {
-	config                  ManagerConfig
-	state                   int32 //0 stopped 1 running
-	currentKeyID            string
-	rotationSchedulerActive atomic.Bool
-	mu                      sync.RWMutex
 	keys                    map[string]*KeyPair
-	stopRotationCh          chan struct{}  // Signal to stop rotation goroutine
-	rotationWG              sync.WaitGroup // Wait for goroutine to exit
-	rotationTicker          *time.Ticker   // Store ticker so we can stop it
+	stopRotationCh          chan struct{}
+	rotationTicker          *time.Ticker
+	currentKeyID            string
+	config                  ManagerConfig
+	rotationWG              sync.WaitGroup
+	mu                      sync.RWMutex
+	rotationSchedulerActive atomic.Bool
+	state                   int32
 }
 
 type ManagerConfig struct {
+	Logger              logging.Logger
 	KeyDirectory        string
 	KeyRotationInterval time.Duration
 	KeyOverlapDuration  time.Duration
 	KeySize             int
-	Logger              logging.Logger
 }
 
 func ConfigDefault() ManagerConfig {
@@ -56,9 +56,9 @@ func ConfigDefault() ManagerConfig {
 }
 
 type KeyMetadata struct {
-	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+	ID        string    `json:"id"`
 }
 
 type JWKS struct {
@@ -75,12 +75,12 @@ type JWK struct {
 }
 
 type KeyPair struct {
-	ID         string
 	PrivateKey *rsa.PrivateKey
 	PublicKey  *rsa.PublicKey
+	cachedJWK  *JWK // cache JWK
 	CreatedAt  time.Time
 	ExpiresAt  time.Time // Zero value = never expires
-	cachedJWK  *JWK      // cache JWK
+	ID         string
 }
 
 // Sentinel Errors
@@ -98,6 +98,18 @@ var (
 // IsRunning tells caller if the manager is currently running
 func (m *Manager) IsRunning() bool {
 	return atomic.LoadInt32(&m.state) == StateStarted
+}
+
+// Mu returns the manager's read-write mutex for testing purposes.
+// This is exported only for use in tests that need to manipulate the cache.
+func (m *Manager) Mu() *sync.RWMutex {
+	return &m.mu
+}
+
+// Keys returns the manager's key cache map for testing purposes.
+// This is exported only for use in tests that need to inspect or manipulate the cache.
+func (m *Manager) Keys() map[string]*KeyPair {
+	return m.keys
 }
 
 // NewManager KeyManager constructor
