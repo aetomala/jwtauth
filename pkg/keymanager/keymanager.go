@@ -31,12 +31,12 @@ type Manager struct {
 	mu                      sync.RWMutex
 	rotationWG              sync.WaitGroup
 	config                  ManagerConfig
-	rotationSchedulerActive atomic.Bool
 	currentKeyID            string
+	state                   int32
+	rotationSchedulerActive atomic.Bool
 	stopRotationCh          chan struct{}
 	rotationTicker          *time.Ticker
 	keys                    map[string]*KeyPair
-	state                   int32
 }
 
 type ManagerConfig struct {
