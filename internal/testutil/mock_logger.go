@@ -76,6 +76,7 @@ func (m *MockLogger) Warn(msg string, keysAndValues ...interface{}) {
 		return
 	}
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.logs = append(m.logs, LogEntry{
 		Level:   "warn",
 		Message: msg,
@@ -89,6 +90,7 @@ func (m *MockLogger) Error(msg string, keysAndValues ...interface{}) {
 		return
 	}
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.logs = append(m.logs, LogEntry{
 		Level:   "error",
 		Message: msg,

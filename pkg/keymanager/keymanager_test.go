@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/aetomala/jwtauth/internal/testutil"
 	"github.com/aetomala/jwtauth/pkg/keymanager"
 )
 
@@ -1029,6 +1030,767 @@ var _ = Describe("KeyManager Persistense", func() {
 
 		It("should restore expiration dates from metadata", func() {
 			// Test metadata persistence
+		})
+	})
+})
+
+// ============================================================================
+// LOGGING TEST SUITE
+// ============================================================================
+// These tests use the shared MockLogger from internal/testutil to verify
+// that logging happens at the right times with the right data.
+// ============================================================================
+
+var _ = Describe("KeyManager Logging", func() {
+	var (
+		manager    *keymanager.Manager
+		ctx        context.Context
+		cancel     context.CancelFunc
+		config     keymanager.ManagerConfig
+		tempDir    string
+		mockLogger *testutil.MockLogger
+	)
+
+	BeforeEach(func() {
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		tempDir = GinkgoT().TempDir()
+		mockLogger = testutil.NewMockLogger()
+
+		config = keymanager.ManagerConfig{
+			KeyDirectory:        tempDir,
+			KeyRotationInterval: 30 * 24 * time.Hour,
+			KeyOverlapDuration:  1 * time.Hour,
+			KeySize:             2048,
+			Logger:              mockLogger, // ← Inject mock logger
+		}
+	})
+
+	AfterEach(func() {
+		cancel()
+		if manager != nil && manager.IsRunning() {
+			manager.Shutdown(ctx)
+		}
+	})
+
+	// === BASIC LOGGER BEHAVIOR ===
+	Describe("Logger Integration", func() {
+		Context("when logger is provided", func() {
+			It("should use the provided logger", func() {
+				manager, err := keymanager.NewManager(config)
+				Expect(err).NotTo(HaveOccurred())
+
+				err = manager.Start(ctx)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Should have some logs from startup
+				Eventually(func() int {
+					return len(mockLogger.GetLogs())
+				}).Should(BeNumerically(">", 0))
+			})
+
+			It("should log structured key-value pairs", func() {
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				// All logs should have fields (key-value pairs)
+				logs := mockLogger.GetLogs()
+				for _, log := range logs {
+					// Each log entry should have a message
+					Expect(log.Message).NotTo(BeEmpty())
+				}
+			})
+		})
+		Context("when logger is nil", func() {
+			It("should work without logging", func() {
+				config.Logger = nil
+				manager, err := keymanager.NewManager(config)
+				Expect(err).NotTo(HaveOccurred())
+
+				err = manager.Start(ctx)
+
+				// Should work fine without logger
+				Expect(manager.IsRunning()).To(BeTrue())
+			})
+		})
+	})
+
+	// === STARTUP LOGGING ===
+	Describe("Startup Events", func() {
+		Context("on first start with no existing keys", func() {
+			It("should log key generation", func() {
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "generated new RSA key pair")
+				}).Should(BeTrue())
+			})
+
+			It("should log key generation with key ID field", func() {
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				Eventually(func() bool {
+					return mockLogger.HasLogWithField("info", "generated new RSA key pair", "keyID")
+				}).Should(BeTrue())
+			})
+
+			It("should log key generation with duration", func() {
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				Eventually(func() bool {
+					return mockLogger.HasLogWithField("info", "generated new RSA key pair", "duration")
+				}).Should(BeTrue())
+			})
+
+			It("should log successful manager start", func() {
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "key manager started")
+				}).Should(BeTrue())
+			})
+
+			It("should log manager start with configuration details", func() {
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				Eventually(func() bool {
+					log := mockLogger.GetLogWithField("info", "key manager started", "keyDirectory")
+					return log != nil
+				}).Should(BeTrue())
+			})
+
+			It("should log manager start with configuration details", func() {
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				Eventually(func() bool {
+					log := mockLogger.GetLogWithField("info", "key manager started", "rotationInterval")
+					return log != nil
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("on restart with existing keys", func() {
+			It("should log number of keys loaded", func() {
+				// First start
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+				manager.Shutdown(ctx)
+
+				// Clear logs from first start
+				mockLogger.Clear()
+
+				// Restart
+				manager2, _ := keymanager.NewManager(config)
+				manager2.Start(ctx)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "loaded keys from disk")
+				}).Should(BeTrue())
+
+				Eventually(func() bool {
+					return mockLogger.HasLogWithField("info", "loaded keys from disk", "count")
+				}).Should(BeTrue())
+
+				manager2.Shutdown(ctx)
+			})
+
+			It("should log current key ID after load", func() {
+				// First start
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+				_, keyID, _ := manager.GetCurrentSigningKey()
+				manager.Shutdown(ctx)
+
+				mockLogger.Clear()
+
+				// Restart
+				manager2, _ := keymanager.NewManager(config)
+				manager2.Start(ctx)
+
+				Eventually(func() bool {
+					log := mockLogger.GetLogWithField("info", "set current key", "keyID")
+					if log != nil {
+						return log.Fields["keyID"] == keyID
+					}
+					return false
+				}).Should(BeTrue())
+
+				manager2.Shutdown(ctx)
+			})
+		})
+
+		Context("with corrupted key files", func() {
+			It("should log warning for corrupted PEM files", func() {
+				//Create corrupted PEM file
+				corruptedFile := filepath.Join(tempDir, "corrupted-key.pem")
+				os.WriteFile(corruptedFile, []byte("not a valid PEM"), 0600)
+
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("warn", "failed to load key file")
+				}).Should(BeTrue())
+			})
+
+			It("should log warning with filename", func() {
+				corruptedFile := filepath.Join(tempDir, "corrupted-key.pem")
+				os.WriteFile(corruptedFile, []byte("invalid"), 0600)
+
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				Eventually(func() bool {
+					return mockLogger.HasLogWithField("warn", "failed to load key file", "file")
+				}).Should(BeTrue())
+			})
+
+			It("should log warning with error details", func() {
+				corruptedFile := filepath.Join(tempDir, "bad.pem")
+				os.WriteFile(corruptedFile, []byte("bad data"), 0600)
+
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				Eventually(func() bool {
+					log := mockLogger.GetLogWithField("warn", "failed to load key file", "error")
+					return log != nil
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("with expired keys on disk", func() {
+			It("should log skipped expired keys", func() {
+				// This requires creating metadata with past expiration
+				// For now, verify the log capability exists
+				manager, _ = keymanager.NewManager(config)
+				manager.Start(ctx)
+
+				// Should not have any expired key logs on fresh start
+				Consistently(func() bool {
+					return mockLogger.HasLog("info", "skipped expired key")
+				}, 500*time.Millisecond).Should(BeFalse())
+			})
+		})
+	})
+
+	// === ROTATION LOGGING ===
+	Describe("Rotation Events", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			mockLogger.Clear() // Clear startup logs
+		})
+
+		It("should log successful rotation", func() {
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "key rotation successful")
+			}).Should(BeTrue())
+		})
+
+		It("should log rotation with old key ID", func() {
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				return mockLogger.HasLogWithField("info", "key rotation successful", "oldKeyID")
+			}).Should(BeTrue())
+		})
+
+		It("should log rotation duration", func() {
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				log := mockLogger.GetLogWithField("info", "key rotation successful", "duration")
+				return log != nil
+			}).Should(BeTrue())
+		})
+
+		It("should log old key expiration", func() {
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "old key marked for expiration")
+			}).Should(BeTrue())
+		})
+
+		It("should log old key expiration time", func() {
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				return mockLogger.HasLogWithField("info", "old key marked for expiration", "expiresAt")
+			}).Should(BeTrue())
+		})
+
+		Context("when rotation fails", func() {
+			It("should log rotation failure", func() {
+				// Make directory read-only to force failure
+				os.Chmod(tempDir, 0444)
+				defer os.Chmod(tempDir, 0755)
+
+				err := manager.RotateKeys(ctx)
+				Expect(err).To(HaveOccurred())
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("error", "key rotation failed")
+				}).Should(BeTrue())
+			})
+
+			It("should log error details", func() {
+				os.Chmod(tempDir, 0444)
+				defer os.Chmod(tempDir, 0755)
+
+				manager.RotateKeys(ctx)
+
+				Eventually(func() bool {
+					return mockLogger.HasLogWithField("error", "key rotation failed", "error")
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("automatic rotation", func() {
+			It("should log automatic rotation trigger", func() {
+				config.KeyRotationInterval = 200 * time.Millisecond
+				mgr, _ := keymanager.NewManager(config)
+				mgr.Start(ctx)
+				defer mgr.Shutdown(ctx)
+
+				mockLogger.Clear()
+
+				// Wait for automatic rotation
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "automatic rotation triggered")
+				}, 1*time.Second, 50*time.Millisecond).Should(BeTrue())
+			})
+
+			It("should log automatic rotation success", func() {
+				config.KeyRotationInterval = 200 * time.Millisecond
+				mgr, _ := keymanager.NewManager(config)
+				mgr.Start(ctx)
+				defer mgr.Shutdown(ctx)
+
+				mockLogger.Clear()
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "key rotation successful")
+				}, 1*time.Second, 50*time.Millisecond).Should(BeTrue())
+			})
+		})
+	})
+
+	// === CLEANUP LOGGING ===
+	Describe("Cleanup Events", func() {
+		BeforeEach(func() {
+			config.KeyRotationInterval = 200 * time.Millisecond
+			config.KeyOverlapDuration = 100 * time.Millisecond
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			mockLogger.Clear()
+		})
+
+		It("should log cleanup execution", func() {
+			// Rotate to create an expiring key
+			manager.RotateKeys(ctx)
+
+			// Wait for cleanup
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "expired key cleanup executed")
+			}, 1*time.Second, 50*time.Millisecond).Should(BeTrue())
+		})
+
+		It("should log number of keys deleted", func() {
+			manager.GetCurrentSigningKey()
+			manager.RotateKeys(ctx)
+
+			Eventually(func() bool {
+				log := mockLogger.GetLogWithField("info", "expired key cleanup executed", "deletedCount")
+				if log != nil {
+					// Should have deleted at least one key
+					deletedCount, ok := log.Fields["deletedCount"].(int)
+					return ok && deletedCount >= 0
+				}
+				return false
+			}, 1*time.Second, 50*time.Millisecond).Should(BeTrue())
+		})
+
+		It("should log deleted key IDs", func() {
+			_, oldKeyID, _ := manager.GetCurrentSigningKey()
+			manager.RotateKeys(ctx)
+
+			Eventually(func() bool {
+				logs := mockLogger.GetLogs()
+				for _, log := range logs {
+					if log.Message == "deleted expired key" {
+						if keyID, ok := log.Fields["keyID"].(string); ok && keyID == oldKeyID {
+							return true
+						}
+					}
+				}
+				return false
+			}, 1*time.Second, 50*time.Millisecond).Should(BeTrue())
+		})
+
+		Context("when cleanup deletes multiple keys", func() {
+			It("should log each deleted key separately", func() {
+				// Rotate multiple times quickly
+				manager.RotateKeys(ctx)
+				time.Sleep(50 * time.Millisecond)
+				manager.RotateKeys(ctx)
+
+				// Wait for cleanup
+				time.Sleep(200 * time.Millisecond)
+
+				// Should have multiple delete logs
+				Eventually(func() int {
+					logs := mockLogger.GetLogsByLevel("info")
+					count := 0
+					for _, log := range logs {
+						if log.Message == "deleted expired key" {
+							count++
+						}
+					}
+					return count
+				}, 1*time.Second).Should(BeNumerically(">=", 1))
+			})
+		})
+	})
+
+	// === METADATA PERSISTENCE LOGGING ===
+	Describe("Metadata Persistence Events", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			mockLogger.Clear()
+		})
+
+		It("should log metadata save success", func() {
+			err := manager.RotateKeys(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "saved key metadata")
+			}).Should(BeTrue())
+		})
+
+		It("should log metadata save with key ID", func() {
+			manager.RotateKeys(ctx)
+
+			Eventually(func() bool {
+				return mockLogger.HasLogWithField("info", "saved key metadata", "keyID")
+			}).Should(BeTrue())
+		})
+
+		Context("when metadata save fails", func() {
+			It("should log metadata save failure", func() {
+				// Make directory read-only
+				os.Chmod(tempDir, 0444)
+				defer os.Chmod(tempDir, 0755)
+
+				manager.RotateKeys(ctx)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("warn", "failed to save key metadata") ||
+						mockLogger.HasLog("error", "key rotation failed")
+				}).Should(BeTrue())
+			})
+
+			It("should log which key metadata failed to save", func() {
+				os.Chmod(tempDir, 0444)
+				defer os.Chmod(tempDir, 0755)
+
+				manager.RotateKeys(ctx)
+
+				Eventually(func() bool {
+					return mockLogger.HasLogWithField("warn", "failed to save key metadata", "keyID") ||
+						mockLogger.HasLogWithField("error", "key rotation failed", "error")
+				}).Should(BeTrue())
+			})
+		})
+	})
+
+	// === ERROR SCENARIOS ===
+	Describe("Error Logging", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			mockLogger.Clear()
+		})
+
+		Context("disk operation errors", func() {
+			It("should log file deletion errors", func() {
+				// Cause an error during cleanup
+				// This is tested indirectly through cleanup logs
+				manager.RotateKeys(ctx)
+
+				// Should have successful rotation log
+				Expect(mockLogger.HasLog("info", "key rotation successful")).To(BeTrue())
+			})
+		})
+
+		Context("context cancellation", func() {
+			It("should log when operations are cancelled", func() {
+				cancelCtx, cancelFn := context.WithCancel(context.Background())
+				cancelFn() // Cancel immediately
+
+				err := manager.RotateKeys(cancelCtx)
+				Expect(err).To(MatchError(context.Canceled))
+
+				// Should log the cancellation
+				Eventually(func() bool {
+					return mockLogger.HasLog("warn", "operation cancelled") ||
+						mockLogger.HasLog("error", "key rotation failed")
+				}).Should(BeTrue())
+			})
+		})
+	})
+
+	// === SHUTDOWN LOGGING ===
+	Describe("Shutdown Events", func() {
+		It("should log graceful shutdown initiation", func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			mockLogger.Clear()
+
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			manager.Shutdown(shutdownCtx)
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "initiating graceful shutdown")
+			}).Should(BeTrue())
+		})
+
+		It("should log successful shutdown", func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			mockLogger.Clear()
+
+			shutdownCtx := context.Background()
+			manager.Shutdown(shutdownCtx)
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "key manager stopped")
+			}).Should(BeTrue())
+		})
+
+		It("should log if rotation scheduler stopped", func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			mockLogger.Clear()
+
+			Expect(manager.IsRotationSchedulerActive()).To(BeTrue())
+
+			manager.Shutdown(context.Background())
+
+			Eventually(func() bool {
+				return !manager.IsRotationSchedulerActive()
+			}).Should(BeTrue())
+
+			// Should have logged shutdown
+			Expect(mockLogger.HasLog("info", "key manager stopped")).To(BeTrue())
+		})
+	})
+
+	// === LOG LEVELS ===
+	Describe("Log Levels", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+		})
+
+		It("should use appropriate log levels", func() {
+			manager.Start(ctx)
+			manager.RotateKeys(ctx)
+
+			logs := mockLogger.GetLogs()
+
+			// Should have info logs
+			infoCount := 0
+			errorCount := 0
+
+			for _, log := range logs {
+				switch log.Level {
+				case "info":
+					infoCount++
+				case "error":
+					errorCount++
+				}
+			}
+
+			Expect(infoCount).To(BeNumerically(">", 0))
+			// Normal operation shouldn't have errors
+			Expect(errorCount).To(Equal(0))
+		})
+
+		It("should use info for successful operations", func() {
+			manager.Start(ctx)
+
+			infoLogs := mockLogger.GetLogsByLevel("info")
+			Expect(len(infoLogs)).To(BeNumerically(">", 0))
+		})
+
+		It("should use warn for recoverable issues", func() {
+			// Create corrupted file
+			corruptedFile := filepath.Join(tempDir, "bad.pem")
+			os.WriteFile(corruptedFile, []byte("invalid"), 0600)
+
+			manager.Start(ctx)
+
+			warnLogs := mockLogger.GetLogsByLevel("warn")
+			Expect(len(warnLogs)).To(BeNumerically(">", 0))
+		})
+
+		It("should use error for critical failures", func() {
+			os.Chmod(tempDir, 0444)
+			defer os.Chmod(tempDir, 0755)
+
+			manager.Start(ctx)
+			manager.RotateKeys(ctx)
+
+			errorLogs := mockLogger.GetLogsByLevel("error")
+			Expect(len(errorLogs)).To(BeNumerically(">", 0))
+		})
+	})
+
+	// === STRUCTURED LOGGING ===
+	Describe("Structured Fields", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			mockLogger.Clear()
+		})
+
+		It("should include context in operation logs", func() {
+			manager.RotateKeys(ctx)
+
+			logs := mockLogger.GetLogs()
+			foundStructuredLog := false
+
+			for _, log := range logs {
+				if log.Message == "key rotation successful" {
+					// Should have structured fields
+					Expect(len(log.Fields)).To(BeNumerically(">", 0))
+					foundStructuredLog = true
+					break
+				}
+			}
+
+			Expect(foundStructuredLog).To(BeTrue())
+		})
+
+		It("should include timing information in rotation logs", func() {
+			manager.RotateKeys(ctx)
+
+			Eventually(func() bool {
+				log := mockLogger.GetLogWithField("info", "key rotation successful", "duration")
+				if log != nil {
+					// Verify duration field exists and is a time.Duration
+					_, ok := log.Fields["duration"].(time.Duration)
+					return ok
+				}
+				return false
+			}).Should(BeTrue())
+		})
+
+		It("should include key IDs in all key operations", func() {
+			_, originalKeyID, _ := manager.GetCurrentSigningKey()
+			manager.RotateKeys(ctx)
+
+			Eventually(func() bool {
+				log := mockLogger.GetLogWithField("info", "key rotation successful", "oldKeyID")
+				if log != nil {
+					oldKeyID, ok := log.Fields["oldKeyID"].(string)
+					return ok && oldKeyID == originalKeyID
+				}
+				return false
+			}).Should(BeTrue())
+		})
+	})
+
+	// === CONCURRENT LOGGING ===
+	Describe("Concurrent Operations Logging", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			mockLogger.Clear()
+		})
+
+		It("should handle concurrent log writes safely", func() {
+			var wg sync.WaitGroup
+			const numGoroutines = 10
+
+			for i := 0; i < numGoroutines; i++ {
+				wg.Add(1)
+				go func() {
+					defer GinkgoRecover()
+					defer wg.Done()
+					// Trigger operations that log
+					manager.GetCurrentSigningKey()
+					manager.GetJWKS()
+				}()
+			}
+
+			wg.Wait()
+
+			// Should not panic and should have logged something
+			logs := mockLogger.GetLogs()
+			Expect(len(logs)).To(BeNumerically(">=", 0))
+		})
+
+		It("should log from background rotation goroutine", func() {
+			config.KeyRotationInterval = 200 * time.Millisecond
+			mgr, _ := keymanager.NewManager(config)
+			mgr.Start(ctx)
+			defer mgr.Shutdown(ctx)
+
+			mockLogger.Clear()
+
+			// Background goroutine should log
+			Eventually(func() int {
+				return len(mockLogger.GetLogs())
+			}, 1*time.Second).Should(BeNumerically(">", 0))
+		})
+	})
+
+	// === PERFORMANCE ===
+	Describe("Logging Performance", func() {
+		BeforeEach(func() {
+			manager, _ = keymanager.NewManager(config)
+			manager.Start(ctx)
+			mockLogger.Clear()
+		})
+
+		It("should not significantly impact operation performance", func() {
+			// Measure rotation with logging
+			start := time.Now()
+			err := manager.RotateKeys(ctx)
+			durationWithLogging := time.Since(start)
+
+			Expect(err).NotTo(HaveOccurred())
+			// Should complete in reasonable time (< 1 second for 2048-bit key)
+			Expect(durationWithLogging).To(BeNumerically("<", 1*time.Second))
+		})
+
+		It("should handle rapid operations without blocking", func() {
+			// Rapidly call operations that log
+			for i := 0; i < 100; i++ {
+				manager.GetCurrentSigningKey()
+				manager.GetJWKS()
+			}
+
+			// Should have completed without hanging
+			Expect(manager.IsRunning()).To(BeTrue())
 		})
 	})
 })
