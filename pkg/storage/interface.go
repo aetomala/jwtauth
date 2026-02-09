@@ -4,6 +4,9 @@ import (
 	"time"
 )
 
+// Generate mock from this interface using mockgen
+//go:generate mockgen -source=interface.go -destination=../../internal/testutil/mock_refreshstore.go -package=testutil -mock_names=RefreshStore=MockRefreshStore
+
 // RefreshStore defines the interface for refresh token storage operations.
 //
 // This interface ensures:
