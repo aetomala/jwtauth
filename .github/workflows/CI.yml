@@ -18,7 +18,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version-file: 'go.mod'
+        go-version: '1.23.x'
         cache: true
 
     - name: Install Ginkgo
@@ -55,7 +55,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version-file: 'go.mod'
+        go-version: '1.23.x'
         cache: true
 
     - name: Run Gosec Security Scanner
@@ -81,14 +81,15 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version-file: 'go.mod'
+        go-version: '1.23.x'
         cache: true
 
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v4
       with:
-        version: latest
+        version: v1.62
         args: --timeout=5m
+        install-mode: "binary"
 
   docker:
     name: Build Container Image
@@ -103,14 +104,13 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
       
-    - name: Build Docker image
+    - name: Build Docker image and load to local Docker
       uses: docker/build-push-action@v5
       with:
         context: .
         push: false
-        tags: |
-          jwtauth:latest
-          jwtauth:${{ github.sha }}
+        load: true
+        tags: jwtauth:latest
         cache-from: type=gha
         cache-to: type=gha,mode=max
     
