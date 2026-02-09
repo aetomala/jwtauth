@@ -1,8 +1,11 @@
-package ratelimit
+package tokens
 
 import (
 	"time"
 )
+
+// Generate mock from this interface using mockgen
+//go:generate mockgen -source=interface.go -destination=../../internal/testutil/mock_ratelimiter.go -package=testutil -mock_names=RateLimiter=MockRateLimiter
 
 // RateLimiter defines the interface for rate limiting operations.
 //
