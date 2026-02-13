@@ -33,3 +33,6 @@ go.work.sum
 
 # specs files
 *__spec.go
+
+# Development session log (not tracked in git)
+code-sessions.md
