@@ -51,7 +51,6 @@ When you say **"end session [duration]"** (e.g., "end session 2h 30m" or "end se
 4. **I create a git commit** with your session work:
    - Stage all changes: `git add -A`
    - Create commit summarizing the work
-   - **NO "Co-Authored-By" line** in the commit message
    - Format: `[action] [summary of changes]`
 
 5. **I ask about pushing**:
