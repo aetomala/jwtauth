@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aetomala/jwtauth/pkg/keymanager"
@@ -101,6 +102,40 @@ func NewService(config ServiceConfig) (*Service, error) {
 }
 
 func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, error) {
+
+	// ===== STEP 1: Validate user id ====
+	// validate user ID Split into two to optimize in the event of high volume of invalid requests
+	if len(userID) == 0 {
+		if s.logger != nil {
+			s.logger.Warn("attempted to get token with empty userID")
+		}
+		return "", ErrInvalidUserID
+	}
+	if len(strings.TrimSpace(userID)) == 0 {
+		if s.logger != nil {
+			s.logger.Warn("attempted to get token with empty userID")
+		}
+		return "", ErrInvalidUserID
+	}
+
+	//===== STEP 2: Service State Check =====
+
+	// ===== STEP 3: Context Check =====
+	// Check if context is already cancelled/expired
+	// Fail fast if client already disconnected
+	if err := ctx.Err(); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("context cancelled during token issuance",
+				"userID", userID,
+				"error", err)
+		}
+		return "", err
+	}
+
+	// ===== STEP 4: Rate Limiting =====
+	// Prevent abuse by limiting token issuance rate per user
+	// Cost of 1 = one request
+
 	allow, err := s.rateLimiter.Allow(userID, 1)
 
 	if err != nil {
@@ -114,7 +149,9 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		return "", ErrRateLimitExceeded
 	}
 
-	// Get signing key
+	// ===== STEP 5: Get Signing Key =====
+	// Retrieve current private key and its ID from KeyManager
+	// The key ID will be included in the JWT header for verification
 	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey()
 	if err != nil {
 		if s.logger != nil {
@@ -125,9 +162,10 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		return "", fmt.Errorf("failed to get signing key: %w", err)
 	}
 
-	// Create claims
+	// ===== STEP 6: Create JWT Claims =====
 	now := time.Now()
 	expiresAt := now.Add(s.accessTokenDuration)
+	// Generate unique token ID (jti claim)
 	tokenID, err := generateTokenID()
 	if err != nil {
 		if s.logger != nil {
