@@ -315,18 +315,202 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	return signedToken, nil
 }
 
-func (s *Service) createStandardClaims(userID, tokenID string) *jwt.RegisteredClaims {
-	now := time.Now()
-	expiresAt := now.Add(s.accessTokenDuration)
-	return &jwt.RegisteredClaims{
-		Subject:   userID,                        // "sub" - who the token is for
-		Issuer:    s.issuer,                      // "iss" - who issued the token
-		Audience:  s.audience,                    // "aud" - who can use the token
-		ExpiresAt: jwt.NewNumericDate(expiresAt), // "exp" - when it expires
-		IssuedAt:  jwt.NewNumericDate(now),       // "iat" - when it was issued
-		NotBefore: jwt.NewNumericDate(now),       // "nbf" - valid from when
-		ID:        tokenID,                       // "jti" - unique token identifier
+func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string, error) {
+	// ===== STEP 1: Validate user id ====
+	// validate user ID Split into two to optimize in the event of high volume of invalid requests
+	if len(userID) == 0 {
+		if s.logger != nil {
+			s.logger.Warn("attempted to get token with empty userID")
+		}
+		return "", ErrInvalidUserID
 	}
+	if len(strings.TrimSpace(userID)) == 0 {
+		if s.logger != nil {
+			s.logger.Warn("attempted to get token with empty userID")
+		}
+		return "", ErrInvalidUserID
+	}
+
+	//===== STEP 2: Service State Check =====
+
+	// ===== STEP 3: Context Check =====
+	// Check if context is already cancelled/expired
+	// Fail fast if client already disconnected
+	if err := ctx.Err(); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("context cancelled during token issuance",
+				"userID", userID,
+				"error", err)
+		}
+		return "", err
+	}
+
+	// ===== STEP 4: Rate Limiting =====
+	// Prevent abuse by limiting token issuance rate per user
+	// Cost of 1 = one request
+
+	allowed, err := s.rateLimiter.Allow(userID, 1)
+
+	if err != nil {
+		return "", err
+	}
+	if !allowed {
+		if s.logger != nil {
+			s.logger.Warn("rate limit exceeded",
+				"userID", userID)
+		}
+		return "", ErrRateLimitExceeded
+	}
+
+	// ==== STEP 5: Generate Refresh Token ======
+	// Create cryptographic random token
+	// this is an OPAQUE token (not a JWT)
+	refreshToken, err := generateRefreshToken()
+
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to generate refresh token",
+				"userID", userID,
+				"error", err)
+			return "", fmt.Errorf("failed to generate refresh token: %w", err)
+		}
+	}
+
+	// ===== STEP 6: Calculate Expiration =====
+	now := time.Now()
+	expiresAt := now.Add(s.refreshTokenDuration)
+
+	// ===== STEP 7: Store Token =====
+	// Store token with metadata in RefreshStore
+	// This allows:
+	//   - Token validation during refresh
+	//   - Token revocation
+	//   - User session tracking
+	//   - Audit trails
+	err = s.refreshStore.Store(
+		refreshToken, // Token ID (the token itself is the ID)
+		userID,       // Who owns the token
+		expiresAt,    // When it expires
+		nil,          // No metadata (use IssueRefreshTokenWithMetadata for metadata)
+	)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to store refresh token",
+				"userID", userID,
+				"error", err)
+		}
+		return "", fmt.Errorf("failed to store refresh token: %w", err)
+	}
+
+	// ========== STEP 8: Log Success =============
+	if s.logger != nil {
+		s.logger.Info("refresh token issued",
+			"userID", userID,
+			"tokenID", refreshToken,
+			expiresAt, expiresAt)
+	}
+
+	return refreshToken, nil
+}
+
+func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID string, metadata map[string]interface{}) (string, error) {
+	// ===== STEP 1: Validate user id ====
+	// validate user ID Split into two to optimize in the event of high volume of invalid requests
+	if len(userID) == 0 {
+		if s.logger != nil {
+			s.logger.Warn("attempted to get token with empty userID")
+		}
+		return "", ErrInvalidUserID
+	}
+	if len(strings.TrimSpace(userID)) == 0 {
+		if s.logger != nil {
+			s.logger.Warn("attempted to get token with empty userID")
+		}
+		return "", ErrInvalidUserID
+	}
+
+	//===== STEP 2: Service State Check =====
+
+	// ===== STEP 3: Context Check =====
+	// Check if context is already cancelled/expired
+	// Fail fast if client already disconnected
+	if err := ctx.Err(); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("context cancelled during token issuance",
+				"userID", userID,
+				"error", err)
+		}
+		return "", err
+	}
+
+	// ===== STEP 4: Rate Limiting =====
+	// Prevent abuse by limiting token issuance rate per user
+	// Cost of 1 = one request
+
+	allowed, err := s.rateLimiter.Allow(userID, 1)
+
+	if err != nil {
+		return "", err
+	}
+	if !allowed {
+		if s.logger != nil {
+			s.logger.Warn("rate limit exceeded",
+				"userID", userID)
+		}
+		return "", ErrRateLimitExceeded
+	}
+
+	// ==== STEP 5: Generate Refresh Token ======
+	// Create cryptographic random token
+	// this is an OPAQUE token (not a JWT)
+	refreshToken, err := generateRefreshToken()
+
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to generate refresh token",
+				"userID", userID,
+				"error", err)
+			return "", fmt.Errorf("failed to generate refresh token: %w", err)
+		}
+	}
+
+	// ===== STEP 6: Calculate Expiration =====
+	now := time.Now()
+	expiresAt := now.Add(s.refreshTokenDuration)
+
+	// ===== STEP 7: Store Token =====
+	// Store token with metadata in RefreshStore
+	// This allows:
+	//   - Token validation during refresh
+	//   - Token revocation
+	//   - User session tracking
+	//   - Audit trails
+	err = s.refreshStore.Store(
+		refreshToken, // Token ID (the token itself is the ID)
+		userID,       // Who owns the token
+		expiresAt,    // When it expires
+		metadata,     // Custom metadata
+	)
+
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to store refresh token with metadata",
+				"userID", userID,
+				"error", err)
+		}
+		return "", fmt.Errorf("failed to store refresh token with metadata: %w", err)
+	}
+
+	// ========== STEP 8: Log Success =============
+	if s.logger != nil {
+		s.logger.Info("refresh token with metadata issued",
+			"userID", userID,
+			"tokenID", refreshToken,
+			expiresAt, expiresAt,
+			"metadataKeys", getMapKeys(metadata))
+
+	}
+	return refreshToken, nil
 }
 
 // generateTokenID creates a cryptographically random token identifier.
@@ -347,4 +531,45 @@ func generateTokenID() (string, error) {
 	// Encode as URL-safe base64 (no padding)
 	// Example: "xF7hN2kP9mQ8rT4vL6wY3g"
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// generateRefreshToken creates a cryptographically random refresh token.
+//
+// The refresh token is:
+//   - Opaque (not a JWT)
+//   - 32 bytes of random data (256 bits)
+//   - Base64url encoded (URL-safe, 43 characters)
+//   - Cryptographically secure
+//
+// Example output: "xF7hN2kP9mQ8rT4vL6wY3gAaBbCcDdEeFfGgHhIiJjKk"
+//
+// Security properties:
+//   - Unpredictable (cryptographic random)
+//   - No information leakage (opaque)
+//   - Large space (2^256 possibilities)
+//   - Collision-resistant
+func generateRefreshToken() (string, error) {
+	// Generate 32 random bytes (256 bits)
+	// This provides 2^256 possible tokens (~10^77)
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+
+	// Encode as URL-safe base64 (no padding)
+	// Result: 43 characters
+	// Example: "xF7hN2kP9mQ8rT4vL6wY3gAaBbCcDdEeFfGgHhIiJjKk"
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// getMapKeys returns the keys of a map (for logging).
+func getMapKeys(m map[string]interface{}) []string {
+	if m == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

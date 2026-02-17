@@ -323,7 +323,246 @@ var _ = Describe("TokenService", func() {
 				Expect(err.Error()).To(ContainSubstring("rate limit service unavailable"))
 			})
 		})
+
+		Context("when key retrieval fails", func() {
+			It("should return error", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+
+				mockKM.EXPECT().GetCurrentSigningKey().Return(nil, "", errors.New("key unavailable")).Times(1)
+
+				_, err := service.IssueAccessToken(ctx, testUserID)
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("key unavailable"))
+			})
+
+			It("should log error", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+				mockKM.EXPECT().
+					GetCurrentSigningKey().
+					Return(nil, "", errors.New("key error"))
+
+				service.IssueAccessToken(ctx, testUserID)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("error", "failed to get signing key")
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("with invalid user ID", func() {
+			It("should return error for empty user ID", func() {
+				// Should not call any dependencies for invalid input
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Times(0)
+				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
+
+				_, err := service.IssueAccessToken(ctx, "")
+
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(MatchError(tokens.ErrInvalidUserID))
+			})
+
+			It("should return error for whitespace-only user ID", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Times(0)
+				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
+
+				_, err := service.IssueAccessToken(ctx, "   ")
+
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(MatchError(tokens.ErrInvalidUserID))
+			})
+		})
+
+		Context("with cancelled context", func() {
+			It("should return context error", func() {
+				cancelledCtx, cancelFn := context.WithCancel(context.Background())
+				cancelFn() // cancel immediately
+
+				// Might not even get to dependencies
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Times(0)
+				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
+
+				_, err := service.IssueAccessToken(cancelledCtx, testUserID)
+				Expect(err).To(Equal(context.Canceled))
+			})
+		})
 	})
+
+	// ============== REFRESH TOKEN ISSUANCE ===================
+
+	Describe("IssueRefreshToken", func() {
+		BeforeEach(func() {
+			service = createService()
+		})
+
+		Context("with valid user ID", func() {
+			It("should issue refresh token succesfully", func() {
+				mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil)
+
+				mockStore.EXPECT().Store(
+					gomock.Any(), // tokenID (generated)
+					testUserID,   // userID
+					gomock.Any(), // expireAt
+					gomock.Any(), // metadata
+				).Return(nil).
+					Times(1)
+
+				token, err := service.IssueRefreshToken(ctx, testUserID)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(token).NotTo(BeEmpty())
+			})
+
+			It("should store refresh token", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+
+				// Verify Store is called
+				mockStore.EXPECT().
+					Store(gomock.Any(), testUserID, gomock.Any(), gomock.Any()).
+					Return(nil).
+					Times(1)
+
+				service.IssueRefreshToken(ctx, testUserID)
+			})
+
+			It("should check rate limit", func() {
+				// Verify rate limit is checked
+				mockRL.EXPECT().
+					Allow(testUserID, 1).
+					Return(true, nil).
+					Times(1)
+
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+				service.IssueRefreshToken(ctx, testUserID)
+			})
+
+			It("should log token issuance", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+				service.IssueRefreshToken(ctx, testUserID)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "refresh token issued")
+				}).Should(BeTrue())
+			})
+
+			It("should store metadata when provided", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+
+				metadata := map[string]interface{}{
+					"ip":        "192.168.1.1",
+					"userAgent": "Mozilla/5.0",
+				}
+
+				// Verify metadata is passed to Store
+				mockStore.EXPECT().
+					Store(gomock.Any(), testUserID, gomock.Any(), metadata).
+					Return(nil)
+
+				service.IssueRefreshTokenWithMetadata(ctx, testUserID, metadata)
+			})
+
+			It("should set correct expiration time", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+
+				expectedExpiry := time.Now().Add(30 * 24 * time.Hour)
+
+				// Use custom matcher to verify expiration is approximately correct
+				mockStore.EXPECT().
+					Store(
+						gomock.Any(),
+						testUserID,
+						gomock.AssignableToTypeOf(time.Time{}),
+						gomock.Any(),
+					).
+					Do(func(tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) {
+						// Verify expiration is within 2 seconds of expected
+						Expect(expiresAt).To(BeTemporally("~", expectedExpiry, 2*time.Second))
+					}).
+					Return(nil)
+
+				service.IssueRefreshToken(ctx, testUserID)
+			})
+		})
+
+		Context("when storage fails", func() {
+			It("should return error", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+
+				mockStore.EXPECT().
+					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(errors.New("storage failure"))
+
+				_, err := service.IssueRefreshToken(ctx, testUserID)
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("storage failure"))
+			})
+
+			It("should log error", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+				mockStore.EXPECT().
+					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(errors.New("storage error"))
+
+				service.IssueRefreshToken(ctx, testUserID)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("error", "failed to store refresh token")
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("when rate limited", func() {
+			It("should return error", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
+
+				// Should NOT call Store
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+				_, err := service.IssueRefreshToken(ctx, testUserID)
+
+				Expect(err).To(MatchError(tokens.ErrRateLimitExceeded))
+			})
+
+			It("should not store token when rate limited", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
+
+				// Verify Store is NEVER called
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+				service.IssueRefreshToken(ctx, testUserID)
+			})
+		})
+	})
+
+	// ================== TOKEN PAIR ISSUANCE =============
+
+	/*Describe("IssueTokenPair", func() {
+		BeforeEach(func() {
+			service = createService()
+		})
+
+		Context("with valid user. ID", func() {
+			It("should issue both token successfully", func() {
+				// Expect all dependencies called in order
+				gomock.InOrder(
+					mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil),
+					mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil),
+					mockStore.EXPECT().Store(gomock.Any(), testUserID, gomock.Any(), gomock.Any()).Return(nil),
+				)
+
+				accessToken, refreshToken, err := service.IssueTokenPair(ctx, testUserID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(accessToken).NotTo(BeEmpty())
+				Expect(refreshToken).NotTo(BeEmpty())
+				Expect(accessToken).NotTo(Equal(refreshToken))
+			})
+		})
+	})*/
+
 })
 
 // ============================================================================
@@ -479,7 +718,8 @@ func parseTokenWithKeyManager(tokenString string, mockKM *testutil.MockKeyManage
 // ============================================================================
 
 // parseTokenUnsafe parses a token WITHOUT verifying the signature.
-// ⚠️ ONLY USE IN TESTS! Never in production!
+//
+//	ONLY USE IN TESTS! Never in production!
 //
 // Use this when you just want to check claims structure, not security.
 func parseTokenUnsafe(tokenString string) *tokens.Claims {
