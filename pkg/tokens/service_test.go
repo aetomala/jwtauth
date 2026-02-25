@@ -481,12 +481,42 @@ var _ = Describe("TokenService", func() {
 			Expect(service.IsRunning()).To(BeTrue())
 		})
 
+		It("should return false after shutdown", func() {
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
+
+			service.Start(ctx)
+			service.Shutdown(ctx)
+
+			Expect(service.IsRunning()).To(BeFalse())
+		})
+
+		It("should be thread-safe", func() {
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil).AnyTimes()
+
+			service.Start(ctx)
+
+			var wg sync.WaitGroup
+			for i := 0; i < 100; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_ = service.IsRunning()
+				}()
+			}
+
+			wg.Wait()
+		})
+
 	})
 
 	// ==========ACCESS TOKEN ISSUANCE ========
 	Describe("IssueAccessToken", func() {
 		BeforeEach(func() {
 			service = createService()
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
 		})
 		It("should issue access token successfully", func() {
 			// Expect rake limit check
@@ -671,6 +701,9 @@ var _ = Describe("TokenService", func() {
 	Describe("IssueRefreshToken", func() {
 		BeforeEach(func() {
 			service = createService()
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		Context("with valid user ID", func() {
@@ -821,6 +854,9 @@ var _ = Describe("TokenService", func() {
 	Describe("IssueTokenPair", func() {
 		BeforeEach(func() {
 			service = createService()
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		Context("with valid user. ID", func() {
