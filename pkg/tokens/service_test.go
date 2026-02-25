@@ -970,7 +970,37 @@ var _ = Describe("TokenService", func() {
 		})
 	})
 
-	// ========== ACCESS TOKEN VALIDATION ===========
+	// ========================================================================
+	// COMPLETE LIFECYCLE INTEGRATION TEST
+	// ========================================================================
+	Describe("Complete Lifecycle", func() {
+		It("should handle start -> use -> shutdown cycle", func() {
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil).AnyTimes()
+			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
+			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+
+			service = createService()
+			// Start
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(service.IsRunning()).To(BeTrue())
+
+			// Use
+			token, err := service.IssueAccessToken(ctx, "user-123")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(token).NotTo(BeEmpty())
+
+			// Shutdown
+			err = service.Shutdown(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(service.IsRunning()).To(BeFalse())
+
+			// Operations should fail after shutdown
+			_, err = service.IssueAccessToken(ctx, "user-456")
+			Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+		})
+	})
 
 })
 
