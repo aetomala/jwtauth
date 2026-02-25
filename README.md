@@ -18,8 +18,9 @@
 
 ## Key Features
 
-### ✅ Currently Available (KeyManager)
+### ✅ Currently Available
 
+**KeyManager**
 - **Zero-downtime key rotation** with configurable overlap periods
 - **Automatic background rotation** with cleanup
 - **RSA key pair generation** and management
@@ -31,12 +32,20 @@
 - **Domain-specific metrics** interface (Prometheus adapter coming)
 - **Comprehensive test coverage** with race detection
 
+**TokenService** (Beta)
+- **JWT creation** with RS256 signing and custom claims support
+- **Lifecycle management** (Start/Shutdown/IsRunning) with graceful operations
+- **Rate limiting** integration at token issuance boundary
+- **Configurable cleanup intervals** for refresh token expiration
+- **Service state management** ensuring tokens only issue when service is running
+- **Comprehensive BDD test coverage** (61 tests across lifecycle and token operations)
+- **Background cleanup goroutines** with proper synchronization
+
 ### 🚧 In Development
 
-- **TokenService**: JWT creation, validation, and claims management
 - **HTTP Middleware**: Request authentication and user context injection
-- **Refresh Token Storage**: Memory and Redis implementations
-- **Rate Limiting**: Token bucket algorithm with per-user/IP limits
+- **Refresh Token Storage**: Memory and Redis implementations (RefreshStore interface ready)
+- **Token Validation**: Token parsing and claims verification
 - **Metrics Implementations**: Prometheus, StatsD, CloudWatch adapters
 - **OpenTelemetry**: Distributed tracing integration
 
@@ -201,6 +210,67 @@ func main() {
 }
 ```
 
+### TokenService Usage (Beta)
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/aetomala/jwtauth/pkg/tokens"
+    // ... other imports
+)
+
+func main() {
+    // Create TokenService with rate limiting and storage
+    config := tokens.ServiceConfig{
+        KeyManager:           keyManager,      // from KeyManager above
+        RefreshStore:         refreshStore,    // RefreshStore implementation
+        RateLimiter:          rateLimiter,     // RateLimiter implementation
+        Logger:               logger,          // Optional
+        AccessTokenDuration:  15 * time.Minute,
+        RefreshTokenDuration: 30 * 24 * time.Hour,
+        CleanupInterval:      1 * time.Hour,   // Auto-cleanup of expired tokens
+        Issuer:               "my-app",
+        Audience:             []string{"my-app-api"},
+    }
+
+    service, err := tokens.NewService(config)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Start service lifecycle
+    ctx := context.Background()
+    if err := service.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+    defer service.Shutdown(ctx)
+
+    // Issue access token with custom claims
+    token, err := service.IssueAccessTokenWithClaims(ctx, "user-123", map[string]interface{}{
+        "role": "admin",
+        "tenant": "org-456",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Access token issued: %s", token)
+}
+```
+
+**Key Features**:
+- ✅ Automatic lifecycle management (Start/Shutdown)
+- ✅ Service state checking (IsRunning) ensures tokens only issue when running
+- ✅ Rate limiting enforced at token issuance
+- ✅ Custom claims support with reserved claim protection
+- ✅ Background cleanup of expired refresh tokens
+- ✅ Structured logging integration
+
 ## Configuration
 
 ### ManagerConfig
@@ -295,7 +365,11 @@ github.com/aetomala/jwtauth/
 │   │   ├── manager.go            # Core implementation
 │   │   ├── persistence.go        # Disk operations
 │   │   └── keymanager_test.go   # Comprehensive tests
-│   ├── tokens/                   # JWT operations 🚧
+│   ├── tokens/                   # JWT operations (Beta) 🟡
+│   │   ├── service.go            # TokenService implementation
+│   │   ├── service_test.go       # Token issuance tests (41 tests)
+│   │   ├── service_lifecycle_test.go  # Lifecycle management tests (20 tests)
+│   │   └── claims.go             # Claims management
 │   ├── middleware/               # HTTP middleware 🚧
 │   └── storage/                  # Refresh token storage 🚧
 ├── internal/                     # Private packages
@@ -309,9 +383,9 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 3 comprehensive test suites covering KeyManager
+**Current**: 61 comprehensive tests across KeyManager and TokenService
 
-**Test Organization**:
+**KeyManager** (3 test suites):
 - Constructor validation and defaults
 - Lifecycle management (Start/Stop/Shutdown)
 - Core operations (key generation, rotation, retrieval)
@@ -321,6 +395,23 @@ github.com/aetomala/jwtauth/
 - Concurrency and race conditions
 - Graceful shutdown with in-flight operations
 - Logging integration and verification
+
+**TokenService** (4 test suites, 61 total tests):
+- **Lifecycle Management Tests** (20 tests):
+  - Start: idempotency, logging, background cleanup, failure handling, context cancellation
+  - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency
+  - IsRunning: state tracking and thread-safety verification
+  - Complete Lifecycle: integration test of start → use → shutdown cycle
+- **Token Issuance Tests** (41 tests):
+  - IssueAccessToken: successful issuance, rate limiting, custom claims, error paths
+  - IssueRefreshToken: successful issuance, storage, metadata handling
+  - IssueTokenPair: coordinated access and refresh token issuance
+
+**Test Organization**:
+- Separate test files for logical concerns (`service_test.go`, `service_lifecycle_test.go`)
+- Ginkgo/Gomega BDD-style test organization
+- gomock for dependency injection testing
+- Shared test utilities and fixtures
 
 **All tests pass with race detection**:
 ```bash
@@ -386,11 +477,14 @@ Tests follow **progressive phase-based development**:
 - ✅ Comprehensive test coverage with race detection
 - ✅ Architecture documentation
 
-### v0.2.0 (Next - Alpha)
-- 🚧 TokenService implementation
-- 🚧 JWT creation and validation
-- 🚧 Claims management
-- 🚧 Integration tests with KeyManager
+### v0.2.0 (Current - Alpha)
+- ✅ TokenService: JWT creation with RS256 signing
+- ✅ TokenService: Lifecycle management (Start/Shutdown/IsRunning)
+- ✅ TokenService: Rate limiting integration
+- ✅ TokenService: Claims management with custom claims support
+- ✅ TokenService: Comprehensive test coverage (61 tests, all passing)
+- 🚧 JWT validation and token parsing
+- 🚧 Integration tests with KeyManager refresh token validation
 - 🚧 Prometheus metrics adapter
 
 ### v0.3.0 (Beta)
@@ -475,6 +569,8 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 
 ---
 
-**Status**: Pre-Alpha (Active Development)  
-**Version**: 0.1.0-pre-alpha  
+**Status**: Alpha (Active Development)
+**Version**: 0.2.0-alpha
+**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | Middleware 🚧
+**Test Coverage**: 61 tests, all passing, race-detection enabled
 **Last Updated**: February 2026

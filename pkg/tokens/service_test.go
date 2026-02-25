@@ -90,8 +90,9 @@ var _ = Describe("TokenService", func() {
 		return svc
 	}
 
-	// ====== PHASE 1: CONSTRUCTOR & CONFIGURATION ===========
-
+	// ========================================================================
+	// NEWSERVICE TESTS
+	// ========================================================================
 	Describe("NewService", func() {
 		Context("with valid configuration", func() {
 			It("should create service successfully", func() {
@@ -211,7 +212,9 @@ var _ = Describe("TokenService", func() {
 
 	// Lifecycle tests (Start, Shutdown, IsRunning, Complete Lifecycle) have been moved to service_lifecycle_test.go
 
-	// ==========ACCESS TOKEN ISSUANCE ========
+	// ========================================================================
+	// ISSUE ACCESS TOKEN TESTS
+	// ========================================================================
 	Describe("IssueAccessToken", func() {
 		BeforeEach(func() {
 			service = createService()
@@ -397,8 +400,9 @@ var _ = Describe("TokenService", func() {
 		})
 	})
 
-	// ============== REFRESH TOKEN ISSUANCE ===================
-
+	// ========================================================================
+	// ISSUE REFRESH TOKEN TESTS
+	// ========================================================================
 	Describe("IssueRefreshToken", func() {
 		BeforeEach(func() {
 			service = createService()
@@ -550,8 +554,9 @@ var _ = Describe("TokenService", func() {
 		})
 	})
 
-	// ================== TOKEN PAIR ISSUANCE =============
-
+	// ========================================================================
+	// ISSUE TOKEN PAIR TESTS
+	// ========================================================================
 	Describe("IssueTokenPair", func() {
 		BeforeEach(func() {
 			service = createService()
