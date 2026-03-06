@@ -15,6 +15,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/aetomala/jwtauth/internal/testutil"
+	"github.com/aetomala/jwtauth/pkg/keymanager"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
 
@@ -300,7 +301,7 @@ var _ = Describe("TokenService", func() {
 
 				_, err := service.IssueAccessToken(ctx, testUserID)
 				Expect(err).To(HaveOccurred())
-				Expect(err).To(MatchError(tokens.ErrRateLimitExceeded))
+				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
 			})
 
 			It("should log rate limit rejection", func() {
@@ -371,7 +372,7 @@ var _ = Describe("TokenService", func() {
 				_, err := service.IssueAccessToken(ctx, "")
 
 				Expect(err).To(HaveOccurred())
-				Expect(err).To(MatchError(tokens.ErrInvalidUserID))
+				Expect(err).To(Equal(tokens.ErrInvalidUserID))
 			})
 
 			It("should return error for whitespace-only user ID", func() {
@@ -381,7 +382,7 @@ var _ = Describe("TokenService", func() {
 				_, err := service.IssueAccessToken(ctx, "   ")
 
 				Expect(err).To(HaveOccurred())
-				Expect(err).To(MatchError(tokens.ErrInvalidUserID))
+				Expect(err).To(Equal(tokens.ErrInvalidUserID))
 			})
 		})
 
@@ -540,7 +541,7 @@ var _ = Describe("TokenService", func() {
 
 				_, err := service.IssueRefreshToken(ctx, testUserID)
 
-				Expect(err).To(MatchError(tokens.ErrRateLimitExceeded))
+				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
 			})
 
 			It("should not store token when rate limited", func() {
@@ -671,9 +672,167 @@ var _ = Describe("TokenService", func() {
 
 				_, _, err := service.IssueTokenPair(ctx, testUserID)
 
-				Expect(err).To(MatchError(tokens.ErrRateLimitExceeded))
+				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
 			})
 		})
+	})
+
+	// ========================================================================
+	// ACCESS TOKEN VALIDATION
+	// ========================================================================
+
+	Describe("ValidationAccessToken", func() {
+		var validToken string
+
+		BeforeEach(func() {
+			service = createService()
+
+			// Start service first (required before token operations)
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			// Cleanup goroutine expects periodic cleanup calls
+			mockStore.EXPECT().Cleanup().Return(0, nil).AnyTimes()
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Then issue a valid token
+			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			validToken, _ = service.IssueAccessToken(ctx, testUserID)
+		})
+
+		Context("with valid token", func() {
+			It("should validate successfully", func() {
+				// Expect public key retrieval
+				mockKM.EXPECT().GetPublicKey(testKeyID).
+					Return(&testKey.PublicKey, nil).
+					Times(1)
+
+				claims, err := service.ValidateAccessToken(ctx, validToken)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(claims).NotTo(BeNil())
+				Expect(claims.Subject).To(Equal(testUserID))
+			})
+
+			It("should use KeyManager to get public key", func() {
+				mockKM.EXPECT().
+					GetPublicKey(gomock.Any()).
+					Return(&testKey.PublicKey, nil).
+					Times(1)
+
+				service.ValidateAccessToken(ctx, validToken)
+			})
+
+			It("should verify correct key ID from header", func() {
+				mockKM.EXPECT().
+					GetPublicKey(testKeyID). // Exact key ID
+					Return(&testKey.PublicKey, nil)
+
+				service.ValidateAccessToken(ctx, validToken)
+			})
+
+			It("should log successful validation", func() {
+				mockKM.EXPECT().GetPublicKey(gomock.Any()).Return(&testKey.PublicKey, nil)
+
+				service.ValidateAccessToken(ctx, validToken)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "access token validated")
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("with invalid token format", func() {
+			It("should return error for malformed token", func() {
+				// Should not call KeyManager for invalid format
+				mockKM.EXPECT().GetPublicKey(gomock.Any()).Times(0)
+
+				_, err := service.ValidateAccessToken(ctx, "not-a-jwt-token")
+
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(Equal(tokens.ErrInvalidToken))
+			})
+
+			It("should return error for empty token", func() {
+				mockKM.EXPECT().GetPublicKey(gomock.Any()).Times(0)
+
+				_, err := service.ValidateAccessToken(ctx, "")
+
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(Equal(tokens.ErrInvalidToken))
+			})
+
+			It("should log validation failure", func() {
+				service.ValidateAccessToken(ctx, "malformed")
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("warn", "token parsing failed")
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("with expired token", func() {
+			It("should return error", func() {
+				expiredToken := createExpiredToken(testKey, testKeyID, testUserID)
+
+				mockKM.EXPECT().GetPublicKey(gomock.Any()).Return(&testKey.PublicKey, nil).AnyTimes()
+
+				_, err := service.ValidateAccessToken(ctx, expiredToken)
+
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(Equal(tokens.ErrTokenExpired))
+			})
+
+			It("should log expiration", func() {
+				expiredToken := createExpiredToken(testKey, testKeyID, testUserID)
+				mockKM.EXPECT().GetPublicKey(gomock.Any()).Return(&testKey.PublicKey, nil).AnyTimes()
+
+				service.ValidateAccessToken(ctx, expiredToken)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("warn", "token expired")
+				}).Should(BeTrue())
+			})
+
+		})
+
+		Context("when public key retrieval fails", func() {
+			It("should return error", func() {
+				mockKM.EXPECT().
+					GetPublicKey(gomock.Any()).
+					Return(nil, errors.New("key unavailable"))
+
+				_, err := service.ValidateAccessToken(ctx, validToken)
+
+				Expect(err).To(HaveOccurred())
+			})
+
+			It("should log error", func() {
+				mockKM.EXPECT().
+					GetPublicKey(gomock.Any()).
+					Return(nil, errors.New("key error"))
+
+				service.ValidateAccessToken(ctx, validToken)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("error", "failed to get public key")
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("with key not found", func() {
+			It("should return error", func() {
+				mockKM.EXPECT().
+					GetPublicKey(gomock.Any()).
+					Return(nil, keymanager.ErrKeyNotFound)
+
+				_, err := service.ValidateAccessToken(ctx, validToken)
+
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(Equal(tokens.ErrInvalidSignature))
+			})
+		})
+
 	})
 
 	// ========================================================================
@@ -861,4 +1020,30 @@ func getTestPublicKey(kid string) (*rsa.PublicKey, error) {
 		return nil, errors.New("test public key not initialized")
 	}
 	return testPublicKey, nil
+}
+
+func createExpiredToken(key *rsa.PrivateKey, keyID, userID string) string {
+	// Create a token with past expiration
+	now := time.Now()
+	expiresAt := now.Add(-1 * time.Hour) // Expired 1 hour ago
+
+	claims := jwt.RegisteredClaims{
+		Subject:   userID,
+		Issuer:    "test-issuer",
+		Audience:  jwt.ClaimStrings{"test-audience"},
+		ExpiresAt: jwt.NewNumericDate(expiresAt),
+		IssuedAt:  jwt.NewNumericDate(now),
+		NotBefore: jwt.NewNumericDate(now),
+		ID:        "test-expired-jti",
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = keyID
+
+	signedToken, err := token.SignedString(key)
+	if err != nil {
+		return ""
+	}
+
+	return signedToken
 }

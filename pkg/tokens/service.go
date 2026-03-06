@@ -60,6 +60,8 @@ var (
 	ErrRateLimitExceeded = errors.New("rate limit exceeded")
 	ErrAlreadyRunning    = errors.New("service is already running")
 	ErrServiceNotRunning = errors.New("service is not running")
+	ErrInvalidToken      = errors.New("invalid token")
+	ErrInvalidSignature  = errors.New("invalid signature")
 )
 
 func ErrIvalidConfig(msg string) error {
@@ -848,6 +850,159 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 			expiresAt, expiresAt)
 	}
 	return signedToken, refreshToken, nil
+}
+
+func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, error) {
+	// ===== STEP 1: Service State Check =====
+	if !s.IsRunning() {
+		if s.logger != nil {
+			s.logger.Warn("attempted token validation while service stopped")
+		}
+		return nil, ErrServiceNotRunning // ← FIX: Return error!
+	}
+
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		if s.logger != nil {
+			/*s.logger.Debug("context cancelled during token validation",
+			  "error", err)
+			*/
+			s.logger.Info("context cancelled during token validation",
+				"error", err)
+
+		}
+		return nil, err // ← FIX: Must return!
+	}
+
+	// ===== STEP 3: Parse JWT Token =====
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		&jwt.RegisteredClaims{},
+		func(token *jwt.Token) (interface{}, error) {
+			// ===== STEP 4a: Verify Signing Method =====
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				if s.logger != nil {
+					s.logger.Warn("token uses unexpected signing method",
+						"method", token.Header["alg"])
+				}
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+
+			// ===== STEP 4b: Extract Key ID =====
+			kid, ok := token.Header["kid"].(string)
+			if !ok {
+				if s.logger != nil {
+					s.logger.Warn("token missing kid in header")
+				}
+				return nil, errors.New("missing kid in token header")
+			}
+
+			// ===== STEP 4c: Get Public Key =====
+			publicKey, err := s.keyManager.GetPublicKey(kid)
+			if err != nil {
+				if s.logger != nil {
+					s.logger.Error("failed to get public key",
+						"kid", kid,
+						"error", err)
+				}
+				return nil, fmt.Errorf("failed to get public key: %w", err)
+			}
+
+			return publicKey, nil
+		},
+	)
+
+	// ===== STEP 5: Check Parsing Errors =====
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("token parsing failed",
+				"error", err)
+		}
+
+		// Provide specific error messages
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			if s.logger != nil {
+				s.logger.Warn("token expired")
+			}
+			return nil, ErrTokenExpired
+		}
+		if errors.Is(err, jwt.ErrTokenNotValidYet) {
+			return nil, ErrTokenNotYetValid
+		}
+		if errors.Is(err, keymanager.ErrKeyNotFound) {
+			return nil, ErrInvalidSignature
+		}
+
+		return nil, ErrInvalidToken
+	}
+
+	// ===== STEP 6: Verify Token is Valid =====
+	if !token.Valid {
+		if s.logger != nil {
+			s.logger.Warn("token marked as invalid")
+		}
+		return nil, ErrInvalidToken
+	}
+
+	// ===== STEP 7: Extract Claims =====
+	claims, ok := token.Claims.(*jwt.RegisteredClaims)
+	if !ok {
+		if s.logger != nil {
+			s.logger.Error("failed to extract claims from token")
+		}
+		return nil, ErrInvalidToken
+	}
+
+	// ===== STEP 8: Validate Issuer =====
+	if s.issuer != "" && claims.Issuer != s.issuer {
+		if s.logger != nil {
+			s.logger.Warn("token issuer mismatch",
+				"expected", s.issuer,
+				"actual", claims.Issuer)
+		}
+		return nil, ErrInvalidIssuer
+	}
+
+	// ===== STEP 9: Validate Audience =====
+	if len(s.audience) > 0 {
+		validAudience := false
+		for _, aud := range s.audience {
+			for _, tokenAud := range claims.Audience {
+				if aud == tokenAud {
+					validAudience = true
+					break
+				}
+			}
+			if validAudience {
+				break
+			}
+		}
+
+		if !validAudience {
+			if s.logger != nil {
+				s.logger.Warn("token audience mismatch",
+					"expected", s.audience,
+					"actual", claims.Audience)
+			}
+			return nil, ErrInvalidAudience
+		}
+	}
+
+	// ===== STEP 10: Log Success & Metrics =====
+	if s.logger != nil {
+		/*s.logger.Debug("access token validated",
+		  "userID", claims.Subject,
+		  "tokenID", claims.ID)
+		*/
+		s.logger.Info("access token validated",
+			"userID", claims.Subject,
+			"tokenID", claims.ID)
+	}
+
+	// Update metrics (if implemented)
+	// s.tokenValidationCount.Add(1)
+
+	return claims, nil
 }
 
 // generateTokenID creates a cryptographically random token identifier.
