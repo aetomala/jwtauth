@@ -33,21 +33,25 @@
 - **Comprehensive test coverage** with race detection
 
 **TokenService** (Beta)
-- **JWT creation** with RS256 signing and custom claims support
+- **Access token issuance** (IssueAccessToken, IssueAccessTokenWithClaims, IssueTokenPair)
+- **Refresh token issuance** (IssueRefreshToken, IssueRefreshTokenWithMetadata)
+- **Access token validation** with claims extraction (ValidateAccessToken)
+- **Token refresh flow** (RefreshAccessToken) with expiration and revocation checks
+- **RS256 signing** with custom claims support
 - **Lifecycle management** (Start/Shutdown/IsRunning) with graceful operations
 - **Rate limiting** integration at token issuance boundary
-- **Configurable cleanup intervals** for refresh token expiration
+- **Refresh token cleanup** with automatic expiration handling
 - **Service state management** ensuring tokens only issue when service is running
-- **Comprehensive BDD test coverage** (61 tests across lifecycle and token operations)
+- **Comprehensive BDD test coverage** (75 tests across lifecycle, token operations, and refresh flows)
 - **Background cleanup goroutines** with proper synchronization
 
 ### 🚧 In Development
 
 - **HTTP Middleware**: Request authentication and user context injection
 - **Refresh Token Storage**: Memory and Redis implementations (RefreshStore interface ready)
-- **Token Validation**: Token parsing and claims verification
 - **Metrics Implementations**: Prometheus, StatsD, CloudWatch adapters
 - **OpenTelemetry**: Distributed tracing integration
+- **Additional Token Operations**: Token revocation, batch operations
 
 ## Architecture Highlights
 
