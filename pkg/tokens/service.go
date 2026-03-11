@@ -65,6 +65,7 @@ var (
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrRefreshTokenExpired = errors.New("refresh token expired")
 	ErrTokenRevoked        = errors.New("token revoked")
+	ErrTokenNotFound       = errors.New("token not found")
 )
 
 func ErrInvalidConfig(msg string) error {
@@ -1039,6 +1040,10 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		if s.logger != nil {
 			s.logger.Warn("refresh token not found in store",
 				"error", err)
+		}
+		// Propagate specific errors, default to invalid token for generic errors
+		if errors.Is(err, ErrTokenRevoked) {
+			return "", ErrTokenRevoked
 		}
 		return "", ErrInvalidRefreshToken
 	}
