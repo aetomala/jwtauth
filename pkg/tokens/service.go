@@ -55,16 +55,19 @@ type Service struct {
 }
 
 var (
-	ErrInvalidUserID     = errors.New("")
-	ErrServiceShutdown   = errors.New("")
-	ErrRateLimitExceeded = errors.New("rate limit exceeded")
-	ErrAlreadyRunning    = errors.New("service is already running")
-	ErrServiceNotRunning = errors.New("service is not running")
-	ErrInvalidToken      = errors.New("invalid token")
-	ErrInvalidSignature  = errors.New("invalid signature")
+	ErrInvalidUserID       = errors.New("")
+	ErrServiceShutdown     = errors.New("")
+	ErrRateLimitExceeded   = errors.New("rate limit exceeded")
+	ErrAlreadyRunning      = errors.New("service is already running")
+	ErrServiceNotRunning   = errors.New("service is not running")
+	ErrInvalidToken        = errors.New("invalid token")
+	ErrInvalidSignature    = errors.New("invalid signature")
+	ErrInvalidRefreshToken = errors.New("invalid refresh token")
+	ErrRefreshTokenExpired = errors.New("refresh token expired")
+	ErrTokenRevoked        = errors.New("token revoked")
 )
 
-func ErrIvalidConfig(msg string) error {
+func ErrInvalidConfig(msg string) error {
 	return errors.New(msg)
 }
 
@@ -100,27 +103,27 @@ func NewService(config ServiceConfig) (*Service, error) {
 	}
 
 	if config.KeyManager == nil {
-		return nil, ErrIvalidConfig("KeyManager is required")
+		return nil, ErrInvalidConfig("KeyManager is required")
 	}
 
 	if config.RefreshStore == nil {
-		return nil, ErrIvalidConfig("RefreshStore is required")
+		return nil, ErrInvalidConfig("RefreshStore is required")
 	}
 
 	if config.RateLimiter == nil {
-		return nil, ErrIvalidConfig("RateLimiter is required")
+		return nil, ErrInvalidConfig("RateLimiter is required")
 	}
 
 	if config.AccessTokenDuration < 0 {
-		return nil, ErrIvalidConfig("AccessTokenDuration must be non-negative")
+		return nil, ErrInvalidConfig("AccessTokenDuration must be non-negative")
 	}
 
 	if config.RefreshTokenDuration < 0 {
-		return nil, ErrIvalidConfig("RefreshTokenDuration must be non-negative")
+		return nil, ErrInvalidConfig("RefreshTokenDuration must be non-negative")
 	}
 
 	if config.CleanupInterval < 0 {
-		return nil, ErrIvalidConfig("CleanupInterval must be non-negative")
+		return nil, ErrInvalidConfig("CleanupInterval must be non-negative")
 	}
 
 	s := &Service{
@@ -1003,6 +1006,104 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 	// s.tokenValidationCount.Add(1)
 
 	return claims, nil
+}
+
+func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (string, error) {
+	// STEP 1: Service State Check
+	if !s.isRunning.Load() {
+		if s.logger != nil {
+			s.logger.Warn("attempted to refresh while service was stopped")
+		}
+		return "", ErrServiceNotRunning
+	}
+
+	// STEP 2: Context Check
+	if err := ctx.Err(); err != nil {
+		if s.logger != nil {
+			s.logger.Info("context cancelled during token refresh")
+		}
+		return "", err
+	}
+
+	// STEP 3: Input Validation
+	if refreshToken == "" {
+		if s.logger != nil {
+			s.logger.Warn("empty refresh token provided")
+		}
+		return "", ErrInvalidRefreshToken
+	}
+
+	// STEP 4: Lookup Refresh Token (CORRECTED!)
+	token, err := s.refreshStore.Retrieve(refreshToken) // ← CORRECT: Retrieve, not Get
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("refresh token not found in store",
+				"error", err)
+		}
+		return "", ErrInvalidRefreshToken
+	}
+
+	// STEP 5: Check Expiration
+	if token.ExpiresAt.Before(time.Now()) {
+		if s.logger != nil {
+			s.logger.Warn("refresh token has expired",
+				"tokenID", refreshToken,
+				"expiredAt", token.ExpiresAt)
+		}
+
+		// Clean up expired token
+		s.refreshStore.Revoke(refreshToken)
+
+		return "", ErrRefreshTokenExpired
+	}
+
+	// STEP 6: Check if Revoked
+	if token.Revoked {
+		if s.logger != nil {
+			s.logger.Warn("refresh token has been revoked",
+				"tokenID", refreshToken)
+		}
+		return "", ErrTokenRevoked
+	}
+
+	// STEP 7: Rate Limit Check
+	allowed, err := s.rateLimiter.Allow(token.UserID, 1)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("rate limiter error",
+				"userID", token.UserID,
+				"error", err)
+		}
+		return "", err
+	}
+
+	if !allowed {
+		if s.logger != nil {
+			s.logger.Warn("rate limit exceeded for token refresh",
+				"userID", token.UserID)
+		}
+		return "", ErrRateLimitExceeded
+	}
+
+	// STEP 8: Issue New Access Token
+	newAccessToken, err := s.IssueAccessToken(ctx, token.UserID)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to issue new access token",
+				"userID", token.UserID,
+				"error", err)
+		}
+		return "", fmt.Errorf("failed to issue access token: %w", err)
+	}
+
+	// STEP 9: Log Success
+	if s.logger != nil {
+		s.logger.Info("access token refreshed",
+			"userID", token.UserID,
+			"tokenID", refreshToken)
+	}
+
+	return newAccessToken, nil
 }
 
 // generateTokenID creates a cryptographically random token identifier.

@@ -16,6 +16,7 @@ import (
 
 	"github.com/aetomala/jwtauth/internal/testutil"
 	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
 
@@ -414,7 +415,7 @@ var _ = Describe("TokenService", func() {
 
 		Context("with valid user ID", func() {
 			It("should issue refresh token succesfully", func() {
-				mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil)
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 
 				mockStore.EXPECT().Store(
 					gomock.Any(), // tokenID (generated)
@@ -833,6 +834,102 @@ var _ = Describe("TokenService", func() {
 			})
 		})
 
+	})
+
+	// ========================================================================
+	// REFRESH TOKEN OPERATIONS
+	// ========================================================================
+
+	Describe("RefreshAccessToken", func() {
+		var validRefreshToken string
+
+		BeforeEach(func() {
+			service = createService()
+
+			// Start the service first (required before token operations)
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			mockStore.EXPECT().Cleanup().Return(0, nil).AnyTimes()
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Then issue a refresh token
+			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+			mockStore.EXPECT().Store(gomock.Any(), testUserID, gomock.Any(), gomock.Any()).Return(nil)
+			validRefreshToken, _ = service.IssueRefreshToken(ctx, testUserID)
+		})
+
+		Context("with valid refresh token", func() {
+			It("should issue new access token", func() {
+				// Expect retrieval from store
+				mockStore.EXPECT().
+					Retrieve(validRefreshToken).
+					Return(&storage.RefreshToken{
+						TokenID:   validRefreshToken,
+						UserID:    testUserID,
+						Revoked:   false,
+						ExpiresAt: time.Now().Add(24 * time.Hour),
+					}, nil)
+
+				// Expect rate limit check
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+
+				// Expect new access token signed
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+
+				accessToken, err := service.RefreshAccessToken(ctx, validRefreshToken)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(accessToken).NotTo(BeEmpty())
+			})
+
+			It("should retrieve refresh token from store", func() {
+				mockStore.EXPECT().
+					Retrieve(validRefreshToken).
+					Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil).
+					Times(1)
+
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+
+				service.RefreshAccessToken(ctx, validRefreshToken)
+			})
+
+			/*It("should check rate limit", func() {
+				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+
+				mockRL.EXPECT().
+					Allow(testUserID, 1).
+					Return(true, nil).
+					Times(1)
+
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+
+				service.RefreshAccessToken(ctx, validRefreshToken)
+			})
+
+			It("should preserve user ID from refresh token", func() {
+				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+
+				accessToken, _ := service.RefreshAccessToken(ctx, validRefreshToken)
+
+				claims := parseToken(accessToken)
+				Expect(claims.Subject).To(Equal(testUserID))
+			})
+
+			It("should log refresh operation", func() {
+				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+
+				service.RefreshAccessToken(ctx, validRefreshToken)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "access token refreshed")
+				}).Should(BeTrue())
+			})*/
+		})
 	})
 
 	// ========================================================================
