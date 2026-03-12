@@ -63,7 +63,7 @@ var (
 	ErrInvalidToken        = errors.New("invalid token")
 	ErrInvalidSignature    = errors.New("invalid signature")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
-	ErrRefreshTokenExpired = errors.New("refresh token expired")
+	ErrRefreshTokenExpired = errors.New("token has expired")
 	ErrTokenRevoked        = errors.New("token revoked")
 	ErrTokenNotFound       = errors.New("token not found")
 )
@@ -1109,6 +1109,99 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	}
 
 	return newAccessToken, nil
+}
+
+func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error {
+	// STEP 1: Service State Check
+	if !s.isRunning.Load() {
+		if s.logger != nil {
+			s.logger.Warn("attempted to revoke token while service stopped")
+		}
+		return ErrServiceNotRunning
+	}
+
+	// STEP 2: Context Check
+
+	if err := ctx.Err(); err != nil {
+		if s.logger != nil {
+			s.logger.Info("context cancelled during token revocation")
+		}
+		return err
+	}
+
+	// STEP 3: Input validation
+	if tokenID == "" {
+		if s.logger != nil {
+			s.logger.Warn("empty token ID provided for revocation")
+		}
+		return ErrInvalidRefreshToken
+	}
+
+	// STEP 4: Call RefreshStore.Revoke()
+	err := s.refreshStore.Revoke(tokenID)
+	if err != nil {
+		if s.logger != nil {
+
+			s.logger.Error("failed to revoke refresh token",
+				"tokenID", tokenID,
+				"error", err)
+		}
+		return fmt.Errorf("failed to revoke token: %w", err)
+	}
+
+	// STEP 5: Log Success
+	if s.logger != nil {
+		s.logger.Info("refresh token revoked",
+			"tokenID", tokenID)
+	}
+
+	return nil
+}
+
+func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error {
+	// STEP 1: Service State Check
+	if !s.isRunning.Load() {
+		if s.logger != nil {
+			s.logger.Warn("attempted to revoke all user tokens while service stopped")
+		}
+		return ErrServiceNotRunning
+	}
+
+	// STEP 2: Context Check
+	if err := ctx.Err(); err != nil {
+		if s.logger != nil {
+			s.logger.Info("context cancelled during bulk token revocation",
+				"error", err)
+		}
+		return err
+	}
+
+	// STEP 3: Input Validation
+	if userID == "" {
+		if s.logger != nil {
+			s.logger.Warn("empty user ID provided for bulk revocation")
+		}
+		return ErrInvalidUserID // Note: Different error than single revoke
+	}
+
+	// STEP 4: Revoke All via RefreshStore
+	err := s.refreshStore.RevokeAllForUser(userID)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to revoke all user tokens",
+				"userID", userID,
+				"error", err)
+		}
+		return fmt.Errorf("failed to revoke all tokens: %w", err)
+	}
+
+	// STEP 5: Log Success (Important for security auditing!)
+	if s.logger != nil {
+		s.logger.Info("all refresh tokens revoked for user",
+			"userID", userID)
+	}
+
+	return nil
 }
 
 // generateTokenID creates a cryptographically random token identifier.

@@ -16,6 +16,7 @@ import (
 
 	"github.com/aetomala/jwtauth/internal/testutil"
 	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
 
@@ -26,18 +27,18 @@ func TestTokens(t *testing.T) {
 
 var _ = Describe("TokenService", func() {
 	var (
-		ctrl       *gomock.Controller
-		service    *tokens.Service
-		mockKM     *testutil.MockKeyManager
-		mockStore  *testutil.MockRefreshStore
-		mockRL     *testutil.MockRateLimiter
-		mockLogger *testutil.MockLogger
-		ctx        context.Context
-		cancel     context.CancelFunc
-		testUserID string
-		/*testTokenID string */
-		testKey   *rsa.PrivateKey
-		testKeyID string
+		ctrl        *gomock.Controller
+		service     *tokens.Service
+		mockKM      *testutil.MockKeyManager
+		mockStore   *testutil.MockRefreshStore
+		mockRL      *testutil.MockRateLimiter
+		mockLogger  *testutil.MockLogger
+		ctx         context.Context
+		cancel      context.CancelFunc
+		testUserID  string
+		testTokenID string
+		testKey     *rsa.PrivateKey
+		testKeyID   string
 	)
 
 	BeforeEach(func() {
@@ -46,7 +47,7 @@ var _ = Describe("TokenService", func() {
 
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 		testUserID = "user-12345"
-		/*testTokenID = "token-67890"*/
+		testTokenID = "token-67890"
 
 		// Generate test RSA key
 		testKey, _ = rsa.GenerateKey(rand.Reader, 2048)
@@ -835,9 +836,279 @@ var _ = Describe("TokenService", func() {
 
 	})
 
+	Describe("RefreshAccessToken", func() {
+		var validRefreshToken string
+
+		BeforeEach(func() {
+			service = createService()
+
+			// Start the service first (required before token operations)
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			mockStore.EXPECT().Cleanup().Return(0, nil).AnyTimes()
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Then issue a refresh token
+			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+			mockStore.EXPECT().Store(gomock.Any(), testUserID, gomock.Any(), gomock.Any()).Return(nil)
+			validRefreshToken, _ = service.IssueRefreshToken(ctx, testUserID)
+		})
+
+		Context("with valid refresh token", func() {
+			It("should issue new access token", func() {
+				// Expect retrieval from store
+				mockStore.EXPECT().
+					Retrieve(validRefreshToken).
+					Return(&storage.RefreshToken{
+						TokenID:   validRefreshToken,
+						UserID:    testUserID,
+						Revoked:   false,
+						ExpiresAt: time.Now().Add(24 * time.Hour),
+					}, nil)
+
+				// Expect rate limit check
+				mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil).AnyTimes()
+
+				// Expect new access token signed
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+
+				accessToken, err := service.RefreshAccessToken(ctx, validRefreshToken)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(accessToken).NotTo(BeEmpty())
+			})
+
+			It("should retrieve refresh token from store", func() {
+				mockStore.EXPECT().
+					Retrieve(validRefreshToken).
+					Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil).
+					Times(1)
+
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+
+				service.RefreshAccessToken(ctx, validRefreshToken)
+			})
+
+			It("should check rate limit", func() {
+				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+
+				mockRL.EXPECT().
+					Allow(testUserID, 1).
+					Return(true, nil).
+					AnyTimes()
+
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+
+				service.RefreshAccessToken(ctx, validRefreshToken)
+			})
+
+			It("should preserve user ID from refresh token", func() {
+				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+
+				accessToken, _ := service.RefreshAccessToken(ctx, validRefreshToken)
+
+				claims := parseToken(accessToken)
+				Expect(claims.Subject).To(Equal(testUserID))
+			})
+
+			It("should log refresh operation", func() {
+				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+
+				service.RefreshAccessToken(ctx, validRefreshToken)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "access token refreshed")
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("with invalid refresh token", func() {
+			It("should return error for non-existent token", func() {
+				mockStore.EXPECT().
+					Retrieve("non-existent-token").
+					Return(nil, tokens.ErrTokenNotFound)
+
+				_, err := service.RefreshAccessToken(ctx, "non-existent-token")
+
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(MatchError(tokens.ErrInvalidRefreshToken))
+			})
+
+			It("should return error for revoked token", func() {
+				mockStore.EXPECT().
+					Retrieve(validRefreshToken).
+					Return(nil, tokens.ErrTokenRevoked)
+
+				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
+
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(MatchError(tokens.ErrTokenRevoked))
+			})
+
+			It("should return error for expired token", func() {
+				mockStore.EXPECT().
+					Retrieve(validRefreshToken).
+					Return(&storage.RefreshToken{
+						UserID:    testUserID,
+						ExpiresAt: time.Now().Add(-1 * time.Hour), // Expired
+					}, nil)
+
+				mockStore.EXPECT().Revoke(validRefreshToken).Return(nil)
+				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
+
+				Expect(err).To(HaveOccurred())
+				Expect(err).To(Equal(tokens.ErrRefreshTokenExpired))
+			})
+		})
+
+		Context("when rate limited", func() {
+			It("should return error", func() {
+				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
+
+				// Should NOT try to issue new token
+				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
+
+				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
+
+				Expect(err).To(MatchError(tokens.ErrRateLimitExceeded))
+			})
+		})
+
+		Context("when storage retrieval fails", func() {
+			It("should return error", func() {
+				mockStore.EXPECT().
+					Retrieve(gomock.Any()).
+					Return(nil, errors.New("storage error"))
+
+				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
+
+				Expect(err).To(HaveOccurred())
+			})
+		})
+	})
+
 	// ========================================================================
-	// COMPLETE LIFECYCLE INTEGRATION TEST
+	// TOKEN REVOCATION
 	// ========================================================================
+
+	Describe("RevokeRefreshToken", func() {
+		BeforeEach(func() {
+			service = createService()
+
+			// Start the service first (required before token operations)
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			mockStore.EXPECT().Cleanup().Return(0, nil).AnyTimes()
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		Context("with valid token ID", func() {
+			It("should revoke token successfully", func() {
+				mockStore.EXPECT().
+					Revoke(testTokenID).
+					Return(nil).
+					Times(1)
+
+				err := service.RevokeRefreshToken(ctx, testTokenID)
+
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should call store revoke", func() {
+				mockStore.EXPECT().
+					Revoke(testTokenID).
+					Return(nil).
+					Times(1)
+
+				service.RevokeRefreshToken(ctx, testTokenID)
+			})
+
+			It("should log revocation", func() {
+				mockStore.EXPECT().Revoke(gomock.Any()).Return(nil)
+
+				service.RevokeRefreshToken(ctx, testTokenID)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "refresh token revoked")
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("with non-existent token", func() {
+			It("should return error", func() {
+				mockStore.EXPECT().
+					Revoke("non-existent").
+					Return(tokens.ErrTokenNotFound)
+
+				err := service.RevokeRefreshToken(ctx, "non-existent")
+
+				Expect(err).To(HaveOccurred())
+			})
+		})
+
+		Context("when storage revocation fails", func() {
+			It("should return error", func() {
+				mockStore.EXPECT().
+					Revoke(gomock.Any()).
+					Return(errors.New("revocation failed"))
+
+				err := service.RevokeRefreshToken(ctx, testTokenID)
+
+				Expect(err).To(HaveOccurred())
+			})
+
+			It("should log error", func() {
+				mockStore.EXPECT().
+					Revoke(gomock.Any()).
+					Return(errors.New("error"))
+
+				service.RevokeRefreshToken(ctx, testTokenID)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("error", "failed to revoke refresh token")
+				}).Should(BeTrue())
+			})
+		})
+	})
+
+	Describe("RevokeAllUserTokens", func() {
+		BeforeEach(func() {
+			service = createService()
+
+			// Start the service first (required before token operations)
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			mockStore.EXPECT().Cleanup().Return(0, nil).AnyTimes()
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should revoke all tokens for user", func() {
+			mockStore.EXPECT().
+				RevokeAllForUser(testUserID).
+				Return(nil).
+				Times(1)
+
+			err := service.RevokeAllUserTokens(ctx, testUserID)
+
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should log bulk revocation", func() {
+			mockStore.EXPECT().RevokeAllForUser(gomock.Any()).Return(nil)
+
+			service.RevokeAllUserTokens(ctx, testUserID)
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "all refresh tokens revoked for user")
+			}).Should(BeTrue())
+		})
+	})
 })
 
 // ============================================================================
