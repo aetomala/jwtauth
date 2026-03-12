@@ -37,12 +37,13 @@
 - **Refresh token issuance** (IssueRefreshToken, IssueRefreshTokenWithMetadata)
 - **Access token validation** with claims extraction (ValidateAccessToken)
 - **Token refresh flow** (RefreshAccessToken) with expiration and revocation checks
+- **Token revocation** (RevokeRefreshToken, RevokeAllUserTokens) for logout and security scenarios
 - **RS256 signing** with custom claims support
 - **Lifecycle management** (Start/Shutdown/IsRunning) with graceful operations
 - **Rate limiting** integration at token issuance boundary
 - **Refresh token cleanup** with automatic expiration handling
 - **Service state management** ensuring tokens only issue when service is running
-- **Comprehensive BDD test coverage** (75 tests across lifecycle, token operations, and refresh flows)
+- **Comprehensive BDD test coverage** (91 tests covering lifecycle, issuance, validation, refresh, and revocation)
 - **Background cleanup goroutines** with proper synchronization
 
 ### 🚧 In Development
@@ -51,7 +52,7 @@
 - **Refresh Token Storage**: Memory and Redis implementations (RefreshStore interface ready)
 - **Metrics Implementations**: Prometheus, StatsD, CloudWatch adapters
 - **OpenTelemetry**: Distributed tracing integration
-- **Additional Token Operations**: Token revocation, batch operations
+- **Rate Limiter Implementations**: Token bucket, sliding window, Redis-backed limiters
 
 ## Architecture Highlights
 
