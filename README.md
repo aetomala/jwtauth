@@ -2,7 +2,7 @@
 
 **Production-ready JWT authentication library for distributed Go applications**
 
-> ⚠️ **Pre-Alpha Status**: KeyManager component is production-ready and fully tested. TokenService, Middleware, and other components are under active development. API may change before v1.0.0 release.
+> ⚠️ **Beta Status**: KeyManager is production-ready and fully tested. TokenService is in beta — core operations are complete with comprehensive test coverage. Middleware and storage implementations are under active development. API may change before v1.0.0.
 
 ## Overview
 
@@ -18,8 +18,9 @@
 
 ## Key Features
 
-### ✅ Currently Available (KeyManager)
+### ✅ Currently Available
 
+**KeyManager**
 - **Zero-downtime key rotation** with configurable overlap periods
 - **Automatic background rotation** with cleanup
 - **RSA key pair generation** and management
@@ -31,12 +32,24 @@
 - **Domain-specific metrics** interface (Prometheus adapter coming)
 - **Comprehensive test coverage** with race detection
 
+**TokenService** (Beta)
+- **Access token issuance** (IssueAccessToken, IssueAccessTokenWithClaims, IssueTokenPair)
+- **Refresh token issuance** (IssueRefreshToken, IssueRefreshTokenWithMetadata)
+- **Access token validation** with claims extraction (ValidateAccessToken)
+- **Token refresh flow** (RefreshAccessToken) with expiration and revocation checks
+- **Token revocation** (RevokeRefreshToken, RevokeAllUserTokens) for logout and security scenarios
+- **Token introspection** (IntrospectToken) per RFC 7662 — returns active/inactive status with metadata
+- **Manual token cleanup** (CleanupExpiredTokens) for on-demand expiration sweeps
+- **RS256 signing** with custom claims support and reserved claim protection
+- **Lifecycle management** (Start/Shutdown/IsRunning) with graceful operations
+- **Background cleanup goroutines** with configurable interval and proper synchronization
+- **Service state management** ensuring tokens only issue when service is running
+- **Comprehensive BDD test coverage** (126 tests covering lifecycle, issuance, validation, refresh, revocation, and introspection; ~87% statement coverage)
+
 ### 🚧 In Development
 
-- **TokenService**: JWT creation, validation, and claims management
 - **HTTP Middleware**: Request authentication and user context injection
-- **Refresh Token Storage**: Memory and Redis implementations
-- **Rate Limiting**: Token bucket algorithm with per-user/IP limits
+- **Refresh Token Storage**: Memory and Redis implementations (RefreshStore interface ready)
 - **Metrics Implementations**: Prometheus, StatsD, CloudWatch adapters
 - **OpenTelemetry**: Distributed tracing integration
 
@@ -105,12 +118,11 @@ logger := yourCustomAdapter{}                         // Your own logger
 ## Installation
 
 ```bash
-# Not yet available - pre-alpha
 # Will be available as:
 go get github.com/aetomala/jwtauth
 ```
 
-**Current Status**: Pre-alpha development. Not recommended for production use until v1.0.0 release.
+**Current Status**: Beta development. Not recommended for production use until v1.0.0 release.
 
 ## Quick Start
 
@@ -200,6 +212,65 @@ func main() {
     // {"time":"2026-02-07T12:30:00Z","level":"INFO","msg":"key rotation successful","key_id":"key_20260207_120000","duration":"150ms"}
 }
 ```
+
+### TokenService Usage (Beta)
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/aetomala/jwtauth/pkg/tokens"
+    // ... other imports
+)
+
+func main() {
+    // Create TokenService with storage
+    config := tokens.ServiceConfig{
+        KeyManager:           keyManager,      // from KeyManager above
+        RefreshStore:         refreshStore,    // RefreshStore implementation
+        Logger:               logger,          // Optional
+        AccessTokenDuration:  15 * time.Minute,
+        RefreshTokenDuration: 30 * 24 * time.Hour,
+        CleanupInterval:      1 * time.Hour,   // Auto-cleanup of expired tokens
+        Issuer:               "my-app",
+        Audience:             []string{"my-app-api"},
+    }
+
+    service, err := tokens.NewService(config)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Start service lifecycle
+    ctx := context.Background()
+    if err := service.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+    defer service.Shutdown(ctx)
+
+    // Issue access token with custom claims
+    token, err := service.IssueAccessTokenWithClaims(ctx, "user-123", map[string]interface{}{
+        "role": "admin",
+        "tenant": "org-456",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Access token issued: %s", token)
+}
+```
+
+**Key Features**:
+- ✅ Automatic lifecycle management (Start/Shutdown)
+- ✅ Service state checking (IsRunning) ensures tokens only issue when running
+- ✅ Custom claims support with reserved claim protection
+- ✅ Background cleanup of expired refresh tokens
+- ✅ Structured logging integration
 
 ## Configuration
 
@@ -295,7 +366,11 @@ github.com/aetomala/jwtauth/
 │   │   ├── manager.go            # Core implementation
 │   │   ├── persistence.go        # Disk operations
 │   │   └── keymanager_test.go   # Comprehensive tests
-│   ├── tokens/                   # JWT operations 🚧
+│   ├── tokens/                   # JWT operations (Beta) 🟡
+│   │   ├── service.go            # TokenService implementation
+│   │   ├── service_test.go       # Token operations tests
+│   │   ├── service_lifecycle_test.go  # Lifecycle management tests
+│   │   └── claims.go             # Claims management
 │   ├── middleware/               # HTTP middleware 🚧
 │   └── storage/                  # Refresh token storage 🚧
 ├── internal/                     # Private packages
@@ -309,9 +384,9 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 3 comprehensive test suites covering KeyManager
+**Current**: 126 comprehensive tests across KeyManager and TokenService, all passing with race detection; ~87% statement coverage on TokenService
 
-**Test Organization**:
+**KeyManager** (3 test suites):
 - Constructor validation and defaults
 - Lifecycle management (Start/Stop/Shutdown)
 - Core operations (key generation, rotation, retrieval)
@@ -321,6 +396,31 @@ github.com/aetomala/jwtauth/
 - Concurrency and race conditions
 - Graceful shutdown with in-flight operations
 - Logging integration and verification
+
+**TokenService** (7 test suites, 126 total tests):
+- **Lifecycle Management Tests** (20 tests):
+  - Start: idempotency, logging, background cleanup, failure handling, context cancellation
+  - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency
+  - IsRunning: state tracking and thread-safety verification
+  - Complete Lifecycle: integration test of start → use → shutdown cycle
+- **Token Issuance Tests**:
+  - IssueAccessToken / IssueAccessTokenWithClaims: successful issuance, custom claims, reserved claim protection, guard conditions
+  - IssueRefreshToken: successful issuance, storage, metadata handling, guard conditions
+  - IssueTokenPair: coordinated access and refresh token issuance, guard conditions
+- **Validation & Refresh Tests**:
+  - ValidateAccessToken: signature verification, claims extraction, expiration, audience/issuer enforcement, wrong signing method, missing kid header, guard conditions
+  - RefreshAccessToken: token rotation, revocation checks, expiration handling, error propagation, guard conditions
+- **Revocation & Introspection Tests**:
+  - RevokeRefreshToken / RevokeAllUserTokens: single and bulk revocation flows
+  - IntrospectToken: active/inactive/revoked/expired status per RFC 7662
+  - CleanupExpiredTokens: manual sweep with error handling
+- **Concurrent Operations**: parallel token issuance and service state safety
+
+**Test Organization**:
+- Separate test files for logical concerns (`service_test.go`, `service_lifecycle_test.go`)
+- Ginkgo/Gomega BDD-style test organization
+- gomock for dependency injection testing
+- Shared test utilities and fixtures
 
 **All tests pass with race detection**:
 ```bash
@@ -386,11 +486,16 @@ Tests follow **progressive phase-based development**:
 - ✅ Comprehensive test coverage with race detection
 - ✅ Architecture documentation
 
-### v0.2.0 (Next - Alpha)
-- 🚧 TokenService implementation
-- 🚧 JWT creation and validation
-- 🚧 Claims management
-- 🚧 Integration tests with KeyManager
+### v0.2.0 (Current - Beta)
+- ✅ TokenService: JWT creation with RS256 signing
+- ✅ TokenService: Lifecycle management (Start/Shutdown/IsRunning)
+- ✅ TokenService: Claims management with custom claims support and reserved claim protection
+- ✅ TokenService: Access token validation with issuer/audience enforcement (ValidateAccessToken)
+- ✅ TokenService: Refresh token rotation with expiration and revocation checks (RefreshAccessToken)
+- ✅ TokenService: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
+- ✅ TokenService: Token introspection per RFC 7662 (IntrospectToken)
+- ✅ TokenService: Manual cleanup sweep (CleanupExpiredTokens)
+- ✅ TokenService: Comprehensive test coverage (126 tests, ~87% statement coverage, all passing with race detection)
 - 🚧 Prometheus metrics adapter
 
 ### v0.3.0 (Beta)
@@ -402,7 +507,6 @@ Tests follow **progressive phase-based development**:
 ### v0.4.0 (Beta)
 - 🚧 Refresh token storage (memory + Redis)
 - 🚧 Token revocation
-- 🚧 Rate limiting
 
 ### v1.0.0 (Stable)
 - API stability guarantee
@@ -423,6 +527,29 @@ This library follows SOLID principles and clean architecture patterns. For detai
 - Interface Segregation (small, focused interfaces)
 - Strategy Pattern (swap implementations via interfaces)
 - Template Method (consistent patterns across components)
+
+## Rate Limiting
+
+`jwtauth` does not provide rate limiting. Rate limiting is a deployment concern — the right layer depends on your environment, scale, and infrastructure.
+
+**Recommended approach: API Gateway (distributed deployments)**
+
+Enforce rate limits at the API Gateway before requests reach your service. This is the only approach that works correctly across multiple instances:
+
+- **Kong**: `rate-limiting` plugin, configurable per route
+- **AWS API Gateway**: `ThrottlingRateLimit` / `ThrottlingBurstLimit` per method
+- **Kubernetes Ingress (NGINX)**: `nginx.ingress.kubernetes.io/limit-rps` annotation
+- **Cloudflare**: Zone-level rate limiting rules
+
+**Alternative: HTTP middleware (single-instance or with shared Redis)**
+
+If you prefer application-level rate limiting, several well-maintained Go libraries exist:
+
+- [`golang.org/x/time/rate`](https://pkg.go.dev/golang.org/x/time/rate) — standard library token bucket
+- [`github.com/ulule/limiter`](https://github.com/ulule/limiter) — Redis-backed, works across instances
+- [`github.com/throttled/throttled`](https://github.com/throttled/throttled) — flexible, GCRA algorithm
+
+See [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) for architecture guidance and configuration examples.
 
 ## Contributing
 
@@ -475,6 +602,8 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 
 ---
 
-**Status**: Pre-Alpha (Active Development)  
-**Version**: 0.1.0-pre-alpha  
-**Last Updated**: February 2026
+**Status**: Beta (Active Development)
+**Version**: 0.2.0-beta
+**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | Middleware 🚧
+**Test Coverage**: 126 tests, ~87% statement coverage, all passing, race-detection enabled
+**Last Updated**: March 2026
