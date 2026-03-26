@@ -18,21 +18,34 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// ServiceConfig holds the configuration for a Service.
+//
+// KeyManager, RefreshStore, and RateLimiter are required. All duration fields
+// default to production-safe values via ConfigDefault if left at zero.
 type ServiceConfig struct {
-	// Required
-	KeyManager   keymanager.KeyManager
-	RefreshStore storage.RefreshStore
-	RateLimiter  ratelimit.RateLimiter
+	// Required dependencies
+	KeyManager   keymanager.KeyManager // Signs and validates tokens
+	RefreshStore storage.RefreshStore  // Persists refresh tokens
+	RateLimiter  ratelimit.RateLimiter // Controls issuance rate per user
 
 	// Optional
-	Logger               logging.Logger
-	AccessTokenDuration  time.Duration
-	RefreshTokenDuration time.Duration
-	CleanupInterval      time.Duration
-	Issuer               string
-	Audience             []string
+	Logger logging.Logger // Structured logger; nil disables logging
+
+	// Token lifetimes — defaults applied by NewService if zero
+	AccessTokenDuration  time.Duration // Default: 15 minutes
+	RefreshTokenDuration time.Duration // Default: 30 days
+	CleanupInterval      time.Duration // How often expired tokens are purged; default: 1 hour
+
+	// JWT claims
+	Issuer   string   // Value for the "iss" claim
+	Audience []string // Values for the "aud" claim
 }
 
+// Service issues, validates, and revokes JWT access tokens and opaque refresh
+// tokens. It must be started with Start before use and stopped with Shutdown
+// for clean termination.
+//
+// All public methods are safe for concurrent use.
 type Service struct {
 	// ===== Dependencies (Interfaces) =====
 	keyManager   keymanager.KeyManager // Crypto operations
@@ -53,6 +66,7 @@ type Service struct {
 	wg           sync.WaitGroup // Waits for goroutines to finish on shutdown
 }
 
+// Sentinel errors returned by Service methods.
 var (
 	ErrInvalidUserID       = errors.New("invalid user ID")
 	ErrRateLimitExceeded   = errors.New("rate limit exceeded")
@@ -66,10 +80,14 @@ var (
 	ErrTokenNotFound       = errors.New("token not found")
 )
 
+// ErrInvalidConfig returns a configuration error with the given message.
+// Returned by NewService when required fields are missing or values are invalid.
 func ErrInvalidConfig(msg string) error {
 	return errors.New(msg)
 }
 
+// ConfigDefault returns a ServiceConfig populated with production-safe defaults.
+// NewService applies these automatically for any zero-value duration fields.
 func ConfigDefault() ServiceConfig {
 	return ServiceConfig{
 		AccessTokenDuration:  15 * time.Minute,
@@ -78,11 +96,15 @@ func ConfigDefault() ServiceConfig {
 	}
 }
 
-// IsRunning tells caller if the manager is currently running
+// IsRunning reports whether the service has been started and not yet shut down.
+// Safe to call concurrently.
 func (s *Service) IsRunning() bool {
 	return s.isRunning.Load()
 }
 
+// NewService constructs a Service from the given config. Zero-value duration
+// fields are filled with defaults from ConfigDefault. Returns an error if any
+// required dependency is nil or a duration is negative.
 func NewService(config ServiceConfig) (*Service, error) {
 	if config.AccessTokenDuration == 0 {
 		config.AccessTokenDuration = ConfigDefault().AccessTokenDuration
@@ -136,6 +158,12 @@ func NewService(config ServiceConfig) (*Service, error) {
 	return s, nil
 }
 
+// Start initializes the service and begins background operations. It starts
+// the KeyManager and launches the cleanup goroutine that periodically purges
+// expired refresh tokens.
+//
+// Start is idempotent — calling it on an already-running service is a no-op.
+// Returns an error if the KeyManager fails to start or the context is cancelled.
 func (s *Service) Start(ctx context.Context) error {
 	// 1. Check if already running (idempotent)
 	if !s.isRunning.CompareAndSwap(false, true) {
@@ -206,6 +234,12 @@ func (s *Service) cleanupLoop() {
 	}
 }
 
+// Shutdown stops the service gracefully. It signals background goroutines to
+// stop, waits for them to finish, then shuts down the KeyManager.
+//
+// Shutdown is idempotent — calling it on a stopped service is a no-op.
+// Returns context.DeadlineExceeded if the goroutines do not finish within
+// the deadline, or any error returned by the KeyManager's Shutdown.
 func (s *Service) Shutdown(ctx context.Context) error {
 	// 1. Check if running (idempotent)
 	if !s.isRunning.CompareAndSwap(true, false) {
@@ -259,6 +293,13 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// IssueAccessToken creates and signs an RS256 JWT access token for the given
+// user. The token carries standard registered claims (sub, iss, aud, exp, iat,
+// nbf, jti) and is signed with the current key from the KeyManager.
+//
+// Returns ErrInvalidUserID for empty/whitespace-only user IDs, ErrServiceNotRunning
+// if the service is stopped, ErrRateLimitExceeded if the rate limiter denies
+// the request, or the context error if the context is already cancelled.
 func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, error) {
 
 	// ===== STEP 1: Validate user id ====
@@ -383,6 +424,12 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	return signedToken, nil
 }
 
+// IssueAccessTokenWithClaims creates a signed RS256 JWT access token with
+// additional custom claims merged into the payload. Reserved claims (sub, iss,
+// exp, iat, nbf, jti) cannot be overridden; any attempt is silently dropped
+// and logged as a warning.
+//
+// Returns the same errors as IssueAccessToken.
 func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string, customClaims map[string]interface{}) (string, error) {
 	// ===== STEP 1: Validate User ID =====
 	if len(userID) == 0 {
@@ -509,6 +556,11 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	return signedToken, nil
 }
 
+// IssueRefreshToken creates and stores an opaque, cryptographically random
+// refresh token for the given user. Unlike access tokens, refresh tokens are
+// not JWTs — they are 256-bit random values stored in the RefreshStore.
+//
+// Returns the same errors as IssueAccessToken.
 func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string, error) {
 	// ===== STEP 1: Validate user id ====
 	// validate user ID Split into two to optimize in the event of high volume of invalid requests
@@ -613,6 +665,11 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	return refreshToken, nil
 }
 
+// IssueRefreshTokenWithMetadata behaves like IssueRefreshToken but stores
+// arbitrary metadata alongside the token (e.g. device ID, IP address, session
+// tags). The metadata is retrievable via IntrospectToken.
+//
+// Returns the same errors as IssueAccessToken.
 func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID string, metadata map[string]interface{}) (string, error) {
 	// ===== STEP 1: Validate user id ====
 	// validate user ID Split into two to optimize in the event of high volume of invalid requests
@@ -716,6 +773,12 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	return refreshToken, nil
 }
 
+// IssueTokenPair issues an access token and a refresh token in a single
+// operation, applying one rate-limit cost. The access token is a signed RS256
+// JWT; the refresh token is an opaque random value stored in the RefreshStore.
+//
+// Returns (accessToken, refreshToken, error). Returns the same errors as
+// IssueAccessToken.
 func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, string, error) {
 	// ===== STEP 1: Validate user id ====
 	// validate user ID Split into two to optimize in the event of high volume of invalid requests
@@ -872,6 +935,13 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	return signedToken, refreshToken, nil
 }
 
+// ValidateAccessToken parses and validates a signed JWT access token string.
+// It verifies the RS256 signature using the public key identified by the token's
+// "kid" header, then checks expiration, issuer, and audience claims.
+//
+// Returns the parsed RegisteredClaims on success, or one of: ErrServiceNotRunning,
+// ErrTokenExpired, ErrTokenNotYetValid, ErrInvalidSignature, ErrInvalidIssuer,
+// ErrInvalidAudience, ErrInvalidToken, or the context error.
 func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, error) {
 	// ===== STEP 1: Service State Check =====
 	if !s.IsRunning() {
@@ -1014,6 +1084,13 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 	return claims, nil
 }
 
+// RefreshAccessToken exchanges a valid refresh token for a new access token.
+// It retrieves the refresh token from storage, checks expiration and revocation
+// status, enforces the rate limiter, then calls IssueAccessToken for the
+// token's owner.
+//
+// Returns ErrServiceNotRunning, ErrInvalidRefreshToken, ErrRefreshTokenExpired,
+// ErrTokenRevoked, ErrRateLimitExceeded, or the context error.
 func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (string, error) {
 	// STEP 1: Service State Check
 	if !s.isRunning.Load() {
@@ -1116,6 +1193,12 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	return newAccessToken, nil
 }
 
+// RevokeRefreshToken marks a single refresh token as revoked in the RefreshStore.
+// Subsequent calls to RefreshAccessToken or IntrospectToken will see the token
+// as inactive.
+//
+// Returns ErrServiceNotRunning, ErrInvalidRefreshToken for empty tokenID, or
+// the context error.
 func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error {
 	// STEP 1: Service State Check
 	if !s.isRunning.Load() {
@@ -1163,6 +1246,11 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	return nil
 }
 
+// RevokeAllUserTokens revokes every refresh token belonging to the given user.
+// Use this for logout-all-devices or account suspension scenarios.
+//
+// Returns ErrServiceNotRunning, ErrInvalidUserID for empty userID, or the
+// context error.
 func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error {
 	// STEP 1: Service State Check
 	if !s.isRunning.Load() {
@@ -1209,6 +1297,15 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	return nil
 }
 
+// IntrospectToken returns metadata about an opaque refresh token, per RFC 7662.
+// It never returns an error for unknown or invalid tokens — instead, it returns
+// a TokenMetadata with Active set to false.
+//
+// Only refresh tokens are supported. Access tokens (JWTs) should be validated
+// with ValidateAccessToken instead.
+//
+// Returns ErrServiceNotRunning, ErrInvalidRefreshToken for empty tokens, or
+// the context error.
 func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMetadata, error) {
 	// STEP 1: Service State Check ====
 	if !s.isRunning.Load() {
@@ -1302,6 +1399,11 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	}, nil
 }
 
+// CleanupExpiredTokens removes all expired refresh tokens from the RefreshStore.
+// The service also runs this automatically in the background at CleanupInterval,
+// so manual calls are only needed for on-demand sweeps.
+//
+// Returns the number of tokens deleted, ErrServiceNotRunning, or the context error.
 func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
 	// 1. Check service running
 	if !s.isRunning.Load() {
