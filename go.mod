@@ -3,9 +3,11 @@ module github.com/aetomala/jwtauth
 go 1.23.0
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/onsi/ginkgo/v2 v2.27.3
 	github.com/onsi/gomega v1.38.3
+	go.uber.org/mock v0.6.0
 )
 
 require (

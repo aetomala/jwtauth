@@ -57,7 +57,7 @@ Each package has one clear responsibility:
 - `pkg/keymanager` - RSA key generation, rotation, and management
 - `pkg/logging` - Logging abstraction and adapters
 - `pkg/metrics` - Metrics abstraction and implementations
-- `pkg/tokens` (future) - JWT token creation and validation
+- `pkg/tokens` - JWT token creation, validation, and lifecycle management
 - `pkg/middleware` (future) - HTTP middleware for token validation
 
 ### 3. Interface Segregation
@@ -101,7 +101,12 @@ github.com/aetomala/jwtauth/
 │   │   ├── manager.go             # Core implementation
 │   │   ├── persistence.go         # Disk operations
 │   │   └── keymanager_test.go    # Comprehensive tests
-│   ├── tokens/                    # JWT token operations (future)
+│   ├── tokens/                    # JWT token operations (Beta)
+│   │   ├── service.go             # TokenService implementation
+│   │   ├── service_test.go        # Token operations tests
+│   │   ├── service_lifecycle_test.go  # Lifecycle management tests
+│   │   └── claims.go              # Claims management
+│   ├── ratelimit/                 # Rate limiter interface (for middleware use)
 │   ├── middleware/                # HTTP middleware (future)
 │   └── storage/                   # Refresh token storage (future)
 ├── internal/                      # Private packages
@@ -341,13 +346,34 @@ Day 60:   Rotate → Key B (expires in 1 hour), Key C (current)
 - **Metadata files**: `{keyID}.json` - CreatedAt, ExpiresAt timestamps
 - **Load on restart**: All valid keys loaded, most recent becomes current
 
-### TokenService (Future)
+### TokenService (Beta)
 
 **Responsibilities**:
-- Issue access tokens (short-lived, e.g., 15 minutes)
-- Issue refresh tokens (long-lived, e.g., 30 days)
-- Validate tokens (signature, expiration, claims)
+- Issue access tokens (short-lived, e.g., 15 minutes) with optional custom claims
+- Issue refresh tokens (long-lived, e.g., 30 days) with optional metadata
+- Issue coordinated token pairs (access + refresh in one call)
+- Validate access tokens (signature, expiration, issuer, audience)
+- Rotate tokens via refresh flow with expiration and revocation checks
+- Revoke single or all tokens for a user
+- Introspect token status per RFC 7662
 - Sign tokens with current key from KeyManager
+
+**State Machine**:
+```
+Created → Start() → Running → Shutdown() → Stopped
+                      ↓
+                   Background cleanup goroutine (configurable interval)
+```
+
+**Concurrency Model**:
+- **User goroutines**: Token operations (IssueAccessToken, ValidateAccessToken, etc.)
+- **Cleanup goroutine**: Background ticker deletes expired refresh tokens from store
+- **Synchronization**: `atomic.Bool` for running state; cleanup uses channel signaling and `sync.WaitGroup` for graceful shutdown
+
+**Key Design Decisions**:
+- Rate limiting is intentionally **not** in TokenService — it belongs at the HTTP middleware layer where per-route and per-IP policies apply
+- All storage operations accept `context.Context` for cancellation propagation
+- Reserved JWT claims (`sub`, `iss`, `aud`, `exp`, `iat`, `jti`) cannot be overridden by custom claims
 
 ### Middleware (Future)
 
@@ -356,6 +382,7 @@ Day 60:   Rotate → Key B (expires in 1 hour), Key C (current)
 - Validate token using TokenService
 - Inject user context into request
 - Return 401 Unauthorized on invalid token
+- Apply rate limiting (token bucket, sliding window, Redis-backed)
 
 ### RefreshTokenStore (Future)
 
@@ -453,48 +480,45 @@ Catches:
 
 ---
 
-## Future Roadmap
+## Roadmap
 
-### Phase 1: Logging (Current)
+### Phase 1: Logging ✅
 - ✅ Logger interface defined
 - ✅ Slog adapter implemented
 - ✅ KeyManager integrated
 - ✅ Tests comprehensive
 
-### Phase 2: Metrics (Next)
+### Phase 2: Metrics
 - ✅ Metrics interface defined
 - ⏳ Prometheus implementation
 - ⏳ KeyManager integration
-- ⏳ Tests added
 
-### Phase 3: TokenService
-- ⏳ Interface design
-- ⏳ JWT creation/validation
-- ⏳ Integration with KeyManager
-- ⏳ Logging and metrics
+### Phase 3: TokenService ✅ (Beta)
+- ✅ JWT creation with RS256 signing and custom claims
+- ✅ Access token validation (signature, expiration, issuer, audience)
+- ✅ Refresh token rotation with revocation checks
+- ✅ Single and bulk token revocation
+- ✅ Token introspection per RFC 7662
+- ✅ Lifecycle management (Start/Shutdown/IsRunning)
+- ✅ Background cleanup goroutine with configurable interval
+- ✅ Comprehensive test coverage (126 tests, ~87% coverage, race-detection clean)
+- ✅ RefreshStore interface with context propagation
 
-### Phase 4: Middleware
-- ⏳ HTTP middleware
-- ⏳ Token extraction
-- ⏳ Validation pipeline
-- ⏳ User context injection
+### Phase 4: HTTP Middleware
+- ⏳ Token extraction from Authorization header
+- ⏳ Validation pipeline using TokenService
+- ⏳ User context injection into requests
+- ⏳ 401 Unauthorized on invalid tokens
+- ⏳ Rate limiting (token bucket, sliding window, Redis-backed)
 
-### Phase 5: RefreshTokenStore
-- ⏳ Interface design
-- ⏳ Memory implementation
-- ⏳ Redis implementation
-- ⏳ Revocation logic
+### Phase 5: RefreshToken Storage Implementations
+- ⏳ Memory implementation (testing + development)
+- ⏳ Redis implementation (production)
+- ✅ RefreshStore interface defined (pkg/storage)
 
-### Phase 6: RateLimiter
-- ⏳ Interface design
-- ⏳ Token bucket algorithm
-- ⏳ Per-user limits
-- ⏳ Per-IP limits
-
-### Phase 7: OpenTelemetry
-- ⏳ Unified observability
+### Phase 6: OpenTelemetry
 - ⏳ Distributed tracing
-- ⏳ Span creation
+- ⏳ Span creation across token operations
 - ⏳ Context propagation
 
 ---
@@ -592,6 +616,6 @@ func (c *Component) Operation() error {
 
 ---
 
-**Last Updated**: January 2026  
-**Version**: 1.0.0-alpha  
+**Last Updated**: March 2026
+**Version**: 0.2.0-beta
 **Status**: Active Development
