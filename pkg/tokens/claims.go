@@ -158,35 +158,6 @@ type TokenMetadata struct {
 }
 
 // ============================================================================
-// VALIDATION HELPERS
-// ============================================================================
-
-// ValidateClaims checks if claims are valid at the given time.
-//
-// Validates:
-//   - Token not expired (exp)
-//   - Token active (nbf)
-//   - Required fields present
-func ValidateClaims(claims *jwt.RegisteredClaims, now time.Time) error {
-	// Check expiration
-	if claims.ExpiresAt != nil && claims.ExpiresAt.Before(now) {
-		return ErrTokenExpired
-	}
-
-	// Check not before
-	if claims.NotBefore != nil && claims.NotBefore.After(now) {
-		return ErrTokenNotYetValid
-	}
-
-	// Check required fields
-	if claims.Subject == "" {
-		return ErrMissingSubject
-	}
-
-	return nil
-}
-
-// ============================================================================
 // ERRORS
 // ============================================================================
 
@@ -196,9 +167,6 @@ var (
 
 	// ErrTokenNotYetValid indicates the token's nbf (not before) time hasn't been reached
 	ErrTokenNotYetValid = NewTokenError("token not yet valid")
-
-	// ErrMissingSubject indicates the token has no subject claim
-	ErrMissingSubject = NewTokenError("token missing subject claim")
 
 	// ErrInvalidAudience indicates the token audience doesn't match
 	ErrInvalidAudience = NewTokenError("invalid token audience")
