@@ -5,6 +5,9 @@ import (
 	"crypto/rsa"
 )
 
+// Generate mock from this interface using mockgen
+//go:generate mockgen -source=interface.go -destination=../../internal/testutil/mock_keymanager.go -package=testutil -mock_names=KeyManager=MockKeyManager
+
 // KeyManager defines the interface for JWT key management operations.
 //
 // This interface ensures:

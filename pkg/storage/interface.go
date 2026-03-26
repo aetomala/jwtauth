@@ -1,8 +1,12 @@
 package storage
 
 import (
+	"context"
 	"time"
 )
+
+// Generate mock from this interface using mockgen
+//go:generate mockgen -source=interface.go -destination=../../internal/testutil/mock_refreshstore.go -package=testutil -mock_names=RefreshStore=MockRefreshStore
 
 // RefreshStore defines the interface for refresh token storage operations.
 //
@@ -26,6 +30,7 @@ type RefreshStore interface {
 	//   - Metadata (optional, for audit/tracking)
 	//
 	// Args:
+	//   - ctx: Request context for cancellation and deadline propagation
 	//   - tokenID: Unique identifier for the token
 	//   - userID: User who owns the token
 	//   - expiresAt: When the token expires
@@ -33,7 +38,7 @@ type RefreshStore interface {
 	//
 	// Returns:
 	//   - error: If storage fails
-	Store(tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error
+	Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error
 
 	// Retrieve fetches a refresh token by ID.
 	//
@@ -43,12 +48,13 @@ type RefreshStore interface {
 	//   - Token has expired
 	//
 	// Args:
+	//   - ctx: Request context for cancellation and deadline propagation
 	//   - tokenID: The token identifier to retrieve
 	//
 	// Returns:
 	//   - token: The stored token data
 	//   - error: If not found, revoked, or expired
-	Retrieve(tokenID string) (*RefreshToken, error)
+	Retrieve(ctx context.Context, tokenID string) (*RefreshToken, error)
 
 	// Revoke marks a refresh token as revoked.
 	//
@@ -57,11 +63,12 @@ type RefreshStore interface {
 	//   - Token cannot be used to refresh access tokens
 	//
 	// Args:
+	//   - ctx: Request context for cancellation and deadline propagation
 	//   - tokenID: The token to revoke
 	//
 	// Returns:
 	//   - error: If revocation fails
-	Revoke(tokenID string) error
+	Revoke(ctx context.Context, tokenID string) error
 
 	// RevokeAllForUser revokes all tokens for a specific user.
 	//
@@ -71,11 +78,12 @@ type RefreshStore interface {
 	//   - Account compromise
 	//
 	// Args:
+	//   - ctx: Request context for cancellation and deadline propagation
 	//   - userID: User whose tokens should be revoked
 	//
 	// Returns:
 	//   - error: If revocation fails
-	RevokeAllForUser(userID string) error
+	RevokeAllForUser(ctx context.Context, userID string) error
 
 	// Cleanup removes expired tokens.
 	//
@@ -84,10 +92,13 @@ type RefreshStore interface {
 	//   - Improve query performance
 	//   - Maintain security (remove old tokens)
 	//
+	// Args:
+	//   - ctx: Request context for cancellation and deadline propagation
+	//
 	// Returns:
 	//   - count: Number of tokens deleted
 	//   - error: If cleanup fails
-	Cleanup() (int, error)
+	Cleanup(ctx context.Context) (int, error)
 }
 
 // RefreshToken represents a stored refresh token.
