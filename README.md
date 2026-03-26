@@ -317,6 +317,7 @@ config := keymanager.ManagerConfig{
 ```go
 // Implement the simple Logger interface
 type Logger interface {
+    Debug(msg string, args ...interface{})
     Info(msg string, args ...interface{})
     Warn(msg string, args ...interface{})
     Error(msg string, args ...interface{})
@@ -327,6 +328,9 @@ type MyZapAdapter struct {
     logger *zap.Logger
 }
 
+func (m *MyZapAdapter) Debug(msg string, args ...interface{}) {
+    m.logger.Sugar().Debugw(msg, args...)
+}
 func (m *MyZapAdapter) Info(msg string, args ...interface{}) {
     m.logger.Sugar().Infow(msg, args...)
 }
@@ -356,7 +360,7 @@ type Metrics interface {
 github.com/aetomala/jwtauth/
 ├── pkg/                          # Public API packages
 │   ├── logging/                  # Logging abstraction
-│   │   ├── logger.go             # Logger interface (3 methods)
+│   │   ├── logger.go             # Logger interface (4 methods: Debug, Info, Warn, Error)
 │   │   ├── slog_adapter.go       # Standard library adapter
 │   │   └── noop.go               # NoOp implementation
 │   ├── metrics/                  # Metrics abstraction

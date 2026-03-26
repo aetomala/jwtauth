@@ -17,6 +17,9 @@ package logging
 //	}
 type NoOpLogger struct{}
 
+// Debug discards the log message.
+func (n *NoOpLogger) Debug(msg string, keysAndValues ...interface{}) {}
+
 // Info discards the log message.
 func (n *NoOpLogger) Info(msg string, keysAndValues ...interface{}) {}
 
