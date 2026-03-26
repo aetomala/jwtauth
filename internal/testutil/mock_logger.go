@@ -44,7 +44,7 @@ type MockLogger struct {
 // LogEntry represents a single log entry captured by MockLogger.
 type LogEntry struct {
 	Fields  map[string]interface{} // Structured fields (key-value pairs)
-	Level   string                 // "info","warn","error"
+	Level   string                 // "debug","info","warn","error"
 	Message string                 // Log message
 }
 
@@ -54,6 +54,20 @@ func NewMockLogger() *MockLogger {
 		logs:   make([]LogEntry, 0),
 		enable: true,
 	}
+}
+
+// Debug records a debug-level log entry
+func (m *MockLogger) Debug(msg string, keysAndValues ...interface{}) {
+	if !m.enable {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logs = append(m.logs, LogEntry{
+		Level:   "debug",
+		Message: msg,
+		Fields:  m.parseFields(keysAndValues),
+	})
 }
 
 // Info records an info-level log entry

@@ -8,12 +8,16 @@ package logging
 // keys are strings and values can be any type.
 //
 // Design Philosophy:
-//   - Simple: Only 3 log levels (Info, Warn, Error)
+//   - Simple: Only 4 log levels (Debug, Info, Warn, Error)
 //   - Structured: Key-value pairs for machine-readable logs
 //   - Flexible: Works with any logging library via adapters
 //   - Optional: Components work without a logger (nil-safe)
 //
 // Example Usage:
+//
+//	logger.Debug("JWKS cache populated",
+//	    "keyCount", 3,
+//	    "ttl", 5*time.Minute)
 //
 //	logger.Info("key rotation successful",
 //	    "keyID", "abc-123",
@@ -37,6 +41,16 @@ package logging
 //   - Zerolog: github.com/rs/zerolog
 //   - Logrus: github.com/sirupsen/logrus
 type Logger interface {
+	// Debug logs verbose diagnostic messages for development and troubleshooting.
+	// Use for: internal state, cache hits/misses, detailed operation tracing.
+	// Suppressed when the logger is configured at Info level or above.
+	//
+	// keysAndValues must be alternating keys (string) and values (any type).
+	//
+	// Example:
+	//   Debug("JWKS cache populated", "keyCount", 3, "ttl", 5*time.Minute)
+	Debug(msg string, keysAndValues ...interface{})
+
 	// Info logs informational messages for normal operations.
 	// Use for: successful operations, state changes, important milestones
 	//

@@ -203,6 +203,46 @@ var _ = Describe("SlogAdapter", func() {
 		})
 	})
 
+	// === DEBUG LEVEL ===
+	Describe("Debug", func() {
+		BeforeEach(func() {
+			handler := slog.NewTextHandler(buf, &slog.HandlerOptions{
+				Level: slog.LevelDebug,
+			})
+			logger = logging.NewSlogAdapter(slog.New(handler))
+		})
+
+		It("should log debug message without fields", func() {
+			logger.Debug("cache miss")
+
+			output := buf.String()
+			Expect(output).To(ContainSubstring("level=DEBUG"))
+			Expect(output).To(ContainSubstring("msg=\"cache miss\""))
+		})
+
+		It("should log debug message with key-value pairs", func() {
+			logger.Debug("JWKS cache populated", "keyCount", 3, "ttl", 5*time.Minute)
+
+			output := buf.String()
+			Expect(output).To(ContainSubstring("level=DEBUG"))
+			Expect(output).To(ContainSubstring("keyCount=3"))
+		})
+
+		It("should handle empty message", func() {
+			logger.Debug("", "key", "value")
+
+			output := buf.String()
+			Expect(output).To(ContainSubstring("level=DEBUG"))
+			Expect(output).To(ContainSubstring("key=value"))
+		})
+
+		It("should not panic with nil values", func() {
+			Expect(func() {
+				logger.Debug("test", "data", nil)
+			}).NotTo(Panic())
+		})
+	})
+
 	// === WARN LEVEL ===
 	Describe("Warn", func() {
 		BeforeEach(func() {
@@ -377,6 +417,12 @@ var _ = Describe("SlogAdapter", func() {
 				Expect(strings.Count(output, "level=WARN")).To(Equal(1))
 				Expect(strings.Count(output, "level=ERROR")).To(Equal(1))
 			})
+
+			It("should suppress debug messages at Info level threshold", func() {
+				logger.Debug("this should be suppressed")
+
+				Expect(buf.String()).To(BeEmpty())
+			})
 		})
 
 		Context("when level is Warn", func() {
@@ -416,6 +462,28 @@ var _ = Describe("SlogAdapter", func() {
 				Expect(output).NotTo(ContainSubstring("level=INFO"))
 				Expect(output).NotTo(ContainSubstring("level=WARN"))
 				Expect(output).To(ContainSubstring("level=ERROR"))
+			})
+		})
+
+		Context("when level is Debug", func() {
+			BeforeEach(func() {
+				handler := slog.NewTextHandler(buf, &slog.HandlerOptions{
+					Level: slog.LevelDebug,
+				})
+				logger = logging.NewSlogAdapter(slog.New(handler))
+			})
+
+			It("should log all four levels", func() {
+				logger.Debug("debug message")
+				logger.Info("info message")
+				logger.Warn("warn message")
+				logger.Error("error message")
+
+				output := buf.String()
+				Expect(strings.Count(output, "level=DEBUG")).To(Equal(1))
+				Expect(strings.Count(output, "level=INFO")).To(Equal(1))
+				Expect(strings.Count(output, "level=WARN")).To(Equal(1))
+				Expect(strings.Count(output, "level=ERROR")).To(Equal(1))
 			})
 		})
 	})
@@ -520,11 +588,38 @@ var _ = Describe("NoOpLogger", func() {
 		})
 	})
 
+	Describe("Debug", func() {
+		It("should not panic with no arguments", func() {
+			Expect(func() {
+				logger.Debug("debug message")
+			}).NotTo(Panic())
+		})
+
+		It("should not panic with key-value pairs", func() {
+			Expect(func() {
+				logger.Debug("verbose detail", "component", "keymanager", "operation", "load")
+			}).NotTo(Panic())
+		})
+
+		It("should not panic with nil values", func() {
+			Expect(func() {
+				logger.Debug("test", "data", nil)
+			}).NotTo(Panic())
+		})
+
+		It("should not panic with empty message", func() {
+			Expect(func() {
+				logger.Debug("")
+			}).NotTo(Panic())
+		})
+	})
+
 	Describe("Silent Operation", func() {
 		It("should produce no output", func() {
 			// NoOpLogger doesn't write anywhere, so we just verify it doesn't panic
 			// In a real scenario, you'd verify no side effects occurred
 			Expect(func() {
+				logger.Debug("debug")
 				logger.Info("info")
 				logger.Warn("warn")
 				logger.Error("error")
@@ -534,6 +629,7 @@ var _ = Describe("NoOpLogger", func() {
 		It("should handle all log levels silently", func() {
 			Expect(func() {
 				for i := 0; i < 100; i++ {
+					logger.Debug("debug", "iteration", i)
 					logger.Info("info", "iteration", i)
 					logger.Warn("warn", "iteration", i)
 					logger.Error("error", "iteration", i)
@@ -550,6 +646,7 @@ var _ = Describe("NoOpLogger", func() {
 				go func(id int) {
 					defer GinkgoRecover()
 					for j := 0; j < 100; j++ {
+						logger.Debug("debug", "goroutine", id, "iteration", j)
 						logger.Info("message", "goroutine", id, "iteration", j)
 						logger.Warn("warning", "goroutine", id)
 						logger.Error("error", "goroutine", id)
