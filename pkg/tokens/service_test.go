@@ -470,6 +470,7 @@ var _ = Describe("TokenService", func() {
 				mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil)
 
 				mockStore.EXPECT().Store(
+					gomock.Any(), // ctx
 					gomock.Any(), // tokenID (generated)
 					testUserID,   // userID
 					gomock.Any(), // expireAt
@@ -488,7 +489,7 @@ var _ = Describe("TokenService", func() {
 
 				// Verify Store is called
 				mockStore.EXPECT().
-					Store(gomock.Any(), testUserID, gomock.Any(), gomock.Any()).
+					Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), gomock.Any()).
 					Return(nil).
 					Times(1)
 
@@ -502,14 +503,14 @@ var _ = Describe("TokenService", func() {
 					Return(true, nil).
 					Times(1)
 
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				service.IssueRefreshToken(ctx, testUserID)
 			})
 
 			It("should log token issuance", func() {
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				service.IssueRefreshToken(ctx, testUserID)
 
@@ -528,7 +529,7 @@ var _ = Describe("TokenService", func() {
 
 				// Verify metadata is passed to Store
 				mockStore.EXPECT().
-					Store(gomock.Any(), testUserID, gomock.Any(), metadata).
+					Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), metadata).
 					Return(nil)
 
 				service.IssueRefreshTokenWithMetadata(ctx, testUserID, metadata)
@@ -543,11 +544,12 @@ var _ = Describe("TokenService", func() {
 				mockStore.EXPECT().
 					Store(
 						gomock.Any(),
+						gomock.Any(),
 						testUserID,
 						gomock.AssignableToTypeOf(time.Time{}),
 						gomock.Any(),
 					).
-					Do(func(tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) {
+					Do(func(_ context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) {
 						// Verify expiration is within 2 seconds of expected
 						Expect(expiresAt).To(BeTemporally("~", expectedExpiry, 2*time.Second))
 					}).
@@ -562,7 +564,7 @@ var _ = Describe("TokenService", func() {
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 
 				mockStore.EXPECT().
-					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("storage failure"))
 
 				_, err := service.IssueRefreshToken(ctx, testUserID)
@@ -574,7 +576,7 @@ var _ = Describe("TokenService", func() {
 			It("should log error", func() {
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockStore.EXPECT().
-					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("storage error"))
 
 				service.IssueRefreshToken(ctx, testUserID)
@@ -590,7 +592,7 @@ var _ = Describe("TokenService", func() {
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
 
 				// Should NOT call Store
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 				_, err := service.IssueRefreshToken(ctx, testUserID)
 
@@ -601,7 +603,7 @@ var _ = Describe("TokenService", func() {
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
 
 				// Verify Store is NEVER called
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 				service.IssueRefreshToken(ctx, testUserID)
 			})
@@ -662,7 +664,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should return error when storage fails", func() {
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("storage failure"))
 
 				_, err := service.IssueRefreshTokenWithMetadata(ctx, testUserID, nil)
@@ -689,7 +691,7 @@ var _ = Describe("TokenService", func() {
 				gomock.InOrder(
 					mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil),
 					mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil),
-					mockStore.EXPECT().Store(gomock.Any(), testUserID, gomock.Any(), gomock.Any()).Return(nil),
+					mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), gomock.Any()).Return(nil),
 				)
 
 				accessToken, refreshToken, err := service.IssueTokenPair(ctx, testUserID)
@@ -707,7 +709,7 @@ var _ = Describe("TokenService", func() {
 					Return(testKey, testKeyID, nil).
 					Times(1)
 
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				service.IssueTokenPair(ctx, testUserID)
 			})
@@ -717,7 +719,7 @@ var _ = Describe("TokenService", func() {
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
 				mockStore.EXPECT().
-					Store(gomock.Any(), testUserID, gomock.Any(), gomock.Any()).
+					Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), gomock.Any()).
 					Return(nil).
 					Times(1)
 
@@ -731,7 +733,7 @@ var _ = Describe("TokenService", func() {
 					Times(1) // Only once for the pair
 
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				service.IssueTokenPair(ctx, testUserID)
 			})
@@ -739,7 +741,7 @@ var _ = Describe("TokenService", func() {
 			It("should log both issuances", func() {
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				service.IssueTokenPair(ctx, testUserID)
 
@@ -757,7 +759,7 @@ var _ = Describe("TokenService", func() {
 					Return(nil, "", errors.New("key error"))
 
 				// Store should NOT be called
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 				_, _, err := service.IssueTokenPair(ctx, testUserID)
 
@@ -770,7 +772,7 @@ var _ = Describe("TokenService", func() {
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 				mockStore.EXPECT().
-					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("storage error"))
 
 				_, _, err := service.IssueTokenPair(ctx, testUserID)
@@ -785,7 +787,7 @@ var _ = Describe("TokenService", func() {
 
 				// Neither KeyManager nor Store should be called
 				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 				_, _, err := service.IssueTokenPair(ctx, testUserID)
 
@@ -827,7 +829,7 @@ var _ = Describe("TokenService", func() {
 			// Start service first (required before token operations)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
 			// Cleanup goroutine expects periodic cleanup calls
-			mockStore.EXPECT().Cleanup().Return(0, nil).AnyTimes()
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
 			err := service.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1036,13 +1038,13 @@ var _ = Describe("TokenService", func() {
 
 			// Start the service first (required before token operations)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
-			mockStore.EXPECT().Cleanup().Return(0, nil).AnyTimes()
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
 			err := service.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Then issue a refresh token
 			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-			mockStore.EXPECT().Store(gomock.Any(), testUserID, gomock.Any(), gomock.Any()).Return(nil)
+			mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), gomock.Any()).Return(nil)
 			validRefreshToken, _ = service.IssueRefreshToken(ctx, testUserID)
 		})
 
@@ -1050,7 +1052,7 @@ var _ = Describe("TokenService", func() {
 			It("should issue new access token", func() {
 				// Expect retrieval from store
 				mockStore.EXPECT().
-					Retrieve(validRefreshToken).
+					Retrieve(gomock.Any(), validRefreshToken).
 					Return(&storage.RefreshToken{
 						TokenID:   validRefreshToken,
 						UserID:    testUserID,
@@ -1072,7 +1074,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should retrieve refresh token from store", func() {
 				mockStore.EXPECT().
-					Retrieve(validRefreshToken).
+					Retrieve(gomock.Any(), validRefreshToken).
 					Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil).
 					Times(1)
 
@@ -1083,7 +1085,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should check rate limit", func() {
-				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
 
 				mockRL.EXPECT().
 					Allow(testUserID, 1).
@@ -1096,7 +1098,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should preserve user ID from refresh token", func() {
-				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
@@ -1107,7 +1109,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should log refresh operation", func() {
-				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
@@ -1122,7 +1124,7 @@ var _ = Describe("TokenService", func() {
 		Context("with invalid refresh token", func() {
 			It("should return error for non-existent token", func() {
 				mockStore.EXPECT().
-					Retrieve("non-existent-token").
+					Retrieve(gomock.Any(), "non-existent-token").
 					Return(nil, errors.New("token not found"))
 
 				_, err := service.RefreshAccessToken(ctx, "non-existent-token")
@@ -1133,7 +1135,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should return error for revoked token", func() {
 				mockStore.EXPECT().
-					Retrieve(validRefreshToken).
+					Retrieve(gomock.Any(), validRefreshToken).
 					Return(nil, tokens.ErrTokenRevoked)
 
 				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
@@ -1144,13 +1146,13 @@ var _ = Describe("TokenService", func() {
 
 			It("should return error for expired token", func() {
 				mockStore.EXPECT().
-					Retrieve(validRefreshToken).
+					Retrieve(gomock.Any(), validRefreshToken).
 					Return(&storage.RefreshToken{
 						UserID:    testUserID,
 						ExpiresAt: time.Now().Add(-1 * time.Hour), // Expired
 					}, nil)
 
-				mockStore.EXPECT().Revoke(validRefreshToken).Return(nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(nil)
 				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
 
 				Expect(err).To(HaveOccurred())
@@ -1160,7 +1162,7 @@ var _ = Describe("TokenService", func() {
 
 		Context("when rate limited", func() {
 			It("should return error", func() {
-				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
+				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
 
 				// Should NOT try to issue new token
@@ -1172,7 +1174,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should return rate limiter error", func() {
-				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{
+				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{
 					UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour),
 				}, nil)
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, errors.New("limiter down"))
@@ -1184,7 +1186,7 @@ var _ = Describe("TokenService", func() {
 
 		Context("when IssueAccessToken fails", func() {
 			It("should propagate the error", func() {
-				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{
+				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{
 					UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour),
 				}, nil)
 				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
@@ -1198,7 +1200,7 @@ var _ = Describe("TokenService", func() {
 		Context("when storage retrieval fails", func() {
 			It("should return error", func() {
 				mockStore.EXPECT().
-					Retrieve(gomock.Any()).
+					Retrieve(gomock.Any(), gomock.Any()).
 					Return(nil, errors.New("storage error"))
 
 				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
@@ -1238,7 +1240,7 @@ var _ = Describe("TokenService", func() {
 
 			// Start the service first (required before token operations)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
-			mockStore.EXPECT().Cleanup().Return(0, nil).AnyTimes()
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
 			err := service.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		})
@@ -1246,7 +1248,7 @@ var _ = Describe("TokenService", func() {
 		Context("with valid token ID", func() {
 			It("should revoke token successfully", func() {
 				mockStore.EXPECT().
-					Revoke(testTokenID).
+					Revoke(gomock.Any(), testTokenID).
 					Return(nil).
 					Times(1)
 
@@ -1257,7 +1259,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should call store revoke", func() {
 				mockStore.EXPECT().
-					Revoke(testTokenID).
+					Revoke(gomock.Any(), testTokenID).
 					Return(nil).
 					Times(1)
 
@@ -1265,7 +1267,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should log revocation", func() {
-				mockStore.EXPECT().Revoke(gomock.Any()).Return(nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), gomock.Any()).Return(nil)
 
 				service.RevokeRefreshToken(ctx, testTokenID)
 
@@ -1278,7 +1280,7 @@ var _ = Describe("TokenService", func() {
 		Context("with non-existent token", func() {
 			It("should return error", func() {
 				mockStore.EXPECT().
-					Revoke("non-existent").
+					Revoke(gomock.Any(), "non-existent").
 					Return(errors.New("token not found"))
 
 				err := service.RevokeRefreshToken(ctx, "non-existent")
@@ -1290,7 +1292,7 @@ var _ = Describe("TokenService", func() {
 		Context("when storage revocation fails", func() {
 			It("should return error", func() {
 				mockStore.EXPECT().
-					Revoke(gomock.Any()).
+					Revoke(gomock.Any(), gomock.Any()).
 					Return(errors.New("revocation failed"))
 
 				err := service.RevokeRefreshToken(ctx, testTokenID)
@@ -1300,7 +1302,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should log error", func() {
 				mockStore.EXPECT().
-					Revoke(gomock.Any()).
+					Revoke(gomock.Any(), gomock.Any()).
 					Return(errors.New("error"))
 
 				service.RevokeRefreshToken(ctx, testTokenID)
@@ -1338,14 +1340,14 @@ var _ = Describe("TokenService", func() {
 
 			// Start the service first (required before token operations)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
-			mockStore.EXPECT().Cleanup().Return(0, nil).AnyTimes()
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
 			err := service.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should revoke all tokens for user", func() {
 			mockStore.EXPECT().
-				RevokeAllForUser(testUserID).
+				RevokeAllForUser(gomock.Any(), testUserID).
 				Return(nil).
 				Times(1)
 
@@ -1355,7 +1357,7 @@ var _ = Describe("TokenService", func() {
 		})
 
 		It("should log bulk revocation", func() {
-			mockStore.EXPECT().RevokeAllForUser(gomock.Any()).Return(nil)
+			mockStore.EXPECT().RevokeAllForUser(gomock.Any(), gomock.Any()).Return(nil)
 
 			service.RevokeAllUserTokens(ctx, testUserID)
 
@@ -1365,7 +1367,7 @@ var _ = Describe("TokenService", func() {
 		})
 
 		It("should return wrapped error when store fails", func() {
-			mockStore.EXPECT().RevokeAllForUser("user-123").Return(errors.New("db error"))
+			mockStore.EXPECT().RevokeAllForUser(gomock.Any(), "user-123").Return(errors.New("db error"))
 			err := service.RevokeAllUserTokens(ctx, "user-123")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("db error"))
@@ -1407,13 +1409,13 @@ var _ = Describe("TokenService", func() {
 			Expect(service.Start(ctx)).To(Succeed())
 
 			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-			mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+			mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 			refreshToken, _ = service.IssueRefreshToken(ctx, testUserID)
 		})
 
 		Context("with valid refresh token", func() {
 			It("should return token metadata", func() {
-				mockStore.EXPECT().Retrieve(refreshToken).Return(&storage.RefreshToken{
+				mockStore.EXPECT().Retrieve(gomock.Any(), refreshToken).Return(&storage.RefreshToken{
 					UserID:    testUserID,
 					ExpiresAt: time.Now().Add(1 * time.Hour),
 					CreatedAt: time.Now(),
@@ -1429,7 +1431,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should include expiration info", func() {
-				mockStore.EXPECT().Retrieve(refreshToken).Return(&storage.RefreshToken{
+				mockStore.EXPECT().Retrieve(gomock.Any(), refreshToken).Return(&storage.RefreshToken{
 					UserID:    testUserID,
 					ExpiresAt: time.Now().Add(1 * time.Hour),
 					CreatedAt: time.Now(),
@@ -1445,7 +1447,7 @@ var _ = Describe("TokenService", func() {
 
 		Context("with expired token", func() {
 			It("should return inactive status", func() {
-				mockStore.EXPECT().Retrieve(refreshToken).Return(&storage.RefreshToken{
+				mockStore.EXPECT().Retrieve(gomock.Any(), refreshToken).Return(&storage.RefreshToken{
 					UserID:    testUserID,
 					ExpiresAt: time.Now().Add(-1 * time.Hour),
 					CreatedAt: time.Now().Add(-25 * time.Hour),
@@ -1461,7 +1463,7 @@ var _ = Describe("TokenService", func() {
 
 		Context("with invalid token", func() {
 			It("should return inactive with no error", func() {
-				mockStore.EXPECT().Retrieve("invalid-token").Return(nil, errors.New("token not found"))
+				mockStore.EXPECT().Retrieve(gomock.Any(), "invalid-token").Return(nil, errors.New("token not found"))
 
 				metadata, err := service.IntrospectToken(ctx, "invalid-token")
 
@@ -1473,7 +1475,7 @@ var _ = Describe("TokenService", func() {
 
 		Context("with revoked token", func() {
 			It("should return inactive status", func() {
-				mockStore.EXPECT().Retrieve(refreshToken).Return(&storage.RefreshToken{
+				mockStore.EXPECT().Retrieve(gomock.Any(), refreshToken).Return(&storage.RefreshToken{
 					UserID:    testUserID,
 					ExpiresAt: time.Now().Add(1 * time.Hour),
 					CreatedAt: time.Now(),
@@ -1532,7 +1534,7 @@ var _ = Describe("TokenService", func() {
 
 		It("should cleanup expired tokens", func() {
 			mockStore.EXPECT().
-				Cleanup().
+				Cleanup(gomock.Any()).
 				Return(5, nil). // 5 tokens deleted
 				Times(1)
 
@@ -1543,7 +1545,7 @@ var _ = Describe("TokenService", func() {
 		})
 
 		It("should log cleanup operation", func() {
-			mockStore.EXPECT().Cleanup().Return(2, nil)
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(2, nil)
 
 			service.CleanupExpiredTokens(ctx)
 
@@ -1554,7 +1556,7 @@ var _ = Describe("TokenService", func() {
 
 		It("should call store cleanup", func() {
 			mockStore.EXPECT().
-				Cleanup().
+				Cleanup(gomock.Any()).
 				Return(0, nil).
 				Times(1)
 
@@ -1564,7 +1566,7 @@ var _ = Describe("TokenService", func() {
 		Context("when cleanup fails", func() {
 			It("should return error", func() {
 				mockStore.EXPECT().
-					Cleanup().
+					Cleanup(gomock.Any()).
 					Return(0, errors.New("cleanup failed"))
 
 				_, err := service.CleanupExpiredTokens(ctx)

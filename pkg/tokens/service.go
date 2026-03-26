@@ -189,7 +189,7 @@ func (s *Service) Start(ctx context.Context) error {
 
 	// ===== STEP 4: Start Background Cleanup Goroutine =====
 	s.wg.Add(1)
-	go s.cleanupLoop()
+	go s.cleanupLoop(ctx)
 
 	// ===== STEP 5: Log Success =====
 	if s.logger != nil {
@@ -199,7 +199,7 @@ func (s *Service) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) cleanupLoop() {
+func (s *Service) cleanupLoop(ctx context.Context) {
 	defer s.wg.Done()
 
 	// Cleanup at configured interval
@@ -210,7 +210,7 @@ func (s *Service) cleanupLoop() {
 		select {
 		case <-ticker.C:
 			// Cleanup expired refresh tokens
-			if count, err := s.refreshStore.Cleanup(); err != nil {
+			if count, err := s.refreshStore.Cleanup(ctx); err != nil {
 				if s.logger != nil {
 					s.logger.Error("refresh token cleanup failed",
 						"error", err)
@@ -638,6 +638,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	//   - User session tracking
 	//   - Audit trails
 	err = s.refreshStore.Store(
+		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
 		expiresAt,    // When it expires
@@ -746,6 +747,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	//   - User session tracking
 	//   - Audit trails
 	err = s.refreshStore.Store(
+		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
 		expiresAt,    // When it expires
@@ -910,6 +912,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	//   - User session tracking
 	//   - Audit trails
 	err = s.refreshStore.Store(
+		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
 		expiresAt,    // When it expires
@@ -1116,7 +1119,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	}
 
 	// ===== STEP 4: Lookup Refresh Token =====
-	token, err := s.refreshStore.Retrieve(refreshToken)
+	token, err := s.refreshStore.Retrieve(ctx, refreshToken)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warn("refresh token not found in store",
@@ -1138,7 +1141,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		}
 
 		// Clean up expired token
-		s.refreshStore.Revoke(refreshToken)
+		s.refreshStore.Revoke(ctx, refreshToken)
 
 		return "", ErrRefreshTokenExpired
 	}
@@ -1224,7 +1227,7 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	}
 
 	// ===== STEP 4: Revoke Token =====
-	err := s.refreshStore.Revoke(tokenID)
+	err := s.refreshStore.Revoke(ctx, tokenID)
 	if err != nil {
 		if s.logger != nil {
 
@@ -1276,7 +1279,7 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	}
 
 	// ===== STEP 4: Revoke All Tokens For User =====
-	err := s.refreshStore.RevokeAllForUser(userID)
+	err := s.refreshStore.RevokeAllForUser(ctx, userID)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("failed to revoke all user tokens",
@@ -1330,7 +1333,7 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	}
 
 	// ===== STEP 4: Retrieve Token From Storage =====
-	refreshToken, err := s.refreshStore.Retrieve(token)
+	refreshToken, err := s.refreshStore.Retrieve(ctx, token)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Info("token not found during introspection",
@@ -1421,7 +1424,7 @@ func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
 	}
 
 	// ===== STEP 3: Run Cleanup =====
-	count, err := s.refreshStore.Cleanup()
+	count, err := s.refreshStore.Cleanup(ctx)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("failed to cleanup expired tokens",

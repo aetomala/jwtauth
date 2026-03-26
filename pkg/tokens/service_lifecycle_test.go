@@ -152,8 +152,8 @@ var _ = Describe("TokenService", func() {
 			// We'll verify by checking cleanup is called after start
 			cleanupCalled := make(chan bool, 1)
 			mockStore.EXPECT().
-				Cleanup().
-				DoAndReturn(func() (int, error) {
+				Cleanup(gomock.Any()).
+				DoAndReturn(func(context.Context) (int, error) {
 					select {
 					case cleanupCalled <- true:
 					default:
@@ -187,8 +187,8 @@ var _ = Describe("TokenService", func() {
 			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
 
 			mockStore.EXPECT().
-				Cleanup().
-				DoAndReturn(func() (int, error) {
+				Cleanup(gomock.Any()).
+				DoAndReturn(func(context.Context) (int, error) {
 					return 0, errors.New("store unavailable")
 				}).
 				AnyTimes()
@@ -256,8 +256,8 @@ var _ = Describe("TokenService", func() {
 
 			cleanupStopped := make(chan struct{})
 			mockStore.EXPECT().
-				Cleanup().
-				DoAndReturn(func() (int, error) {
+				Cleanup(gomock.Any()).
+				DoAndReturn(func(context.Context) (int, error) {
 					return 0, nil
 				}).
 				AnyTimes()
@@ -277,8 +277,8 @@ var _ = Describe("TokenService", func() {
 			// Track cleanup execution
 			cleanupRunning := true
 			mockStore.EXPECT().
-				Cleanup().
-				DoAndReturn(func() (int, error) {
+				Cleanup(gomock.Any()).
+				DoAndReturn(func(context.Context) (int, error) {
 					if !cleanupRunning {
 						return 0, errors.New("cleanup called after shutdown")
 					}
