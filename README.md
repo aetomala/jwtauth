@@ -42,10 +42,9 @@
 - **Manual token cleanup** (CleanupExpiredTokens) for on-demand expiration sweeps
 - **RS256 signing** with custom claims support and reserved claim protection
 - **Lifecycle management** (Start/Shutdown/IsRunning) with graceful operations
-- **Rate limiting** integration at token issuance boundary
 - **Background cleanup goroutines** with configurable interval and proper synchronization
 - **Service state management** ensuring tokens only issue when service is running
-- **Comprehensive BDD test coverage** (144 tests covering lifecycle, issuance, validation, refresh, revocation, and introspection; 88% statement coverage)
+- **Comprehensive BDD test coverage** (126 tests covering lifecycle, issuance, validation, refresh, revocation, and introspection; ~87% statement coverage)
 
 ### 🚧 In Development
 
@@ -270,7 +269,6 @@ func main() {
 **Key Features**:
 - ✅ Automatic lifecycle management (Start/Shutdown)
 - ✅ Service state checking (IsRunning) ensures tokens only issue when running
-- ✅ Rate limiting enforced at token issuance
 - ✅ Custom claims support with reserved claim protection
 - ✅ Background cleanup of expired refresh tokens
 - ✅ Structured logging integration
@@ -387,7 +385,7 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 144 comprehensive tests across KeyManager and TokenService, all passing with race detection; 88% statement coverage on TokenService
+**Current**: 126 comprehensive tests across KeyManager and TokenService, all passing with race detection; ~87% statement coverage on TokenService
 
 **KeyManager** (3 test suites):
 - Constructor validation and defaults
@@ -400,7 +398,7 @@ github.com/aetomala/jwtauth/
 - Graceful shutdown with in-flight operations
 - Logging integration and verification
 
-**TokenService** (7 test suites, 144 total tests):
+**TokenService** (7 test suites, 126 total tests):
 - **Lifecycle Management Tests** (20 tests):
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency
@@ -492,14 +490,13 @@ Tests follow **progressive phase-based development**:
 ### v0.2.0 (Current - Beta)
 - ✅ TokenService: JWT creation with RS256 signing
 - ✅ TokenService: Lifecycle management (Start/Shutdown/IsRunning)
-- ✅ TokenService: Rate limiting integration
 - ✅ TokenService: Claims management with custom claims support and reserved claim protection
 - ✅ TokenService: Access token validation with issuer/audience enforcement (ValidateAccessToken)
 - ✅ TokenService: Refresh token rotation with expiration and revocation checks (RefreshAccessToken)
 - ✅ TokenService: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
 - ✅ TokenService: Token introspection per RFC 7662 (IntrospectToken)
 - ✅ TokenService: Manual cleanup sweep (CleanupExpiredTokens)
-- ✅ TokenService: Comprehensive test coverage (144 tests, 88% statement coverage, all passing with race detection)
+- ✅ TokenService: Comprehensive test coverage (126 tests, ~87% statement coverage, all passing with race detection)
 - 🚧 Prometheus metrics adapter
 
 ### v0.3.0 (Beta)
@@ -587,5 +584,5 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 **Status**: Beta (Active Development)
 **Version**: 0.2.0-beta
 **Components**: KeyManager ✅ | TokenService (Beta) 🟡 | Middleware 🚧
-**Test Coverage**: 144 tests, 88% statement coverage, all passing, race-detection enabled
+**Test Coverage**: 126 tests, ~87% statement coverage, all passing, race-detection enabled
 **Last Updated**: March 2026
