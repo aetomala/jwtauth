@@ -400,6 +400,58 @@ var _ = Describe("TokenService", func() {
 				Expect(err).To(Equal(context.Canceled))
 			})
 		})
+
+		Context("IssueAccessTokenWithClaims guard conditions", func() {
+			It("should return ErrServiceNotRunning", func() {
+				svc := createService()
+				_, err := svc.IssueAccessTokenWithClaims(ctx, testUserID, nil)
+				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			})
+
+			It("should return context error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				_, err := service.IssueAccessTokenWithClaims(cancelledCtx, testUserID, nil)
+				Expect(err).To(Equal(context.Canceled))
+			})
+
+			It("should return ErrInvalidUserID for empty userID", func() {
+				_, err := service.IssueAccessTokenWithClaims(ctx, "", nil)
+				Expect(err).To(Equal(tokens.ErrInvalidUserID))
+			})
+
+			It("should return ErrInvalidUserID for whitespace-only userID", func() {
+				_, err := service.IssueAccessTokenWithClaims(ctx, "   ", nil)
+				Expect(err).To(Equal(tokens.ErrInvalidUserID))
+			})
+
+			It("should return ErrRateLimitExceeded when rate limited", func() {
+				mockRL.EXPECT().Allow(testUserID, 1).Return(false, nil)
+				_, err := service.IssueAccessTokenWithClaims(ctx, testUserID, nil)
+				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
+			})
+
+			It("should return rate limiter error", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, errors.New("limiter unavailable"))
+				_, err := service.IssueAccessTokenWithClaims(ctx, testUserID, nil)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("limiter unavailable"))
+			})
+
+			It("should not override reserved claim sub", func() {
+				mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil)
+				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+				customClaims := map[string]interface{}{"sub": "hacker", "role": "admin"}
+				tokenStr, err := service.IssueAccessTokenWithClaims(ctx, testUserID, customClaims)
+				Expect(err).NotTo(HaveOccurred())
+				parsed, _ := jwt.ParseWithClaims(tokenStr, &jwt.MapClaims{}, func(t *jwt.Token) (interface{}, error) {
+					return &testKey.PublicKey, nil
+				})
+				claims := *parsed.Claims.(*jwt.MapClaims)
+				Expect(claims["sub"]).To(Equal(testUserID))
+				Expect(claims["role"]).To(Equal("admin"))
+			})
+		})
 	})
 
 	// ========================================================================
@@ -552,6 +604,33 @@ var _ = Describe("TokenService", func() {
 				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
 				service.IssueRefreshToken(ctx, testUserID)
+			})
+
+			It("should return rate limiter error", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, errors.New("limiter unavailable"))
+				_, err := service.IssueRefreshToken(ctx, "user-123")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("limiter unavailable"))
+			})
+		})
+
+		Context("guard conditions", func() {
+			It("should return ErrServiceNotRunning", func() {
+				svc := createService()
+				_, err := svc.IssueRefreshToken(ctx, "user-123")
+				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			})
+
+			It("should return context error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				_, err := service.IssueRefreshToken(cancelledCtx, "user-123")
+				Expect(err).To(Equal(context.Canceled))
+			})
+
+			It("should return ErrInvalidUserID for whitespace-only userID", func() {
+				_, err := service.IssueRefreshToken(ctx, "   ")
+				Expect(err).To(Equal(tokens.ErrInvalidUserID))
 			})
 		})
 
@@ -713,6 +792,26 @@ var _ = Describe("TokenService", func() {
 				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
 			})
 		})
+
+		Context("guard conditions", func() {
+			It("should return ErrServiceNotRunning", func() {
+				svc := createService()
+				_, _, err := svc.IssueTokenPair(ctx, "user-123")
+				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			})
+
+			It("should return context error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				_, _, err := service.IssueTokenPair(cancelledCtx, "user-123")
+				Expect(err).To(Equal(context.Canceled))
+			})
+
+			It("should return ErrInvalidUserID for whitespace-only userID", func() {
+				_, _, err := service.IssueTokenPair(ctx, "   ")
+				Expect(err).To(Equal(tokens.ErrInvalidUserID))
+			})
+		})
 	})
 
 	// ========================================================================
@@ -871,6 +970,62 @@ var _ = Describe("TokenService", func() {
 			})
 		})
 
+		Context("guard conditions", func() {
+			It("should return ErrServiceNotRunning", func() {
+				svc := createService()
+				_, err := svc.ValidateAccessToken(ctx, validToken)
+				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			})
+
+			It("should return context error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				_, err := service.ValidateAccessToken(cancelledCtx, validToken)
+				Expect(err).To(Equal(context.Canceled))
+			})
+		})
+
+		Context("with wrong signing method", func() {
+			It("should return ErrInvalidToken for HS256-signed token", func() {
+				hs256Token, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+					Subject:   "user-123",
+					ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
+				}).SignedString([]byte("secret"))
+				_, err := service.ValidateAccessToken(ctx, hs256Token)
+				Expect(err).To(Equal(tokens.ErrInvalidToken))
+			})
+		})
+
+		Context("with missing kid header", func() {
+			It("should return ErrInvalidToken", func() {
+				token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
+					Subject:   "user-123",
+					ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
+				})
+				// kid deliberately NOT set
+				signed, _ := token.SignedString(testKey)
+				_, err := service.ValidateAccessToken(ctx, signed)
+				Expect(err).To(Equal(tokens.ErrInvalidToken))
+			})
+		})
+
+		Context("with issuer mismatch", func() {
+			It("should return ErrInvalidIssuer", func() {
+				mismatchToken := createTokenWithIssuer(testKey, testKeyID, "wrong-issuer")
+				mockKM.EXPECT().GetPublicKey(testKeyID).Return(&testKey.PublicKey, nil)
+				_, err := service.ValidateAccessToken(ctx, mismatchToken)
+				Expect(err).To(Equal(tokens.ErrInvalidIssuer))
+			})
+		})
+
+		Context("with audience mismatch", func() {
+			It("should return ErrInvalidAudience", func() {
+				mismatchToken := createTokenWithAudience(testKey, testKeyID, []string{"wrong-audience"})
+				mockKM.EXPECT().GetPublicKey(testKeyID).Return(&testKey.PublicKey, nil)
+				_, err := service.ValidateAccessToken(ctx, mismatchToken)
+				Expect(err).To(Equal(tokens.ErrInvalidAudience))
+			})
+		})
 	})
 
 	Describe("RefreshAccessToken", func() {
@@ -1015,6 +1170,29 @@ var _ = Describe("TokenService", func() {
 
 				Expect(err).To(MatchError(tokens.ErrRateLimitExceeded))
 			})
+
+			It("should return rate limiter error", func() {
+				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{
+					UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour),
+				}, nil)
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, errors.New("limiter down"))
+				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("limiter down"))
+			})
+		})
+
+		Context("when IssueAccessToken fails", func() {
+			It("should propagate the error", func() {
+				mockStore.EXPECT().Retrieve(gomock.Any()).Return(&storage.RefreshToken{
+					UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour),
+				}, nil)
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+				mockKM.EXPECT().GetCurrentSigningKey().Return(nil, "", errors.New("key unavailable"))
+				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("key unavailable"))
+			})
 		})
 
 		Context("when storage retrieval fails", func() {
@@ -1026,6 +1204,26 @@ var _ = Describe("TokenService", func() {
 				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
 
 				Expect(err).To(HaveOccurred())
+			})
+		})
+
+		Context("guard conditions", func() {
+			It("should return ErrServiceNotRunning when service is not running", func() {
+				svc := createService()
+				_, err := svc.RefreshAccessToken(ctx, "any-token")
+				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			})
+
+			It("should return context error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				_, err := service.RefreshAccessToken(cancelledCtx, "any-token")
+				Expect(err).To(Equal(context.Canceled))
+			})
+
+			It("should return ErrInvalidRefreshToken for empty token", func() {
+				_, err := service.RefreshAccessToken(ctx, "")
+				Expect(err).To(Equal(tokens.ErrInvalidRefreshToken))
 			})
 		})
 	})
@@ -1112,6 +1310,26 @@ var _ = Describe("TokenService", func() {
 				}).Should(BeTrue())
 			})
 		})
+
+		Context("guard conditions", func() {
+			It("should return ErrServiceNotRunning when service is not running", func() {
+				svc := createService()
+				err := svc.RevokeRefreshToken(ctx, "any-token")
+				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			})
+
+			It("should return context error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				err := service.RevokeRefreshToken(cancelledCtx, "any-token")
+				Expect(err).To(Equal(context.Canceled))
+			})
+
+			It("should return ErrInvalidRefreshToken for empty tokenID", func() {
+				err := service.RevokeRefreshToken(ctx, "")
+				Expect(err).To(Equal(tokens.ErrInvalidRefreshToken))
+			})
+		})
 	})
 
 	Describe("RevokeAllUserTokens", func() {
@@ -1144,6 +1362,33 @@ var _ = Describe("TokenService", func() {
 			Eventually(func() bool {
 				return mockLogger.HasLog("info", "all refresh tokens revoked for user")
 			}).Should(BeTrue())
+		})
+
+		It("should return wrapped error when store fails", func() {
+			mockStore.EXPECT().RevokeAllForUser("user-123").Return(errors.New("db error"))
+			err := service.RevokeAllUserTokens(ctx, "user-123")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("db error"))
+		})
+
+		Context("guard conditions", func() {
+			It("should return ErrServiceNotRunning when service is not running", func() {
+				svc := createService()
+				err := svc.RevokeAllUserTokens(ctx, "user-123")
+				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			})
+
+			It("should return context error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				err := service.RevokeAllUserTokens(cancelledCtx, "user-123")
+				Expect(err).To(Equal(context.Canceled))
+			})
+
+			It("should return ErrInvalidUserID for empty userID", func() {
+				err := service.RevokeAllUserTokens(ctx, "")
+				Expect(err).To(Equal(tokens.ErrInvalidUserID))
+			})
 		})
 	})
 
@@ -1522,6 +1767,34 @@ func getTestPublicKey(kid string) (*rsa.PublicKey, error) {
 		return nil, errors.New("test public key not initialized")
 	}
 	return testPublicKey, nil
+}
+
+func createTokenWithIssuer(key *rsa.PrivateKey, keyID, issuer string) string {
+	claims := jwt.RegisteredClaims{
+		Subject:   "user-123",
+		Issuer:    issuer,
+		Audience:  jwt.ClaimStrings{"test-audience"},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = keyID
+	signed, _ := token.SignedString(key)
+	return signed
+}
+
+func createTokenWithAudience(key *rsa.PrivateKey, keyID string, audience []string) string {
+	claims := jwt.RegisteredClaims{
+		Subject:   "user-123",
+		Issuer:    "test-issuer",
+		Audience:  jwt.ClaimStrings(audience),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = keyID
+	signed, _ := token.SignedString(key)
+	return signed
 }
 
 func createExpiredToken(key *rsa.PrivateKey, keyID, userID string) string {
