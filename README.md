@@ -52,7 +52,6 @@
 - **Refresh Token Storage**: Memory and Redis implementations (RefreshStore interface ready)
 - **Metrics Implementations**: Prometheus, StatsD, CloudWatch adapters
 - **OpenTelemetry**: Distributed tracing integration
-- **Rate Limiter Implementations**: Token bucket, sliding window, Redis-backed limiters
 
 ## Architecture Highlights
 
@@ -508,7 +507,6 @@ Tests follow **progressive phase-based development**:
 ### v0.4.0 (Beta)
 - 🚧 Refresh token storage (memory + Redis)
 - 🚧 Token revocation
-- 🚧 Rate limiting
 
 ### v1.0.0 (Stable)
 - API stability guarantee
@@ -529,6 +527,29 @@ This library follows SOLID principles and clean architecture patterns. For detai
 - Interface Segregation (small, focused interfaces)
 - Strategy Pattern (swap implementations via interfaces)
 - Template Method (consistent patterns across components)
+
+## Rate Limiting
+
+`jwtauth` does not provide rate limiting. Rate limiting is a deployment concern — the right layer depends on your environment, scale, and infrastructure.
+
+**Recommended approach: API Gateway (distributed deployments)**
+
+Enforce rate limits at the API Gateway before requests reach your service. This is the only approach that works correctly across multiple instances:
+
+- **Kong**: `rate-limiting` plugin, configurable per route
+- **AWS API Gateway**: `ThrottlingRateLimit` / `ThrottlingBurstLimit` per method
+- **Kubernetes Ingress (NGINX)**: `nginx.ingress.kubernetes.io/limit-rps` annotation
+- **Cloudflare**: Zone-level rate limiting rules
+
+**Alternative: HTTP middleware (single-instance or with shared Redis)**
+
+If you prefer application-level rate limiting, several well-maintained Go libraries exist:
+
+- [`golang.org/x/time/rate`](https://pkg.go.dev/golang.org/x/time/rate) — standard library token bucket
+- [`github.com/ulule/limiter`](https://github.com/ulule/limiter) — Redis-backed, works across instances
+- [`github.com/throttled/throttled`](https://github.com/throttled/throttled) — flexible, GCRA algorithm
+
+See [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) for architecture guidance and configuration examples.
 
 ## Contributing
 

@@ -106,7 +106,6 @@ github.com/aetomala/jwtauth/
 │   │   ├── service_test.go        # Token operations tests
 │   │   ├── service_lifecycle_test.go  # Lifecycle management tests
 │   │   └── claims.go              # Claims management
-│   ├── ratelimit/                 # Rate limiter interface (for middleware use)
 │   ├── middleware/                # HTTP middleware (future)
 │   └── storage/                   # Refresh token storage (future)
 ├── internal/                      # Private packages
@@ -382,7 +381,7 @@ Created → Start() → Running → Shutdown() → Stopped
 - Validate token using TokenService
 - Inject user context into request
 - Return 401 Unauthorized on invalid token
-- Apply rate limiting (token bucket, sliding window, Redis-backed)
+- Apply rate limiting via infrastructure (API Gateway, Ingress) or a dedicated Go library — see `doc/DEPLOYMENT.md`
 
 ### RefreshTokenStore (Future)
 
