@@ -45,7 +45,7 @@
 - **Rate limiting** integration at token issuance boundary
 - **Background cleanup goroutines** with configurable interval and proper synchronization
 - **Service state management** ensuring tokens only issue when service is running
-- **Comprehensive BDD test coverage** (112 tests covering lifecycle, issuance, validation, refresh, revocation, and introspection)
+- **Comprehensive BDD test coverage** (144 tests covering lifecycle, issuance, validation, refresh, revocation, and introspection; 88% statement coverage)
 
 ### 🚧 In Development
 
@@ -120,12 +120,11 @@ logger := yourCustomAdapter{}                         // Your own logger
 ## Installation
 
 ```bash
-# Not yet available - pre-alpha
 # Will be available as:
 go get github.com/aetomala/jwtauth
 ```
 
-**Current Status**: Pre-alpha development. Not recommended for production use until v1.0.0 release.
+**Current Status**: Beta development. Not recommended for production use until v1.0.0 release.
 
 ## Quick Start
 
@@ -373,8 +372,8 @@ github.com/aetomala/jwtauth/
 │   │   └── keymanager_test.go   # Comprehensive tests
 │   ├── tokens/                   # JWT operations (Beta) 🟡
 │   │   ├── service.go            # TokenService implementation
-│   │   ├── service_test.go       # Token issuance tests (41 tests)
-│   │   ├── service_lifecycle_test.go  # Lifecycle management tests (20 tests)
+│   │   ├── service_test.go       # Token operations tests
+│   │   ├── service_lifecycle_test.go  # Lifecycle management tests
 │   │   └── claims.go             # Claims management
 │   ├── middleware/               # HTTP middleware 🚧
 │   └── storage/                  # Refresh token storage 🚧
@@ -389,7 +388,7 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 112 comprehensive tests across KeyManager and TokenService, all passing with race detection
+**Current**: 144 comprehensive tests across KeyManager and TokenService, all passing with race detection; 88% statement coverage on TokenService
 
 **KeyManager** (3 test suites):
 - Constructor validation and defaults
@@ -402,19 +401,19 @@ github.com/aetomala/jwtauth/
 - Graceful shutdown with in-flight operations
 - Logging integration and verification
 
-**TokenService** (7 test suites, 112 total tests):
+**TokenService** (7 test suites, 144 total tests):
 - **Lifecycle Management Tests** (20 tests):
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency
   - IsRunning: state tracking and thread-safety verification
   - Complete Lifecycle: integration test of start → use → shutdown cycle
-- **Token Issuance Tests** (41 tests):
-  - IssueAccessToken: successful issuance, rate limiting, custom claims, error paths
-  - IssueRefreshToken: successful issuance, storage, metadata handling
-  - IssueTokenPair: coordinated access and refresh token issuance
+- **Token Issuance Tests**:
+  - IssueAccessToken / IssueAccessTokenWithClaims: successful issuance, rate limiting, custom claims, reserved claim protection, guard conditions
+  - IssueRefreshToken: successful issuance, storage, metadata handling, guard conditions
+  - IssueTokenPair: coordinated access and refresh token issuance, guard conditions
 - **Validation & Refresh Tests**:
-  - ValidateAccessToken: signature verification, claims extraction, expiration, audience/issuer checks
-  - RefreshAccessToken: token rotation, revocation checks, expiration handling
+  - ValidateAccessToken: signature verification, claims extraction, expiration, audience/issuer enforcement, wrong signing method, missing kid header, guard conditions
+  - RefreshAccessToken: token rotation, revocation checks, expiration handling, error propagation, guard conditions
 - **Revocation & Introspection Tests**:
   - RevokeRefreshToken / RevokeAllUserTokens: single and bulk revocation flows
   - IntrospectToken: active/inactive/revoked/expired status per RFC 7662
@@ -501,7 +500,7 @@ Tests follow **progressive phase-based development**:
 - ✅ TokenService: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
 - ✅ TokenService: Token introspection per RFC 7662 (IntrospectToken)
 - ✅ TokenService: Manual cleanup sweep (CleanupExpiredTokens)
-- ✅ TokenService: Comprehensive test coverage (112 tests, all passing with race detection)
+- ✅ TokenService: Comprehensive test coverage (144 tests, 88% statement coverage, all passing with race detection)
 - 🚧 Prometheus metrics adapter
 
 ### v0.3.0 (Beta)
@@ -589,5 +588,5 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 **Status**: Beta (Active Development)
 **Version**: 0.2.0-beta
 **Components**: KeyManager ✅ | TokenService (Beta) 🟡 | Middleware 🚧
-**Test Coverage**: 112 tests, all passing, race-detection enabled
+**Test Coverage**: 144 tests, 88% statement coverage, all passing, race-detection enabled
 **Last Updated**: March 2026
