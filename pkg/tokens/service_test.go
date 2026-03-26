@@ -968,7 +968,7 @@ var _ = Describe("TokenService", func() {
 			It("should return error for non-existent token", func() {
 				mockStore.EXPECT().
 					Retrieve("non-existent-token").
-					Return(nil, tokens.ErrTokenNotFound)
+					Return(nil, errors.New("token not found"))
 
 				_, err := service.RefreshAccessToken(ctx, "non-existent-token")
 
@@ -1081,7 +1081,7 @@ var _ = Describe("TokenService", func() {
 			It("should return error", func() {
 				mockStore.EXPECT().
 					Revoke("non-existent").
-					Return(tokens.ErrTokenNotFound)
+					Return(errors.New("token not found"))
 
 				err := service.RevokeRefreshToken(ctx, "non-existent")
 

@@ -139,7 +139,7 @@ var _ = Describe("TokenService", func() {
 			wg.Wait()
 			close(errors)
 
-			// One should succeed, one might get ErrAlreadyRunning
+			// One should succeed, one should be a no-op (idempotent)
 			// At minimum, service should be running
 			Expect(service.IsRunning()).To(BeTrue())
 		})

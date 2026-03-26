@@ -70,14 +70,12 @@ type Service struct {
 var (
 	ErrInvalidUserID       = errors.New("invalid user ID")
 	ErrRateLimitExceeded   = errors.New("rate limit exceeded")
-	ErrAlreadyRunning      = errors.New("service is already running")
 	ErrServiceNotRunning   = errors.New("service is not running")
 	ErrInvalidToken        = errors.New("invalid token")
 	ErrInvalidSignature    = errors.New("invalid signature")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrRefreshTokenExpired = errors.New("token has expired")
 	ErrTokenRevoked        = errors.New("token revoked")
-	ErrTokenNotFound       = errors.New("token not found")
 )
 
 // ErrInvalidConfig returns a configuration error with the given message.
