@@ -48,15 +48,14 @@ type Service struct {
 	audience             []string      // JWT "aud" claim
 
 	// ===== State Management ===== (ADD THESE!)
-	isRunning    atomic.Bool    // NEW: Thread-safe state
-	mu           sync.RWMutex   // NEW: Protects mutable state (if needed)
-	shutdownChan chan struct{}  // NEW: Shutdown signal
-	wg           sync.WaitGroup // NEW: Goroutine coordination
+	isRunning    atomic.Bool    // Thread-safe state
+	mu           sync.RWMutex   // Protects mutable state (if needed)
+	shutdownChan chan struct{}  // Shutdown signal
+	wg           sync.WaitGroup // Goroutine coordination
 }
 
 var (
-	ErrInvalidUserID       = errors.New("")
-	ErrServiceShutdown     = errors.New("")
+	ErrInvalidUserID       = errors.New("invalid user ID")
 	ErrRateLimitExceeded   = errors.New("rate limit exceeded")
 	ErrAlreadyRunning      = errors.New("service is already running")
 	ErrServiceNotRunning   = errors.New("service is not running")
@@ -394,12 +393,43 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 }
 
 func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string, customClaims map[string]interface{}) (string, error) {
-	allow, err := s.rateLimiter.Allow(userID, 1)
-
-	if err != nil {
-		return "", nil
+	// ===== STEP 1: Validate User ID =====
+	if len(userID) == 0 {
+		if s.logger != nil {
+			s.logger.Warn("attempted to get token with empty userID")
+		}
+		return "", ErrInvalidUserID
+	}
+	if len(strings.TrimSpace(userID)) == 0 {
+		if s.logger != nil {
+			s.logger.Warn("attempted to get token with empty userID")
+		}
+		return "", ErrInvalidUserID
 	}
 
+	// ===== STEP 2: Service State Check =====
+	if !s.IsRunning() {
+		if s.logger != nil {
+			s.logger.Warn("service not running")
+		}
+		return "", ErrServiceNotRunning
+	}
+
+	// ===== STEP 3: Context Check =====
+	if err := ctx.Err(); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("context cancelled during token issuance",
+				"userID", userID,
+				"error", err)
+		}
+		return "", err
+	}
+
+	// ===== STEP 4: Rate Limiting =====
+	allow, err := s.rateLimiter.Allow(userID, 1)
+	if err != nil {
+		return "", err
+	}
 	if !allow {
 		if s.logger != nil {
 			s.logger.Warn("rate limit exceeded",
@@ -546,14 +576,13 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	// Create cryptographic random token
 	// this is an OPAQUE token (not a JWT)
 	refreshToken, err := generateRefreshToken()
-
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("failed to generate refresh token",
 				"userID", userID,
 				"error", err)
-			return "", fmt.Errorf("failed to generate refresh token: %w", err)
 		}
+		return "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
 	// ===== STEP 6: Calculate Expiration =====
@@ -587,7 +616,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		s.logger.Info("refresh token issued",
 			"userID", userID,
 			"tokenID", refreshToken,
-			expiresAt, expiresAt)
+			"expiresAt", expiresAt)
 	}
 
 	return refreshToken, nil
@@ -650,14 +679,13 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	// Create cryptographic random token
 	// this is an OPAQUE token (not a JWT)
 	refreshToken, err := generateRefreshToken()
-
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("failed to generate refresh token",
 				"userID", userID,
 				"error", err)
-			return "", fmt.Errorf("failed to generate refresh token: %w", err)
 		}
+		return "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
 	// ===== STEP 6: Calculate Expiration =====
@@ -677,7 +705,6 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		expiresAt,    // When it expires
 		metadata,     // Custom metadata
 	)
-
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("failed to store refresh token with metadata",
@@ -692,9 +719,8 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		s.logger.Info("refresh token with metadata issued",
 			"userID", userID,
 			"tokenID", refreshToken,
-			expiresAt, expiresAt,
+			"expiresAt", expiresAt,
 			"metadataKeys", getMapKeys(metadata))
-
 	}
 	return refreshToken, nil
 }
@@ -810,14 +836,13 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 
 	// 6. Create Refresh Token (opaque)
 	refreshToken, err := generateRefreshToken()
-
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("failed to generate refresh token",
 				"userID", userID,
 				"error", err)
-			return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
 		}
+		return "", "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
 	// ===== STEP 6: Calculate Expiration =====
@@ -851,7 +876,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		s.logger.Info("token pair issued",
 			"userID", userID,
 			"tokenID", refreshToken,
-			expiresAt, expiresAt)
+			"expiresAt", expiresAt)
 	}
 	return signedToken, refreshToken, nil
 }
@@ -1202,6 +1227,136 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	}
 
 	return nil
+}
+
+func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMetadata, error) {
+	// STEP 1: Service State Check ====
+	if !s.isRunning.Load() {
+		if s.logger != nil {
+			s.logger.Warn("attempted to introspect token while service is stopped")
+		}
+		return nil, ErrServiceNotRunning
+	}
+
+	// STEP 2: Context Check ====
+	if err := ctx.Err(); err != nil {
+		if s.logger != nil {
+			s.logger.Info("context cancelled during token introspection")
+		}
+		return nil, err
+	}
+
+	// STEP 3: Input Validation ====
+	if token == "" {
+		if s.logger != nil {
+			s.logger.Warn("empty token provided for introspection")
+		}
+		return nil, ErrInvalidRefreshToken
+	}
+
+	// STEP 4: Retrieve Token from Storage ===
+	refreshToken, err := s.refreshStore.Retrieve(token)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Info("token not found during introspection",
+				"error", err)
+		}
+		// Return inactive metadata instead of error
+		return &TokenMetadata{
+			Active:    false,
+			Subject:   "",
+			TokenType: "refresh_token",
+			ExpiresAt: time.Time{},
+			IssuedAt:  time.Time{},
+		}, nil
+	}
+
+	// STEP 5: Check Token Status ====
+	now := time.Now()
+
+	// Check if expired
+	if refreshToken.ExpiresAt.Before(now) {
+		if s.logger != nil {
+			s.logger.Info("introspect token is expired",
+				"token", token,
+				"expiredAt", refreshToken.ExpiresAt)
+		}
+		return &TokenMetadata{
+			Active:    false,
+			Subject:   refreshToken.UserID,
+			TokenType: "refresh_token",
+			ExpiresAt: refreshToken.ExpiresAt,
+			IssuedAt:  refreshToken.CreatedAt,
+		}, nil
+	}
+
+	// Check if revoked
+	if refreshToken.Revoked {
+		if s.logger != nil {
+			s.logger.Info("introspected token is revoked",
+				"tokenID", token)
+		}
+
+		return &TokenMetadata{
+			Active:    false,
+			Subject:   refreshToken.UserID,
+			TokenType: "refresh_token",
+			ExpiresAt: refreshToken.ExpiresAt,
+			IssuedAt:  refreshToken.CreatedAt,
+		}, nil
+	}
+
+	// STEP6 : Return Active Token Metadata ===
+	if s.logger != nil {
+		s.logger.Info("token introspection successfully",
+			"tokenID", token,
+			"userID", refreshToken.UserID,
+			"active", true)
+	}
+	return &TokenMetadata{
+		Active:    true,
+		Subject:   refreshToken.UserID,
+		TokenType: "refresh_token",
+		ExpiresAt: refreshToken.ExpiresAt,
+		IssuedAt:  refreshToken.CreatedAt,
+	}, nil
+}
+
+func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
+	// 1. Check service running
+	if !s.isRunning.Load() {
+		if s.logger != nil {
+			s.logger.Warn("attempted cleanup while service stopped")
+		}
+		return 0, ErrServiceNotRunning
+	}
+
+	// 2. Check context
+	if err := ctx.Err(); err != nil {
+		if s.logger != nil {
+			s.logger.Info("context cancelled during cleanup",
+				"error", err)
+		}
+		return 0, err
+	}
+
+	// 3. Call storage cleanup
+	count, err := s.refreshStore.Cleanup()
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to cleanup expired tokens",
+				"error", err)
+		}
+		return 0, fmt.Errorf("cleanup failed: %w", err)
+	}
+
+	// 4. Log success
+	if s.logger != nil {
+		s.logger.Info("expired tokens cleaned up",
+			"deleted", count)
+	}
+
+	return count, nil
 }
 
 // generateTokenID creates a cryptographically random token identifier.

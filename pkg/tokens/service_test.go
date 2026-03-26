@@ -554,6 +554,43 @@ var _ = Describe("TokenService", func() {
 				service.IssueRefreshToken(ctx, testUserID)
 			})
 		})
+
+		Context("IssueRefreshTokenWithMetadata guards", func() {
+			It("should return error when service is not running", func() {
+				stoppedService := createService()
+
+				_, err := stoppedService.IssueRefreshTokenWithMetadata(ctx, testUserID, nil)
+
+				Expect(err).To(MatchError(tokens.ErrServiceNotRunning))
+			})
+
+			It("should return error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+
+				_, err := service.IssueRefreshTokenWithMetadata(cancelledCtx, testUserID, nil)
+
+				Expect(err).To(MatchError(context.Canceled))
+			})
+
+			It("should return error when rate limited", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
+
+				_, err := service.IssueRefreshTokenWithMetadata(ctx, testUserID, nil)
+
+				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
+			})
+
+			It("should return error when storage fails", func() {
+				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(errors.New("storage failure"))
+
+				_, err := service.IssueRefreshTokenWithMetadata(ctx, testUserID, nil)
+
+				Expect(err).To(HaveOccurred())
+			})
+		})
 	})
 
 	// ========================================================================
@@ -1109,6 +1146,273 @@ var _ = Describe("TokenService", func() {
 			}).Should(BeTrue())
 		})
 	})
+
+	// ==================
+	// TOKEN INTROSPECTION
+	// ===================
+
+	Describe("IntrospectToken", func() {
+		var refreshToken string
+
+		BeforeEach(func() {
+			service = createService()
+
+			// Start the service first (required before token operations)
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			Expect(service.Start(ctx)).To(Succeed())
+
+			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+			mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+			refreshToken, _ = service.IssueRefreshToken(ctx, testUserID)
+		})
+
+		Context("with valid refresh token", func() {
+			It("should return token metadata", func() {
+				mockStore.EXPECT().Retrieve(refreshToken).Return(&storage.RefreshToken{
+					UserID:    testUserID,
+					ExpiresAt: time.Now().Add(1 * time.Hour),
+					CreatedAt: time.Now(),
+					Revoked:   false,
+				}, nil)
+
+				metadata, err := service.IntrospectToken(ctx, refreshToken)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.Active).To(BeTrue())
+				Expect(metadata.Subject).To(Equal(testUserID))
+				Expect(metadata.TokenType).To(Equal("refresh_token"))
+			})
+
+			It("should include expiration info", func() {
+				mockStore.EXPECT().Retrieve(refreshToken).Return(&storage.RefreshToken{
+					UserID:    testUserID,
+					ExpiresAt: time.Now().Add(1 * time.Hour),
+					CreatedAt: time.Now(),
+					Revoked:   false,
+				}, nil)
+
+				metadata, _ := service.IntrospectToken(ctx, refreshToken)
+
+				Expect(metadata.ExpiresAt).To(BeTemporally(">", time.Now()))
+				Expect(metadata.IssuedAt).To(BeTemporally("<=", time.Now()))
+			})
+		})
+
+		Context("with expired token", func() {
+			It("should return inactive status", func() {
+				mockStore.EXPECT().Retrieve(refreshToken).Return(&storage.RefreshToken{
+					UserID:    testUserID,
+					ExpiresAt: time.Now().Add(-1 * time.Hour),
+					CreatedAt: time.Now().Add(-25 * time.Hour),
+					Revoked:   false,
+				}, nil)
+
+				metadata, err := service.IntrospectToken(ctx, refreshToken)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.Active).To(BeFalse())
+			})
+		})
+
+		Context("with invalid token", func() {
+			It("should return inactive with no error", func() {
+				mockStore.EXPECT().Retrieve("invalid-token").Return(nil, errors.New("token not found"))
+
+				metadata, err := service.IntrospectToken(ctx, "invalid-token")
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.Active).To(BeFalse())
+				Expect(metadata.Subject).To(BeEmpty())
+			})
+		})
+
+		Context("with revoked token", func() {
+			It("should return inactive status", func() {
+				mockStore.EXPECT().Retrieve(refreshToken).Return(&storage.RefreshToken{
+					UserID:    testUserID,
+					ExpiresAt: time.Now().Add(1 * time.Hour),
+					CreatedAt: time.Now(),
+					Revoked:   true,
+				}, nil)
+
+				metadata, err := service.IntrospectToken(ctx, refreshToken)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.Active).To(BeFalse())
+				Expect(metadata.Subject).To(Equal(testUserID))
+			})
+		})
+
+		Context("with empty token", func() {
+			It("should return error", func() {
+				_, err := service.IntrospectToken(ctx, "")
+
+				Expect(err).To(MatchError(tokens.ErrInvalidRefreshToken))
+			})
+		})
+
+		Context("when service is not running", func() {
+			It("should return error", func() {
+				stoppedService := createService()
+
+				_, err := stoppedService.IntrospectToken(ctx, refreshToken)
+
+				Expect(err).To(MatchError(tokens.ErrServiceNotRunning))
+			})
+		})
+
+		Context("when context is cancelled", func() {
+			It("should return context error", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+
+				_, err := service.IntrospectToken(cancelledCtx, refreshToken)
+
+				Expect(err).To(MatchError(context.Canceled))
+			})
+		})
+	})
+
+	// ===========
+	// CLEANUP & MAINTENANCE
+	// ===========
+
+	Describe("CleanupExpiredTokens", func() {
+		BeforeEach(func() {
+			service = createService()
+			// Start the service first (required before token operations)
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			Expect(service.Start(ctx)).To(Succeed())
+		})
+
+		It("should cleanup expired tokens", func() {
+			mockStore.EXPECT().
+				Cleanup().
+				Return(5, nil). // 5 tokens deleted
+				Times(1)
+
+			count, err := service.CleanupExpiredTokens(ctx)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(count).To(Equal(5))
+		})
+
+		It("should log cleanup operation", func() {
+			mockStore.EXPECT().Cleanup().Return(2, nil)
+
+			service.CleanupExpiredTokens(ctx)
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "expired tokens cleaned up")
+			}).Should(BeTrue())
+		})
+
+		It("should call store cleanup", func() {
+			mockStore.EXPECT().
+				Cleanup().
+				Return(0, nil).
+				Times(1)
+
+			service.CleanupExpiredTokens(ctx)
+		})
+
+		Context("when cleanup fails", func() {
+			It("should return error", func() {
+				mockStore.EXPECT().
+					Cleanup().
+					Return(0, errors.New("cleanup failed"))
+
+				_, err := service.CleanupExpiredTokens(ctx)
+
+				Expect(err).To(HaveOccurred())
+			})
+		})
+
+		Context("when service is not running", func() {
+			It("should return error", func() {
+				stoppedService := createService()
+
+				_, err := stoppedService.CleanupExpiredTokens(ctx)
+
+				Expect(err).To(MatchError(tokens.ErrServiceNotRunning))
+			})
+		})
+
+		Context("when context is cancelled", func() {
+			It("should return context error", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+
+				_, err := service.CleanupExpiredTokens(cancelledCtx)
+
+				Expect(err).To(MatchError(context.Canceled))
+			})
+		})
+	})
+
+	// ========================================================================
+	// CONCURRENT OPERATIONS
+	// ========================================================================
+
+	// NOTE: These tests verify concurrent access does not cause panics or data races.
+	// Run with the race detector for full coverage: ginkgo --race ./pkg/tokens/
+	// TODO: Add concurrent lifecycle tests (Start/Shutdown races) when lifecycle work is complete.
+	Describe("Concurrent Operations", func() {
+		BeforeEach(func() {
+			service = createService()
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			Expect(service.Start(ctx)).To(Succeed())
+		})
+
+		It("should handle concurrent token issuance", func() {
+			// Allow many concurrent calls
+			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).Times(10)
+			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil).Times(10)
+
+			done := make(chan bool, 10)
+
+			for i := 0; i < 10; i++ {
+				go func(id int) {
+					defer GinkgoRecover()
+					userID := testUserID + "-" + fmt.Sprintf("%d", id)
+					_, err := service.IssueAccessToken(ctx, userID)
+					Expect(err).NotTo(HaveOccurred())
+					done <- true
+				}(i)
+			}
+
+			for i := 0; i < 10; i++ {
+				Eventually(done).Should(Receive())
+			}
+		})
+
+		It("should handle concurrent validation", func() {
+			// Issue token first (service is running from BeforeEach)
+			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
+			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			token, err := service.IssueAccessToken(ctx, testUserID)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Allow many concurrent validations
+			mockKM.EXPECT().GetPublicKey(gomock.Any()).Return(&testKey.PublicKey, nil).Times(10)
+
+			done := make(chan bool, 10)
+
+			for i := 0; i < 10; i++ {
+				go func() {
+					defer GinkgoRecover()
+					_, err := service.ValidateAccessToken(ctx, token)
+					Expect(err).NotTo(HaveOccurred())
+					done <- true
+				}()
+			}
+
+			for i := 0; i < 10; i++ {
+				Eventually(done).Should(Receive())
+			}
+		})
+	})
+
 })
 
 // ============================================================================
@@ -1206,79 +1510,6 @@ func parseToken(tokenString string) *tokens.Claims {
 		case []string:
 			claims.Audience = audVal
 		}
-	}
-
-	return claims
-}
-
-// ============================================================================
-// ALTERNATIVE: Parse with Mock KeyManager
-// ============================================================================
-
-// parseTokenWithKeyManager parses a token using a mock KeyManager.
-// This is more realistic for integration-style tests.
-func parseTokenWithKeyManager(tokenString string, mockKM *testutil.MockKeyManager) *tokens.Claims {
-	token, err := jwt.ParseWithClaims(
-		tokenString,
-		&tokens.Claims{},
-		func(token *jwt.Token) (interface{}, error) {
-			// Verify signing method
-			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-
-			// Get key ID from header
-			kid, ok := token.Header["kid"].(string)
-			if !ok {
-				return nil, errors.New("missing kid in token header")
-			}
-
-			// Use mock KeyManager to get public key
-			publicKey, err := mockKM.GetPublicKey(kid)
-			if err != nil {
-				return nil, err
-			}
-
-			return publicKey, nil
-		},
-	)
-
-	if err != nil {
-		return nil
-	}
-
-	if !token.Valid {
-		return nil
-	}
-
-	claims, ok := token.Claims.(*tokens.Claims)
-	if !ok {
-		return nil
-	}
-
-	return claims
-}
-
-// ============================================================================
-// SIMPLER: Parse WITHOUT Verification (Testing Only!)
-// ============================================================================
-
-// parseTokenUnsafe parses a token WITHOUT verifying the signature.
-//
-//	ONLY USE IN TESTS! Never in production!
-//
-// Use this when you just want to check claims structure, not security.
-func parseTokenUnsafe(tokenString string) *tokens.Claims {
-	// Parse without verification
-	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
-	token, _, err := parser.ParseUnverified(tokenString, &tokens.Claims{})
-	if err != nil {
-		return nil
-	}
-
-	claims, ok := token.Claims.(*tokens.Claims)
-	if !ok {
-		return nil
 	}
 
 	return claims

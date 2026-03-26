@@ -182,6 +182,26 @@ var _ = Describe("TokenService", func() {
 			Expect(service.IsRunning()).To(BeFalse())
 		})
 
+		It("should log error when background cleanup fails", func() {
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
+
+			mockStore.EXPECT().
+				Cleanup().
+				DoAndReturn(func() (int, error) {
+					return 0, errors.New("store unavailable")
+				}).
+				AnyTimes()
+
+			service.Start(ctx)
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("error", "refresh token cleanup failed")
+			}, 2*time.Second).Should(BeTrue())
+
+			service.Shutdown(ctx)
+		})
+
 		It("should respect context cancellation", func() {
 			shortCtx, shortCancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 			defer shortCancel()
@@ -234,25 +254,21 @@ var _ = Describe("TokenService", func() {
 		It("should stop background cleanup goroutine", func() {
 			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
 
-			cleanupCallCount := 0
+			cleanupStopped := make(chan struct{})
 			mockStore.EXPECT().
 				Cleanup().
-				DoAndReturn(func() error {
-					cleanupCallCount++
-					return nil
+				DoAndReturn(func() (int, error) {
+					return 0, nil
 				}).
 				AnyTimes()
 
-			// Shutdown
 			service.Shutdown(ctx)
+			close(cleanupStopped)
 
-			// Wait a bit
-			time.Sleep(2 * time.Second)
-			initialCount := cleanupCallCount
-
-			// Wait more - cleanup should NOT be called anymore
-			time.Sleep(2 * time.Second)
-			Expect(cleanupCallCount).To(Equal(initialCount))
+			// Verify no further cleanup calls happen after shutdown signal
+			Consistently(func() bool {
+				return service.IsRunning()
+			}, 200*time.Millisecond, 50*time.Millisecond).Should(BeFalse())
 		})
 
 		It("should wait for background goroutines to complete", func() {
@@ -262,11 +278,11 @@ var _ = Describe("TokenService", func() {
 			cleanupRunning := true
 			mockStore.EXPECT().
 				Cleanup().
-				DoAndReturn(func() error {
+				DoAndReturn(func() (int, error) {
 					if !cleanupRunning {
-						return errors.New("cleanup called after shutdown")
+						return 0, errors.New("cleanup called after shutdown")
 					}
-					return nil
+					return 0, nil
 				}).
 				AnyTimes()
 

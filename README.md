@@ -2,7 +2,7 @@
 
 **Production-ready JWT authentication library for distributed Go applications**
 
-> ⚠️ **Pre-Alpha Status**: KeyManager component is production-ready and fully tested. TokenService, Middleware, and other components are under active development. API may change before v1.0.0 release.
+> ⚠️ **Beta Status**: KeyManager is production-ready and fully tested. TokenService is in beta — core operations are complete with comprehensive test coverage. Middleware and storage implementations are under active development. API may change before v1.0.0.
 
 ## Overview
 
@@ -38,13 +38,14 @@
 - **Access token validation** with claims extraction (ValidateAccessToken)
 - **Token refresh flow** (RefreshAccessToken) with expiration and revocation checks
 - **Token revocation** (RevokeRefreshToken, RevokeAllUserTokens) for logout and security scenarios
-- **RS256 signing** with custom claims support
+- **Token introspection** (IntrospectToken) per RFC 7662 — returns active/inactive status with metadata
+- **Manual token cleanup** (CleanupExpiredTokens) for on-demand expiration sweeps
+- **RS256 signing** with custom claims support and reserved claim protection
 - **Lifecycle management** (Start/Shutdown/IsRunning) with graceful operations
 - **Rate limiting** integration at token issuance boundary
-- **Refresh token cleanup** with automatic expiration handling
+- **Background cleanup goroutines** with configurable interval and proper synchronization
 - **Service state management** ensuring tokens only issue when service is running
-- **Comprehensive BDD test coverage** (91 tests covering lifecycle, issuance, validation, refresh, and revocation)
-- **Background cleanup goroutines** with proper synchronization
+- **Comprehensive BDD test coverage** (112 tests covering lifecycle, issuance, validation, refresh, revocation, and introspection)
 
 ### 🚧 In Development
 
@@ -388,7 +389,7 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 61 comprehensive tests across KeyManager and TokenService
+**Current**: 112 comprehensive tests across KeyManager and TokenService, all passing with race detection
 
 **KeyManager** (3 test suites):
 - Constructor validation and defaults
@@ -401,7 +402,7 @@ github.com/aetomala/jwtauth/
 - Graceful shutdown with in-flight operations
 - Logging integration and verification
 
-**TokenService** (4 test suites, 61 total tests):
+**TokenService** (7 test suites, 112 total tests):
 - **Lifecycle Management Tests** (20 tests):
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency
@@ -411,6 +412,14 @@ github.com/aetomala/jwtauth/
   - IssueAccessToken: successful issuance, rate limiting, custom claims, error paths
   - IssueRefreshToken: successful issuance, storage, metadata handling
   - IssueTokenPair: coordinated access and refresh token issuance
+- **Validation & Refresh Tests**:
+  - ValidateAccessToken: signature verification, claims extraction, expiration, audience/issuer checks
+  - RefreshAccessToken: token rotation, revocation checks, expiration handling
+- **Revocation & Introspection Tests**:
+  - RevokeRefreshToken / RevokeAllUserTokens: single and bulk revocation flows
+  - IntrospectToken: active/inactive/revoked/expired status per RFC 7662
+  - CleanupExpiredTokens: manual sweep with error handling
+- **Concurrent Operations**: parallel token issuance and service state safety
 
 **Test Organization**:
 - Separate test files for logical concerns (`service_test.go`, `service_lifecycle_test.go`)
@@ -482,14 +491,17 @@ Tests follow **progressive phase-based development**:
 - ✅ Comprehensive test coverage with race detection
 - ✅ Architecture documentation
 
-### v0.2.0 (Current - Alpha)
+### v0.2.0 (Current - Beta)
 - ✅ TokenService: JWT creation with RS256 signing
 - ✅ TokenService: Lifecycle management (Start/Shutdown/IsRunning)
 - ✅ TokenService: Rate limiting integration
-- ✅ TokenService: Claims management with custom claims support
-- ✅ TokenService: Comprehensive test coverage (61 tests, all passing)
-- 🚧 JWT validation and token parsing
-- 🚧 Integration tests with KeyManager refresh token validation
+- ✅ TokenService: Claims management with custom claims support and reserved claim protection
+- ✅ TokenService: Access token validation with issuer/audience enforcement (ValidateAccessToken)
+- ✅ TokenService: Refresh token rotation with expiration and revocation checks (RefreshAccessToken)
+- ✅ TokenService: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
+- ✅ TokenService: Token introspection per RFC 7662 (IntrospectToken)
+- ✅ TokenService: Manual cleanup sweep (CleanupExpiredTokens)
+- ✅ TokenService: Comprehensive test coverage (112 tests, all passing with race detection)
 - 🚧 Prometheus metrics adapter
 
 ### v0.3.0 (Beta)
@@ -574,8 +586,8 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 
 ---
 
-**Status**: Alpha (Active Development)
-**Version**: 0.2.0-alpha
+**Status**: Beta (Active Development)
+**Version**: 0.2.0-beta
 **Components**: KeyManager ✅ | TokenService (Beta) 🟡 | Middleware 🚧
-**Test Coverage**: 61 tests, all passing, race-detection enabled
-**Last Updated**: February 2026
+**Test Coverage**: 112 tests, all passing, race-detection enabled
+**Last Updated**: March 2026
