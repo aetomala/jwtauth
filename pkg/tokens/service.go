@@ -47,11 +47,10 @@ type Service struct {
 	issuer               string        // JWT "iss" claim
 	audience             []string      // JWT "aud" claim
 
-	// ===== State Management ===== (ADD THESE!)
-	isRunning    atomic.Bool    // Thread-safe state
-	mu           sync.RWMutex   // Protects mutable state (if needed)
-	shutdownChan chan struct{}  // Shutdown signal
-	wg           sync.WaitGroup // Goroutine coordination
+	// ===== State Management =====
+	isRunning    atomic.Bool    // Thread-safe running state
+	shutdownChan chan struct{}   // Signals background goroutines to stop
+	wg           sync.WaitGroup // Waits for goroutines to finish on shutdown
 }
 
 var (
@@ -78,11 +77,6 @@ func ConfigDefault() ServiceConfig {
 		CleanupInterval:      1 * time.Hour,
 	}
 }
-
-const (
-	StateStarted int32 = 1
-	StateStopped int32 = 0
-)
 
 // IsRunning tells caller if the manager is currently running
 func (s *Service) IsRunning() bool {
@@ -136,11 +130,8 @@ func NewService(config ServiceConfig) (*Service, error) {
 		cleanupInterval:      config.CleanupInterval,
 		issuer:               config.Issuer,
 		audience:             config.Audience,
-		shutdownChan:         make(chan struct{}), // NEW
+		shutdownChan: make(chan struct{}),
 	}
-
-	// Initialize state
-	s.isRunning.Store(false)
 
 	return s, nil
 }
@@ -887,20 +878,16 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		if s.logger != nil {
 			s.logger.Warn("attempted token validation while service stopped")
 		}
-		return nil, ErrServiceNotRunning // ← FIX: Return error!
+		return nil, ErrServiceNotRunning
 	}
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
 		if s.logger != nil {
-			/*s.logger.Debug("context cancelled during token validation",
-			  "error", err)
-			*/
 			s.logger.Info("context cancelled during token validation",
 				"error", err)
-
 		}
-		return nil, err // ← FIX: Must return!
+		return nil, err
 	}
 
 	// ===== STEP 3: Parse JWT Token =====
@@ -1017,19 +1004,12 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		}
 	}
 
-	// ===== STEP 10: Log Success & Metrics =====
+	// ===== STEP 10: Log Success =====
 	if s.logger != nil {
-		/*s.logger.Debug("access token validated",
-		  "userID", claims.Subject,
-		  "tokenID", claims.ID)
-		*/
 		s.logger.Info("access token validated",
 			"userID", claims.Subject,
 			"tokenID", claims.ID)
 	}
-
-	// Update metrics (if implemented)
-	// s.tokenValidationCount.Add(1)
 
 	return claims, nil
 }
@@ -1060,7 +1040,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	}
 
 	// STEP 4: Lookup Refresh Token (CORRECTED!)
-	token, err := s.refreshStore.Retrieve(refreshToken) // ← CORRECT: Retrieve, not Get
+	token, err := s.refreshStore.Retrieve(refreshToken)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warn("refresh token not found in store",
