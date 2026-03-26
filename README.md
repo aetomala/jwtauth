@@ -230,11 +230,10 @@ import (
 )
 
 func main() {
-    // Create TokenService with rate limiting and storage
+    // Create TokenService with storage
     config := tokens.ServiceConfig{
         KeyManager:           keyManager,      // from KeyManager above
         RefreshStore:         refreshStore,    // RefreshStore implementation
-        RateLimiter:          rateLimiter,     // RateLimiter implementation
         Logger:               logger,          // Optional
         AccessTokenDuration:  15 * time.Minute,
         RefreshTokenDuration: 30 * 24 * time.Hour,
@@ -408,7 +407,7 @@ github.com/aetomala/jwtauth/
   - IsRunning: state tracking and thread-safety verification
   - Complete Lifecycle: integration test of start → use → shutdown cycle
 - **Token Issuance Tests**:
-  - IssueAccessToken / IssueAccessTokenWithClaims: successful issuance, rate limiting, custom claims, reserved claim protection, guard conditions
+  - IssueAccessToken / IssueAccessTokenWithClaims: successful issuance, custom claims, reserved claim protection, guard conditions
   - IssueRefreshToken: successful issuance, storage, metadata handling, guard conditions
   - IssueTokenPair: coordinated access and refresh token issuance, guard conditions
 - **Validation & Refresh Tests**:

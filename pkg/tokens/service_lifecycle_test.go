@@ -22,7 +22,6 @@ var _ = Describe("TokenService", func() {
 		service    *tokens.Service
 		mockKM     *testutil.MockKeyManager
 		mockStore  *testutil.MockRefreshStore
-		mockRL     *testutil.MockRateLimiter
 		mockLogger *testutil.MockLogger
 		ctx        context.Context
 		cancel     context.CancelFunc
@@ -45,7 +44,6 @@ var _ = Describe("TokenService", func() {
 		// Create mocks using gomock (auto-generated)
 		mockKM = testutil.NewMockKeyManager(ctrl)
 		mockStore = testutil.NewMockRefreshStore(ctrl)
-		mockRL = testutil.NewMockRateLimiter(ctrl)
 		mockLogger = testutil.NewMockLogger()
 	})
 
@@ -65,7 +63,6 @@ var _ = Describe("TokenService", func() {
 		config := tokens.ServiceConfig{
 			KeyManager:           mockKM,
 			RefreshStore:         mockStore,
-			RateLimiter:          mockRL,
 			Logger:               mockLogger,
 			AccessTokenDuration:  15 * time.Minute,
 			RefreshTokenDuration: 30 * 24 * time.Hour,
@@ -402,7 +399,6 @@ var _ = Describe("TokenService", func() {
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
 			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil).AnyTimes()
 			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
-			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 
 			service = createService()
 			// Start

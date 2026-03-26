@@ -31,7 +31,6 @@ var _ = Describe("TokenService", func() {
 		service     *tokens.Service
 		mockKM      *testutil.MockKeyManager
 		mockStore   *testutil.MockRefreshStore
-		mockRL      *testutil.MockRateLimiter
 		mockLogger  *testutil.MockLogger
 		ctx         context.Context
 		cancel      context.CancelFunc
@@ -58,7 +57,6 @@ var _ = Describe("TokenService", func() {
 		// Create mocks using gomock (auto-generated)
 		mockKM = testutil.NewMockKeyManager(ctrl)
 		mockStore = testutil.NewMockRefreshStore(ctrl)
-		mockRL = testutil.NewMockRateLimiter(ctrl)
 		mockLogger = testutil.NewMockLogger() // Manual mock (for now)
 	})
 
@@ -78,7 +76,6 @@ var _ = Describe("TokenService", func() {
 		config := tokens.ServiceConfig{
 			KeyManager:           mockKM,
 			RefreshStore:         mockStore,
-			RateLimiter:          mockRL,
 			Logger:               mockLogger,
 			AccessTokenDuration:  15 * time.Minute,
 			RefreshTokenDuration: 30 * 24 * time.Hour,
@@ -101,8 +98,7 @@ var _ = Describe("TokenService", func() {
 				config := tokens.ServiceConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
-					RateLimiter:          mockRL,
-					Logger:               mockLogger,
+							Logger:               mockLogger,
 					AccessTokenDuration:  15 * time.Minute,
 					RefreshTokenDuration: 30 * 24 * time.Hour,
 				}
@@ -115,8 +111,7 @@ var _ = Describe("TokenService", func() {
 				config := tokens.ServiceConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
-					RateLimiter:          mockRL,
-					Logger:               nil, // Optional
+							Logger:               nil, // Optional
 					AccessTokenDuration:  15 * time.Minute,
 					RefreshTokenDuration: 30 * 24 * time.Hour,
 				}
@@ -131,8 +126,7 @@ var _ = Describe("TokenService", func() {
 				config := tokens.ServiceConfig{
 					KeyManager:   mockKM,
 					RefreshStore: mockStore,
-					RateLimiter:  mockRL,
-					// Durations not specified
+						// Durations not specified
 				}
 
 				svc, err := tokens.NewService(config)
@@ -147,8 +141,7 @@ var _ = Describe("TokenService", func() {
 				config := tokens.ServiceConfig{
 					KeyManager:   nil, // Required
 					RefreshStore: mockStore,
-					RateLimiter:  mockRL,
-				}
+					}
 
 				_, err := tokens.NewService(config)
 
@@ -160,32 +153,18 @@ var _ = Describe("TokenService", func() {
 				config := tokens.ServiceConfig{
 					KeyManager:   mockKM,
 					RefreshStore: nil, // Required
-					RateLimiter:  mockRL,
-				}
+					}
 				_, err := tokens.NewService(config)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("RefreshStore"))
 			})
 
-			It("should return error when RateLimiter is nil", func() {
-				config := tokens.ServiceConfig{
-					KeyManager:   mockKM,
-					RefreshStore: mockStore,
-					RateLimiter:  nil, // Required
-				}
-
-				_, err := tokens.NewService(config)
-
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("RateLimiter"))
-			})
 
 			It("should return error for invalid token durations", func() {
 				config := tokens.ServiceConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
-					RateLimiter:          mockRL,
-					AccessTokenDuration:  -1 * time.Minute, // Invalid
+							AccessTokenDuration:  -1 * time.Minute, // Invalid
 					RefreshTokenDuration: 30 * 24 * time.Hour,
 				}
 
@@ -199,8 +178,7 @@ var _ = Describe("TokenService", func() {
 				config := tokens.ServiceConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
-					RateLimiter:          mockRL,
-					AccessTokenDuration:  5 * time.Minute,
+							AccessTokenDuration:  5 * time.Minute,
 					RefreshTokenDuration: -1 * 24 * time.Hour, // Invalid
 				}
 
@@ -225,8 +203,6 @@ var _ = Describe("TokenService", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 		It("should issue access token successfully", func() {
-			// Expect rake limit check
-			mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil).Times(1)
 			// Expect key retrieval
 			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 			token, err := service.IssueAccessToken(ctx, testUserID)
@@ -235,25 +211,13 @@ var _ = Describe("TokenService", func() {
 		})
 
 		It("should use KeyManager to sign token", func() {
-			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-
 			// This is what we're verifying
 			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil).Times(1)
 
 			service.IssueAccessToken(ctx, testUserID)
 		})
 
-		It("should check rate limit", func() {
-			// This is what we're verifying
-			mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil).Times(1)
-
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
-
-			service.IssueAccessToken(ctx, testUserID)
-		})
-
 		It("should log token issuance", func() {
-			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
 			service.IssueAccessToken(ctx, testUserID)
@@ -264,7 +228,6 @@ var _ = Describe("TokenService", func() {
 		})
 
 		It("should include custom claims issuance if provided", func() {
-			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
 			customClaims := map[string]interface{}{
@@ -284,64 +247,13 @@ var _ = Describe("TokenService", func() {
 		})
 
 		It("should respect call order", func() {
-			// Verify rate limit is checked BEFORE getting signing key
-			gomock.InOrder(
-				mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil),
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil),
-			)
+			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
 			service.IssueAccessToken(ctx, testUserID)
 		})
 
-		Context("when rate limited", func() {
-			It("should return error when rate limit exceeded", func() {
-				mockRL.EXPECT().Allow(testUserID, 1).Return(false, nil).Times(1)
-
-				// Should NOT call KeyManager
-				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
-
-				_, err := service.IssueAccessToken(ctx, testUserID)
-				Expect(err).To(HaveOccurred())
-				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
-			})
-
-			It("should log rate limit rejection", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
-
-				service.IssueAccessToken(ctx, testUserID)
-
-				Eventually(func() bool {
-					return mockLogger.HasLog("warn", "rate limit exceeded")
-				}).Should(BeTrue())
-			})
-
-			It("should not issue token when rate limited", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
-
-				// Verify GetCurrentSigningKey is NEVER called
-				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
-
-				service.IssueAccessToken(ctx, testUserID)
-			})
-		})
-
-		Context("when rate limit check fails", func() {
-			It("should return error", func() {
-				mockRL.EXPECT().
-					Allow(gomock.Any(), gomock.Any()).
-					Return(false, errors.New("rate limit service unavailable"))
-
-				_, err := service.IssueAccessToken(ctx, testUserID)
-
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("rate limit service unavailable"))
-			})
-		})
-
 		Context("when key retrieval fails", func() {
 			It("should return error", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-
 				mockKM.EXPECT().GetCurrentSigningKey().Return(nil, "", errors.New("key unavailable")).Times(1)
 
 				_, err := service.IssueAccessToken(ctx, testUserID)
@@ -351,7 +263,6 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should log error", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockKM.EXPECT().
 					GetCurrentSigningKey().
 					Return(nil, "", errors.New("key error"))
@@ -367,7 +278,6 @@ var _ = Describe("TokenService", func() {
 		Context("with invalid user ID", func() {
 			It("should return error for empty user ID", func() {
 				// Should not call any dependencies for invalid input
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Times(0)
 				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
 
 				_, err := service.IssueAccessToken(ctx, "")
@@ -377,7 +287,6 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should return error for whitespace-only user ID", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Times(0)
 				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
 
 				_, err := service.IssueAccessToken(ctx, "   ")
@@ -393,7 +302,6 @@ var _ = Describe("TokenService", func() {
 				cancelFn() // cancel immediately
 
 				// Might not even get to dependencies
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Times(0)
 				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
 
 				_, err := service.IssueAccessToken(cancelledCtx, testUserID)
@@ -425,21 +333,7 @@ var _ = Describe("TokenService", func() {
 				Expect(err).To(Equal(tokens.ErrInvalidUserID))
 			})
 
-			It("should return ErrRateLimitExceeded when rate limited", func() {
-				mockRL.EXPECT().Allow(testUserID, 1).Return(false, nil)
-				_, err := service.IssueAccessTokenWithClaims(ctx, testUserID, nil)
-				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
-			})
-
-			It("should return rate limiter error", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, errors.New("limiter unavailable"))
-				_, err := service.IssueAccessTokenWithClaims(ctx, testUserID, nil)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("limiter unavailable"))
-			})
-
 			It("should not override reserved claim sub", func() {
-				mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil)
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 				customClaims := map[string]interface{}{"sub": "hacker", "role": "admin"}
 				tokenStr, err := service.IssueAccessTokenWithClaims(ctx, testUserID, customClaims)
@@ -467,8 +361,6 @@ var _ = Describe("TokenService", func() {
 
 		Context("with valid user ID", func() {
 			It("should issue refresh token succesfully", func() {
-				mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil)
-
 				mockStore.EXPECT().Store(
 					gomock.Any(), // ctx
 					gomock.Any(), // tokenID (generated)
@@ -485,9 +377,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should store refresh token", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-
-				// Verify Store is called
+					// Verify Store is called
 				mockStore.EXPECT().
 					Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), gomock.Any()).
 					Return(nil).
@@ -496,20 +386,7 @@ var _ = Describe("TokenService", func() {
 				service.IssueRefreshToken(ctx, testUserID)
 			})
 
-			It("should check rate limit", func() {
-				// Verify rate limit is checked
-				mockRL.EXPECT().
-					Allow(testUserID, 1).
-					Return(true, nil).
-					Times(1)
-
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-
-				service.IssueRefreshToken(ctx, testUserID)
-			})
-
 			It("should log token issuance", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				service.IssueRefreshToken(ctx, testUserID)
@@ -520,8 +397,6 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should store metadata when provided", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-
 				metadata := map[string]interface{}{
 					"ip":        "192.168.1.1",
 					"userAgent": "Mozilla/5.0",
@@ -536,8 +411,6 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should set correct expiration time", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-
 				expectedExpiry := time.Now().Add(30 * 24 * time.Hour)
 
 				// Use custom matcher to verify expiration is approximately correct
@@ -561,8 +434,6 @@ var _ = Describe("TokenService", func() {
 
 		Context("when storage fails", func() {
 			It("should return error", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-
 				mockStore.EXPECT().
 					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("storage failure"))
@@ -574,7 +445,6 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should log error", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockStore.EXPECT().
 					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("storage error"))
@@ -584,35 +454,6 @@ var _ = Describe("TokenService", func() {
 				Eventually(func() bool {
 					return mockLogger.HasLog("error", "failed to store refresh token")
 				}).Should(BeTrue())
-			})
-		})
-
-		Context("when rate limited", func() {
-			It("should return error", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
-
-				// Should NOT call Store
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-
-				_, err := service.IssueRefreshToken(ctx, testUserID)
-
-				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
-			})
-
-			It("should not store token when rate limited", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
-
-				// Verify Store is NEVER called
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-
-				service.IssueRefreshToken(ctx, testUserID)
-			})
-
-			It("should return rate limiter error", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, errors.New("limiter unavailable"))
-				_, err := service.IssueRefreshToken(ctx, "user-123")
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("limiter unavailable"))
 			})
 		})
 
@@ -654,16 +495,7 @@ var _ = Describe("TokenService", func() {
 				Expect(err).To(MatchError(context.Canceled))
 			})
 
-			It("should return error when rate limited", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
-
-				_, err := service.IssueRefreshTokenWithMetadata(ctx, testUserID, nil)
-
-				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
-			})
-
 			It("should return error when storage fails", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("storage failure"))
 
@@ -689,7 +521,6 @@ var _ = Describe("TokenService", func() {
 			It("should issue both token successfully", func() {
 				// Expect all dependencies called in order
 				gomock.InOrder(
-					mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil),
 					mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil),
 					mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), gomock.Any()).Return(nil),
 				)
@@ -702,8 +533,6 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should use KeyManager for access token", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
-
 				mockKM.EXPECT().
 					GetCurrentSigningKey().
 					Return(testKey, testKeyID, nil).
@@ -715,7 +544,6 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should store refresh token", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
 				mockStore.EXPECT().
@@ -726,20 +554,7 @@ var _ = Describe("TokenService", func() {
 				service.IssueTokenPair(ctx, testUserID)
 			})
 
-			It("should check rate limit once for pair", func() {
-				mockRL.EXPECT().
-					Allow(testUserID, 1).
-					Return(true, nil).
-					Times(1) // Only once for the pair
-
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-
-				service.IssueTokenPair(ctx, testUserID)
-			})
-
 			It("should log both issuances", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
@@ -753,7 +568,6 @@ var _ = Describe("TokenService", func() {
 
 		Context("when access token issuance fails", func() {
 			It("should not issue refresh token", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockKM.EXPECT().
 					GetCurrentSigningKey().
 					Return(nil, "", errors.New("key error"))
@@ -769,7 +583,6 @@ var _ = Describe("TokenService", func() {
 
 		Context("when refresh token storage fails", func() {
 			It("should return error", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 				mockStore.EXPECT().
 					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -778,20 +591,6 @@ var _ = Describe("TokenService", func() {
 				_, _, err := service.IssueTokenPair(ctx, testUserID)
 
 				Expect(err).To(HaveOccurred())
-			})
-		})
-
-		Context("when rate limited", func() {
-			It("should not issue either token", func() {
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
-
-				// Neither KeyManager nor Store should be called
-				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
-				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
-
-				_, _, err := service.IssueTokenPair(ctx, testUserID)
-
-				Expect(err).To(Equal(tokens.ErrRateLimitExceeded))
 			})
 		})
 
@@ -834,7 +633,6 @@ var _ = Describe("TokenService", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Then issue a valid token
-			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 			validToken, _ = service.IssueAccessToken(ctx, testUserID)
 		})
@@ -1043,7 +841,6 @@ var _ = Describe("TokenService", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Then issue a refresh token
-			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 			mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), gomock.Any()).Return(nil)
 			validRefreshToken, _ = service.IssueRefreshToken(ctx, testUserID)
 		})
@@ -1060,9 +857,6 @@ var _ = Describe("TokenService", func() {
 						ExpiresAt: time.Now().Add(24 * time.Hour),
 					}, nil)
 
-				// Expect rate limit check
-				mockRL.EXPECT().Allow(testUserID, 1).Return(true, nil).AnyTimes()
-
 				// Expect new access token signed
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
@@ -1078,20 +872,6 @@ var _ = Describe("TokenService", func() {
 					Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil).
 					Times(1)
 
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
-
-				service.RefreshAccessToken(ctx, validRefreshToken)
-			})
-
-			It("should check rate limit", func() {
-				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
-
-				mockRL.EXPECT().
-					Allow(testUserID, 1).
-					Return(true, nil).
-					AnyTimes()
-
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
 				service.RefreshAccessToken(ctx, validRefreshToken)
@@ -1099,7 +879,6 @@ var _ = Describe("TokenService", func() {
 
 			It("should preserve user ID from refresh token", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
 				accessToken, _ := service.RefreshAccessToken(ctx, validRefreshToken)
@@ -1110,7 +889,6 @@ var _ = Describe("TokenService", func() {
 
 			It("should log refresh operation", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 
 				service.RefreshAccessToken(ctx, validRefreshToken)
@@ -1160,36 +938,11 @@ var _ = Describe("TokenService", func() {
 			})
 		})
 
-		Context("when rate limited", func() {
-			It("should return error", func() {
-				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, nil)
-
-				// Should NOT try to issue new token
-				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
-
-				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
-
-				Expect(err).To(MatchError(tokens.ErrRateLimitExceeded))
-			})
-
-			It("should return rate limiter error", func() {
-				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{
-					UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour),
-				}, nil)
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(false, errors.New("limiter down"))
-				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("limiter down"))
-			})
-		})
-
 		Context("when IssueAccessToken fails", func() {
 			It("should propagate the error", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{
 					UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour),
 				}, nil)
-				mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 				mockKM.EXPECT().GetCurrentSigningKey().Return(nil, "", errors.New("key unavailable"))
 				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
 				Expect(err).To(HaveOccurred())
@@ -1408,7 +1161,6 @@ var _ = Describe("TokenService", func() {
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
 			Expect(service.Start(ctx)).To(Succeed())
 
-			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 			mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 			refreshToken, _ = service.IssueRefreshToken(ctx, testUserID)
 		})
@@ -1613,7 +1365,6 @@ var _ = Describe("TokenService", func() {
 
 		It("should handle concurrent token issuance", func() {
 			// Allow many concurrent calls
-			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil).Times(10)
 			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil).Times(10)
 
 			done := make(chan bool, 10)
@@ -1635,7 +1386,6 @@ var _ = Describe("TokenService", func() {
 
 		It("should handle concurrent validation", func() {
 			// Issue token first (service is running from BeforeEach)
-			mockRL.EXPECT().Allow(gomock.Any(), gomock.Any()).Return(true, nil)
 			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
 			token, err := service.IssueAccessToken(ctx, testUserID)
 			Expect(err).NotTo(HaveOccurred())

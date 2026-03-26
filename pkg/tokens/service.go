@@ -13,20 +13,18 @@ import (
 
 	"github.com/aetomala/jwtauth/pkg/keymanager"
 	"github.com/aetomala/jwtauth/pkg/logging"
-	"github.com/aetomala/jwtauth/pkg/ratelimit"
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 // ServiceConfig holds the configuration for a Service.
 //
-// KeyManager, RefreshStore, and RateLimiter are required. All duration fields
+// KeyManager and RefreshStore are required. All duration fields
 // default to production-safe values via ConfigDefault if left at zero.
 type ServiceConfig struct {
 	// Required dependencies
 	KeyManager   keymanager.KeyManager // Signs and validates tokens
 	RefreshStore storage.RefreshStore  // Persists refresh tokens
-	RateLimiter  ratelimit.RateLimiter // Controls issuance rate per user
 
 	// Optional
 	Logger logging.Logger // Structured logger; nil disables logging
@@ -50,7 +48,6 @@ type Service struct {
 	// ===== Dependencies (Interfaces) =====
 	keyManager   keymanager.KeyManager // Crypto operations
 	refreshStore storage.RefreshStore  // Token storage
-	rateLimiter  ratelimit.RateLimiter // Rate limiting
 	logger       logging.Logger        // Optional logging
 
 	// ===== Configuration (Immutable) =====
@@ -69,7 +66,6 @@ type Service struct {
 // Sentinel errors returned by Service methods.
 var (
 	ErrInvalidUserID       = errors.New("invalid user ID")
-	ErrRateLimitExceeded   = errors.New("rate limit exceeded")
 	ErrServiceNotRunning   = errors.New("service is not running")
 	ErrInvalidToken        = errors.New("invalid token")
 	ErrInvalidSignature    = errors.New("invalid signature")
@@ -124,10 +120,6 @@ func NewService(config ServiceConfig) (*Service, error) {
 		return nil, ErrInvalidConfig("RefreshStore is required")
 	}
 
-	if config.RateLimiter == nil {
-		return nil, ErrInvalidConfig("RateLimiter is required")
-	}
-
 	if config.AccessTokenDuration < 0 {
 		return nil, ErrInvalidConfig("AccessTokenDuration must be non-negative")
 	}
@@ -143,7 +135,6 @@ func NewService(config ServiceConfig) (*Service, error) {
 	s := &Service{
 		keyManager:           config.KeyManager,
 		refreshStore:         config.RefreshStore,
-		rateLimiter:          config.RateLimiter,
 		logger:               config.Logger,
 		accessTokenDuration:  config.AccessTokenDuration,
 		refreshTokenDuration: config.RefreshTokenDuration,
@@ -296,8 +287,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // nbf, jti) and is signed with the current key from the KeyManager.
 //
 // Returns ErrInvalidUserID for empty/whitespace-only user IDs, ErrServiceNotRunning
-// if the service is stopped, ErrRateLimitExceeded if the rate limiter denies
-// the request, or the context error if the context is already cancelled.
+// if the service is stopped, or the context error if the context is already cancelled.
 func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, error) {
 
 	// ===== STEP 1: Validate user id ====
@@ -334,24 +324,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		return "", err
 	}
 
-	// ===== STEP 4: Rate Limiting =====
-	// Prevent abuse by limiting token issuance rate per user
-	// Cost of 1 = one request
-
-	allow, err := s.rateLimiter.Allow(userID, 1)
-
-	if err != nil {
-		return "", err
-	}
-	if !allow {
-		if s.logger != nil {
-			s.logger.Warn("rate limit exceeded",
-				"userID", userID)
-		}
-		return "", ErrRateLimitExceeded
-	}
-
-	// ===== STEP 5: Get Signing Key =====
+	// ===== STEP 4: Get Signing Key =====
 	// Retrieve current private key and its ID from KeyManager
 	// The key ID will be included in the JWT header for verification
 	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey()
@@ -364,7 +337,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		return "", fmt.Errorf("failed to get signing key: %w", err)
 	}
 
-	// ===== STEP 6: Create JWT Claims =====
+	// ===== STEP 5: Create JWT Claims =====
 	now := time.Now()
 	expiresAt := now.Add(s.accessTokenDuration)
 	// Generate unique token ID (jti claim)
@@ -389,7 +362,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		ID:        tokenID,                       // "jti" - unique token identifier
 	}
 
-	// ===== STEP 7: Sign Token =====
+	// ===== STEP 6: Sign Token =====
 	// Create JWT with RS256 algorithm (RSA signature with SHA-256)
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 
@@ -461,20 +434,7 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 		return "", err
 	}
 
-	// ===== STEP 4: Rate Limiting =====
-	allow, err := s.rateLimiter.Allow(userID, 1)
-	if err != nil {
-		return "", err
-	}
-	if !allow {
-		if s.logger != nil {
-			s.logger.Warn("rate limit exceeded",
-				"userID", userID)
-		}
-		return "", ErrRateLimitExceeded
-	}
-
-	// Get signing key
+	// ===== STEP 4: Get Signing Key =====
 	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey()
 	if err != nil {
 		if s.logger != nil {
@@ -596,24 +556,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		return "", err
 	}
 
-	// ===== STEP 4: Rate Limiting =====
-	// Prevent abuse by limiting token issuance rate per user
-	// Cost of 1 = one request
-
-	allowed, err := s.rateLimiter.Allow(userID, 1)
-
-	if err != nil {
-		return "", err
-	}
-	if !allowed {
-		if s.logger != nil {
-			s.logger.Warn("rate limit exceeded",
-				"userID", userID)
-		}
-		return "", ErrRateLimitExceeded
-	}
-
-	// ==== STEP 5: Generate Refresh Token ======
+	// ===== STEP 4: Generate Refresh Token =====
 	// Create cryptographic random token
 	// this is an OPAQUE token (not a JWT)
 	refreshToken, err := generateRefreshToken()
@@ -626,11 +569,11 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		return "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
-	// ===== STEP 6: Calculate Expiration =====
+	// ===== STEP 5: Calculate Expiration =====
 	now := time.Now()
 	expiresAt := now.Add(s.refreshTokenDuration)
 
-	// ===== STEP 7: Store Token =====
+	// ===== STEP 6: Store Token =====
 	// Store token with metadata in RefreshStore
 	// This allows:
 	//   - Token validation during refresh
@@ -653,7 +596,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		return "", fmt.Errorf("failed to store refresh token: %w", err)
 	}
 
-	// ========== STEP 8: Log Success =============
+	// ===== STEP 7: Log Success =====
 	if s.logger != nil {
 		s.logger.Info("refresh token issued",
 			"userID", userID,
@@ -705,24 +648,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		return "", err
 	}
 
-	// ===== STEP 4: Rate Limiting =====
-	// Prevent abuse by limiting token issuance rate per user
-	// Cost of 1 = one request
-
-	allowed, err := s.rateLimiter.Allow(userID, 1)
-
-	if err != nil {
-		return "", err
-	}
-	if !allowed {
-		if s.logger != nil {
-			s.logger.Warn("rate limit exceeded",
-				"userID", userID)
-		}
-		return "", ErrRateLimitExceeded
-	}
-
-	// ==== STEP 5: Generate Refresh Token ======
+	// ===== STEP 4: Generate Refresh Token =====
 	// Create cryptographic random token
 	// this is an OPAQUE token (not a JWT)
 	refreshToken, err := generateRefreshToken()
@@ -735,11 +661,11 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		return "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 
-	// ===== STEP 6: Calculate Expiration =====
+	// ===== STEP 5: Calculate Expiration =====
 	now := time.Now()
 	expiresAt := now.Add(s.refreshTokenDuration)
 
-	// ===== STEP 7: Store Token =====
+	// ===== STEP 6: Store Token =====
 	// Store token with metadata in RefreshStore
 	// This allows:
 	//   - Token validation during refresh
@@ -762,7 +688,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		return "", fmt.Errorf("failed to store refresh token with metadata: %w", err)
 	}
 
-	// ========== STEP 8: Log Success =============
+	// ===== STEP 7: Log Success =====
 	if s.logger != nil {
 		s.logger.Info("refresh token with metadata issued",
 			"userID", userID,
@@ -774,8 +700,8 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 }
 
 // IssueTokenPair issues an access token and a refresh token in a single
-// operation, applying one rate-limit cost. The access token is a signed RS256
-// JWT; the refresh token is an opaque random value stored in the RefreshStore.
+// operation. The access token is a signed RS256 JWT; the refresh token is an
+// opaque random value stored in the RefreshStore.
 //
 // Returns (accessToken, refreshToken, error). Returns the same errors as
 // IssueAccessToken.
@@ -815,24 +741,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		return "", "", err
 	}
 
-	// ===== STEP 4: Rate Limiting =====
-	// Prevent abuse by limiting token issuance rate per user
-	// Cost of 1 = one request
-
-	allowed, err := s.rateLimiter.Allow(userID, 1)
-
-	if err != nil {
-		return "", "", err
-	}
-	if !allowed {
-		if s.logger != nil {
-			s.logger.Warn("rate limit exceeded",
-				"userID", userID)
-		}
-		return "", "", ErrRateLimitExceeded
-	}
-
-	// ===== STEP 5: Get Signing Key =====
+	// ===== STEP 4: Get Signing Key =====
 	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey()
 	if err != nil {
 		if s.logger != nil {
@@ -843,7 +752,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		return "", "", fmt.Errorf("failed to get signing key: %w", err)
 	}
 
-	// ===== STEP 6: Create JWT Claims =====
+	// ===== STEP 5: Create JWT Claims =====
 	now := time.Now()
 	expiresAt := now.Add(s.accessTokenDuration)
 	// Generate unique token ID (jti claim)
@@ -868,7 +777,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		ID:        tokenID,                       // "jti" - unique token identifier
 	}
 
-	// ===== STEP 7: Sign Token =====
+	// ===== STEP 6: Sign Token =====
 	// Create JWT with RS256 algorithm (RSA signature with SHA-256)
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 
@@ -1088,11 +997,10 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 
 // RefreshAccessToken exchanges a valid refresh token for a new access token.
 // It retrieves the refresh token from storage, checks expiration and revocation
-// status, enforces the rate limiter, then calls IssueAccessToken for the
-// token's owner.
+// status, then calls IssueAccessToken for the token's owner.
 //
 // Returns ErrServiceNotRunning, ErrInvalidRefreshToken, ErrRefreshTokenExpired,
-// ErrTokenRevoked, ErrRateLimitExceeded, or the context error.
+// ErrTokenRevoked, or the context error.
 func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (string, error) {
 	// ===== STEP 1: Service State Check =====
 	if !s.isRunning.Load() {
@@ -1155,26 +1063,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		return "", ErrTokenRevoked
 	}
 
-	// ===== STEP 7: Rate Limit Check =====
-	allowed, err := s.rateLimiter.Allow(token.UserID, 1)
-	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("rate limiter error",
-				"userID", token.UserID,
-				"error", err)
-		}
-		return "", err
-	}
-
-	if !allowed {
-		if s.logger != nil {
-			s.logger.Warn("rate limit exceeded for token refresh",
-				"userID", token.UserID)
-		}
-		return "", ErrRateLimitExceeded
-	}
-
-	// ===== STEP 8: Issue New Access Token =====
+	// ===== STEP 7: Issue New Access Token =====
 	newAccessToken, err := s.IssueAccessToken(ctx, token.UserID)
 	if err != nil {
 		if s.logger != nil {
