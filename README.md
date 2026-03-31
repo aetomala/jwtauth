@@ -46,10 +46,22 @@
 - **Service state management** ensuring tokens only issue when service is running
 - **Comprehensive BDD test coverage** (126 tests covering lifecycle, issuance, validation, refresh, revocation, and introspection; ~87% statement coverage)
 
+**RefreshTokenStore** (Memory Implementation) ✅
+- **In-memory token storage** with thread-safe RWMutex locking
+- **Token lifecycle management** (Store, Retrieve, Revoke, RevokeAllForUser, Cleanup)
+- **Defensive copying** (metadata and token structs isolated from mutations)
+- **Dual-index lookups** (tokenID → token, userID → []tokenID) for efficient bulk operations
+- **Expiration and revocation checks** with per-request validation
+- **Background cleanup** for expired token sweeps
+- **Idempotent revocation** (safe to call multiple times)
+- **Comprehensive context handling** with cancellation propagation
+- **Structured logging** for audit trail
+- **100% statement coverage** (71 tests covering all phases)
+
 ### 🚧 In Development
 
 - **HTTP Middleware**: Request authentication and user context injection
-- **Refresh Token Storage**: Memory and Redis implementations (RefreshStore interface ready)
+- **Redis RefreshStore**: Distributed storage for multi-instance deployments
 - **Metrics Implementations**: Prometheus, StatsD, CloudWatch adapters
 - **OpenTelemetry**: Distributed tracing integration
 
@@ -375,8 +387,12 @@ github.com/aetomala/jwtauth/
 │   │   ├── service_test.go       # Token operations tests
 │   │   ├── service_lifecycle_test.go  # Lifecycle management tests
 │   │   └── claims.go             # Claims management
+│   ├── storage/                  # Refresh token storage ✅
+│   │   ├── interface.go          # RefreshStore interface
+│   │   ├── errors.go             # Sentinel error types
+│   │   ├── memory.go             # In-memory implementation
+│   │   └── memory_test.go        # Comprehensive test suite (71 tests, 100% coverage)
 │   ├── middleware/               # HTTP middleware 🚧
-│   └── storage/                  # Refresh token storage 🚧
 ├── internal/                     # Private packages
 │   └── testutil/                 # Shared test utilities
 ├── doc/                          # Documentation
@@ -388,7 +404,7 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 126 comprehensive tests across KeyManager and TokenService, all passing with race detection; ~87% statement coverage on TokenService
+**Current**: 197 comprehensive tests across KeyManager, TokenService, and RefreshStore, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%)
 
 **KeyManager** (3 test suites):
 - Constructor validation and defaults
@@ -419,6 +435,18 @@ github.com/aetomala/jwtauth/
   - IntrospectToken: active/inactive/revoked/expired status per RFC 7662
   - CleanupExpiredTokens: manual sweep with error handling
 - **Concurrent Operations**: parallel token issuance and service state safety
+
+**RefreshStore** (MemoryRefreshStore, 71 total tests, 8 test phases):
+- **Phase 1**: Constructor initialization
+- **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
+- **Phase 2.5**: Context cancellation handling with proper logging
+- **Phase 3**: Input validation (empty/whitespace tokenID/userID, expired tokens, metadata defensive copy)
+- **Phase 4**: Defensive programming (userTokens cleanup on owner change, metadata isolation between calls)
+- **Phase 5**: Contract compliance (expiry checks, revocation checks, correct logging levels)
+- **Phase 6**: Concurrency safety (RLock for reads, parallel operations, mixed workloads)
+- **Phase 7**: Core methods (Revoke idempotency, RevokeAllForUser bulk operations, Cleanup expired tokens)
+- **Phase 8**: Edge cases (special characters, large-scale operations, UUID formats)
+- **Context Handling**: Proper cancellation and propagation across all operations
 
 **Test Organization**:
 - Separate test files for logical concerns (`service_test.go`, `service_lifecycle_test.go`)
@@ -500,6 +528,9 @@ Tests follow **progressive phase-based development**:
 - ✅ TokenService: Token introspection per RFC 7662 (IntrospectToken)
 - ✅ TokenService: Manual cleanup sweep (CleanupExpiredTokens)
 - ✅ TokenService: Comprehensive test coverage (126 tests, ~87% statement coverage, all passing with race detection)
+- ✅ RefreshStore: In-memory implementation (MemoryRefreshStore) with defensive copying and concurrent safety
+- ✅ RefreshStore: Complete lifecycle (Store, Retrieve, Revoke, RevokeAllForUser, Cleanup)
+- ✅ RefreshStore: Comprehensive test coverage (71 tests across 8 phases, 100% statement coverage, race-detection clean)
 - 🚧 Prometheus metrics adapter
 
 ### v0.3.0 (Beta)
@@ -608,6 +639,6 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 
 **Status**: Beta (Active Development)
 **Version**: 0.2.0-beta
-**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | Middleware 🚧
-**Test Coverage**: 126 tests, ~87% statement coverage, all passing, race-detection enabled
+**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore ✅ | Middleware 🚧
+**Test Coverage**: 197 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%), all passing, race-detection enabled
 **Last Updated**: March 2026
