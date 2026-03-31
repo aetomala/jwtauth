@@ -9,13 +9,26 @@ import (
 	"github.com/aetomala/jwtauth/pkg/logging"
 )
 
+// MemoryRefreshStore is a thread-safe, in-memory implementation of the
+// RefreshStore interface. It is suitable for single-instance deployments and
+// testing. For multi-instance deployments, use a persistent store backed by
+// Redis or a database.
+//
+// All methods are safe for concurrent use.
 type MemoryRefreshStore struct {
-	mu         sync.RWMutex             // Thread safety
+	// ===== Synchronization =====
+	mu sync.RWMutex
+
+	// ===== Storage =====
 	tokens     map[string]*RefreshToken // tokenID -> token
-	userTokens map[string][]string      // userID -> []tokenID
-	logger     logging.Logger           // Optional logging
+	userTokens map[string][]string      // userID  -> []tokenID
+
+	// ===== Observability =====
+	logger logging.Logger // Optional; nil disables logging
 }
 
+// NewMemoryRefreshStore returns a new empty MemoryRefreshStore. Pass a
+// logging.Logger for structured log output; pass nil to disable logging.
 func NewMemoryRefreshStore(logger logging.Logger) *MemoryRefreshStore {
 	m := &MemoryRefreshStore{
 		tokens:     make(map[string]*RefreshToken),
@@ -27,7 +40,15 @@ func NewMemoryRefreshStore(logger logging.Logger) *MemoryRefreshStore {
 	return m
 }
 
+// Store persists a new refresh token. Returns ErrInvalidTokenID if tokenID is
+// empty, ErrInvalidUserID if userID is empty, and ErrTokenExpired if expiresAt
+// is already in the past. Returns the context error if the context is
+// cancelled before the write.
+//
+// A defensive copy of metadata is made so later mutations to the caller's map
+// do not affect the stored token.
 func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error {
+	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		if m.logger != nil {
 			m.logger.Warn("store aborted: context cancelled",
@@ -35,6 +56,8 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 		}
 		return err
 	}
+
+	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(tokenID)) == 0 {
 		if m.logger != nil {
 			m.logger.Warn("store rejected: tokenID is empty or whitespace",
@@ -59,7 +82,8 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 		}
 		return ErrTokenExpired
 	}
-	// prevent mutation of a map by creating a copy before inserting
+
+	// ===== STEP 3: Defensive Copy of Metadata =====
 	var newMetadata map[string]interface{}
 	if metadata != nil {
 		newMetadata = make(map[string]interface{}, len(metadata))
@@ -68,9 +92,11 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 		}
 	}
 
+	// ===== STEP 4: Acquire Write Lock =====
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// ===== STEP 5: Build and Store Token =====
 	token := &RefreshToken{
 		TokenID:   tokenID,
 		UserID:    userID,
@@ -82,6 +108,7 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	m.tokens[tokenID] = token
 	m.userTokens[userID] = append(m.userTokens[userID], tokenID)
 
+	// ===== STEP 6: Log Success =====
 	if m.logger != nil {
 		m.logger.Info("refresh token stored",
 			"tokenID", tokenID,
@@ -91,8 +118,15 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	return nil
 }
 
+// Retrieve looks up a refresh token by ID and returns a defensive copy.
+// Returns ErrInvalidTokenID if tokenID is empty, ErrTokenNotFound if the
+// token does not exist, ErrTokenRevoked if the token has been revoked, and
+// ErrTokenExpired if the token has passed its expiry time.
+//
+// The returned *RefreshToken is a deep copy — mutations to it do not affect
+// the stored record.
 func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*RefreshToken, error) {
-
+	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		if m.logger != nil {
 			m.logger.Warn("retrieve aborted: context cancelled",
@@ -101,18 +135,21 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		}
 		return nil, err
 	}
-	// validate inputs
+
+	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(tokenID)) == 0 {
 		if m.logger != nil {
 			m.logger.Warn("retrieve rejected: tokenID is empty or whitespace")
 		}
 		return nil, ErrInvalidTokenID
 	}
+
+	// ===== STEP 3: Acquire Read Lock =====
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	// ===== STEP 4: Look Up Token =====
 	token, found := m.tokens[tokenID]
-
 	if !found {
 		if m.logger != nil {
 			m.logger.Warn("retrieve: token not found",
@@ -121,6 +158,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		return nil, ErrTokenNotFound
 	}
 
+	// ===== STEP 5: Check Revocation =====
 	if token.Revoked {
 		if m.logger != nil {
 			m.logger.Warn("retrieve: token has been revoked",
@@ -130,6 +168,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		return nil, ErrTokenRevoked
 	}
 
+	// ===== STEP 6: Check Expiration =====
 	if token.ExpiresAt.Before(time.Now()) {
 		if m.logger != nil {
 			m.logger.Warn("retrieve: token has expired",
@@ -139,6 +178,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		return nil, ErrTokenExpired
 	}
 
+	// ===== STEP 7: Return Defensive Copy =====
 	safeToken := &RefreshToken{
 		TokenID:   token.TokenID,
 		UserID:    token.UserID,
@@ -154,6 +194,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		}
 	}
 
+	// ===== STEP 8: Log Success =====
 	if m.logger != nil {
 		m.logger.Info("retrieve: token retrieved successfully",
 			"tokenID", tokenID)
@@ -162,7 +203,11 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	return safeToken, nil
 }
 
+// Revoke marks a refresh token as revoked. It is idempotent — if the token
+// does not exist, no error is returned. Returns ErrInvalidTokenID if tokenID
+// is empty, or the context error if the context is cancelled.
 func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
+	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		if m.logger != nil {
 			m.logger.Warn("revoke aborted: context cancelled",
@@ -171,7 +216,7 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 		return ctx.Err()
 	}
 
-	// validate inputs
+	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(tokenID)) == 0 {
 		if m.logger != nil {
 			m.logger.Warn("revoke rejected: tokenID is empty or whitespace")
@@ -179,22 +224,24 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 		return ErrInvalidTokenID
 	}
 
+	// ===== STEP 3: Acquire Write Lock =====
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// ===== STEP 4: Look Up Token =====
 	token, found := m.tokens[tokenID]
-
 	if !found {
 		if m.logger != nil {
 			m.logger.Warn("revoke: token not found",
 				"tokenID", tokenID)
 		}
-		// Expected to be idempotent; thus, return nil
 		return nil
 	}
 
+	// ===== STEP 5: Mark Revoked =====
 	token.Revoked = true
 
+	// ===== STEP 6: Log Success =====
 	if m.logger != nil {
 		m.logger.Info("revoke: successfully revoked",
 			"tokenID", tokenID)
@@ -203,7 +250,12 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	return nil
 }
 
+// RevokeAllForUser marks every refresh token belonging to userID as revoked.
+// If the user has no tokens, the call succeeds silently. Returns
+// ErrInvalidUserID if userID is empty, or the context error if the context is
+// cancelled.
 func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string) error {
+	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		if m.logger != nil {
 			m.logger.Warn("revokeAllForUser aborted: context cancelled",
@@ -212,6 +264,8 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 		}
 		return err
 	}
+
+	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(userID)) == 0 {
 		if m.logger != nil {
 			m.logger.Warn("revokeAllForUser rejected: userID is empty or whitespace")
@@ -219,16 +273,19 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 		return ErrInvalidUserID
 	}
 
+	// ===== STEP 3: Acquire Write Lock =====
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	tokensIDs := m.userTokens[userID]
 
+	// ===== STEP 4: Revoke All Tokens for User =====
+	tokensIDs := m.userTokens[userID]
 	for _, tokenID := range tokensIDs {
 		if token, exists := m.tokens[tokenID]; exists {
 			token.Revoked = true
 		}
 	}
 
+	// ===== STEP 5: Log Success =====
 	if m.logger != nil {
 		m.logger.Info("revokeAllForUser: all tokens revoked",
 			"userID", userID,
@@ -238,8 +295,12 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 	return nil
 }
 
+// Cleanup removes all expired tokens from the store and returns the count of
+// removed tokens. It is safe to call concurrently with other methods and is
+// typically invoked on a background ticker. Returns the context error if the
+// context is cancelled.
 func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
-
+	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		if m.logger != nil {
 			m.logger.Warn("cleanup aborted: context cancelled")
@@ -247,10 +308,13 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
+	// ===== STEP 2: Acquire Write Lock =====
 	now := time.Now()
 	count := 0
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// ===== STEP 3: Sweep and Remove Expired Tokens =====
 	for tokenID, token := range m.tokens {
 		if token.ExpiresAt.Before(now) || token.ExpiresAt.Equal(now) {
 			delete(m.tokens, token.TokenID)
@@ -259,6 +323,7 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		}
 	}
 
+	// ===== STEP 4: Log Success =====
 	if m.logger != nil {
 		m.logger.Info("cleanup: successful",
 			"count", count)
