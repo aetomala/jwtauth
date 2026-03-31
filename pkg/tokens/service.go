@@ -200,6 +200,9 @@ func (s *Service) cleanupLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
+			if s.logger != nil {
+				s.logger.Debug("cleanup loop tick started")
+			}
 			// Cleanup expired refresh tokens
 			if count, err := s.refreshStore.Cleanup(ctx); err != nil {
 				if s.logger != nil {
@@ -336,6 +339,11 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		}
 		return "", fmt.Errorf("failed to get signing key: %w", err)
 	}
+	if s.logger != nil {
+		s.logger.Debug("signing key retrieved",
+			"userID", userID,
+			"keyID", keyID)
+	}
 
 	// ===== STEP 5: Create JWT Claims =====
 	now := time.Now()
@@ -361,6 +369,12 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		NotBefore: jwt.NewNumericDate(now),       // "nbf" - valid from when
 		ID:        tokenID,                       // "jti" - unique token identifier
 	}
+	if s.logger != nil {
+		s.logger.Debug("access token claims created",
+			"userID", userID,
+			"tokenID", tokenID,
+			"expiresAt", expiresAt)
+	}
 
 	// ===== STEP 6: Sign Token =====
 	// Create JWT with RS256 algorithm (RSA signature with SHA-256)
@@ -381,6 +395,11 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to sign token: %w", err)
+	}
+	if s.logger != nil {
+		s.logger.Debug("access token signed",
+			"userID", userID,
+			"tokenID", tokenID)
 	}
 
 	// ===== STEP 8: Log Success =====
@@ -444,6 +463,11 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 		}
 		return "", fmt.Errorf("failed to get signing key: %w", err)
 	}
+	if s.logger != nil {
+		s.logger.Debug("signing key retrieved",
+			"userID", userID,
+			"keyID", keyID)
+	}
 
 	now := time.Now()
 	expiresAt := now.Add(s.accessTokenDuration)
@@ -475,9 +499,11 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 		"iat": true, "nbf": true, "jti": true,
 	}
 
+	customClaimsCount := 0
 	for key, value := range customClaims {
 		if !reservedClaims[key] {
 			claims[key] = value
+			customClaimsCount++
 		} else {
 			if s.logger != nil {
 				s.logger.Warn("attempted to override reserved claim",
@@ -485,6 +511,13 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 					"claim", key)
 			}
 		}
+	}
+	if s.logger != nil {
+		s.logger.Debug("access token claims created with custom claims",
+			"userID", userID,
+			"tokenID", tokenID,
+			"customClaimsCount", customClaimsCount,
+			"expiresAt", expiresAt)
 	}
 
 	// Sign token
@@ -500,6 +533,11 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to sign token: %w", err)
+	}
+	if s.logger != nil {
+		s.logger.Debug("access token with custom claims signed",
+			"userID", userID,
+			"tokenID", tokenID)
 	}
 	// Log success
 	if s.logger != nil {
@@ -568,6 +606,10 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		}
 		return "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
+	if s.logger != nil {
+		s.logger.Debug("refresh token generated",
+			"userID", userID)
+	}
 
 	// ===== STEP 5: Calculate Expiration =====
 	now := time.Now()
@@ -594,6 +636,11 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to store refresh token: %w", err)
+	}
+	if s.logger != nil {
+		s.logger.Debug("refresh token stored",
+			"userID", userID,
+			"expiresAt", expiresAt)
 	}
 
 	// ===== STEP 7: Log Success =====
@@ -660,6 +707,10 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		}
 		return "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
+	if s.logger != nil {
+		s.logger.Debug("refresh token generated",
+			"userID", userID)
+	}
 
 	// ===== STEP 5: Calculate Expiration =====
 	now := time.Now()
@@ -686,6 +737,12 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to store refresh token with metadata: %w", err)
+	}
+	if s.logger != nil {
+		s.logger.Debug("refresh token with metadata stored",
+			"userID", userID,
+			"metadataKeys", len(metadata),
+			"expiresAt", expiresAt)
 	}
 
 	// ===== STEP 7: Log Success =====
@@ -893,6 +950,10 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 				}
 				return nil, errors.New("missing kid in token header")
 			}
+			if s.logger != nil {
+				s.logger.Debug("token kid extracted from header",
+					"kid", kid)
+			}
 
 			// ===== STEP 4c: Get Public Key =====
 			publicKey, err := s.keyManager.GetPublicKey(kid)
@@ -903,6 +964,10 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 						"error", err)
 				}
 				return nil, fmt.Errorf("failed to get public key: %w", err)
+			}
+			if s.logger != nil {
+				s.logger.Debug("public key retrieved for token validation",
+					"kid", kid)
 			}
 
 			return publicKey, nil
@@ -940,6 +1005,9 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		}
 		return nil, ErrInvalidToken
 	}
+	if s.logger != nil {
+		s.logger.Debug("token signature and structure validated")
+	}
 
 	// ===== STEP 7: Extract Claims =====
 	claims, ok := token.Claims.(*jwt.RegisteredClaims)
@@ -948,6 +1016,11 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 			s.logger.Error("failed to extract claims from token")
 		}
 		return nil, ErrInvalidToken
+	}
+	if s.logger != nil {
+		s.logger.Debug("claims extracted from token",
+			"tokenID", claims.ID,
+			"userID", claims.Subject)
 	}
 
 	// ===== STEP 8: Validate Issuer =====
@@ -958,6 +1031,10 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 				"actual", claims.Issuer)
 		}
 		return nil, ErrInvalidIssuer
+	}
+	if s.logger != nil {
+		s.logger.Debug("token issuer validated",
+			"issuer", claims.Issuer)
 	}
 
 	// ===== STEP 9: Validate Audience =====
@@ -982,6 +1059,10 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 					"actual", claims.Audience)
 			}
 			return nil, ErrInvalidAudience
+		}
+		if s.logger != nil {
+			s.logger.Debug("token audience validated",
+				"audience", claims.Audience)
 		}
 	}
 
