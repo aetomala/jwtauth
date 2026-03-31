@@ -914,7 +914,7 @@ var _ = Describe("TokenService", func() {
 			It("should return error for revoked token", func() {
 				mockStore.EXPECT().
 					Retrieve(gomock.Any(), validRefreshToken).
-					Return(nil, tokens.ErrTokenRevoked)
+					Return(nil, storage.ErrTokenRevoked)
 
 				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
 

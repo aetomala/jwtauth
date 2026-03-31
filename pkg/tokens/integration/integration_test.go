@@ -332,3 +332,295 @@ func TestKeyRotationCompatibility(t *testing.T) {
 		t.Errorf("expected subject %s, got %s", userID, newClaims.Subject)
 	}
 }
+
+func TestTokenExpirationAndCleanup(t *testing.T) {
+	svc, km, ctx, tmpDir := setupTestService(t)
+	defer func() {
+		svc.Shutdown(ctx)
+		km.Shutdown(ctx)
+		os.RemoveAll(tmpDir)
+	}()
+
+	userID := "test-user"
+
+	// Step 1: Create a service with short token duration but long cleanup interval
+	// (to test manual cleanup, not background cleanup)
+	tmpDir2, _ := os.MkdirTemp("", "cleanup-test-*")
+	defer os.RemoveAll(tmpDir2)
+
+	km2, _ := keymanager.NewManager(keymanager.ManagerConfig{
+		KeyDirectory: tmpDir2,
+	})
+
+	store := storage.NewMemoryRefreshStore(nil)
+
+	shortLivedConfig := tokens.ServiceConfig{
+		KeyManager:           km2,
+		RefreshStore:         store,
+		AccessTokenDuration:  5 * time.Minute,
+		RefreshTokenDuration: 100 * time.Millisecond, // Very short for testing
+		CleanupInterval:      10 * time.Second,       // Long interval so background cleanup doesn't interfere
+		Issuer:               "integration-test",
+		Audience:             []string{"integration-test"},
+	}
+
+	svc2, err := tokens.NewService(shortLivedConfig)
+	if err != nil {
+		t.Fatalf("failed to create service: %v", err)
+	}
+	defer svc2.Shutdown(ctx)
+
+	if err := svc2.Start(ctx); err != nil {
+		t.Fatalf("failed to start service: %v", err)
+	}
+
+	// Step 2: Issue 3 refresh tokens
+	token1, err := svc2.IssueRefreshToken(ctx, userID)
+	if err != nil {
+		t.Fatalf("IssueRefreshToken failed: %v", err)
+	}
+
+	token2, err := svc2.IssueRefreshToken(ctx, userID)
+	if err != nil {
+		t.Fatalf("IssueRefreshToken failed: %v", err)
+	}
+
+	token3, err := svc2.IssueRefreshToken(ctx, userID)
+	if err != nil {
+		t.Fatalf("IssueRefreshToken failed: %v", err)
+	}
+
+	// Step 3: Wait for tokens to expire
+	time.Sleep(150 * time.Millisecond)
+
+	// Step 4: Manually run cleanup to remove expired tokens
+	count, err := store.Cleanup(ctx)
+	if err != nil {
+		t.Fatalf("Cleanup failed: %v", err)
+	}
+	if count < 3 {
+		t.Errorf("expected at least 3 expired tokens cleaned up, got %d", count)
+	}
+
+	// Step 5: Verify expired tokens can no longer be refreshed
+	_, err = svc2.RefreshAccessToken(ctx, token1)
+	if err == nil {
+		t.Fatal("expected RefreshAccessToken to fail for expired token")
+	}
+
+	_, err = svc2.RefreshAccessToken(ctx, token2)
+	if err == nil {
+		t.Fatal("expected RefreshAccessToken to fail for expired token")
+	}
+
+	_, err = svc2.RefreshAccessToken(ctx, token3)
+	if err == nil {
+		t.Fatal("expected RefreshAccessToken to fail for expired token")
+	}
+
+	// Step 6: Issue a fresh token and verify it still works
+	freshToken, err := svc2.IssueRefreshToken(ctx, userID)
+	if err != nil {
+		t.Fatalf("IssueRefreshToken failed: %v", err)
+	}
+
+	newAccessToken, err := svc2.RefreshAccessToken(ctx, freshToken)
+	if err != nil {
+		t.Fatalf("RefreshAccessToken failed: %v", err)
+	}
+
+	if newAccessToken == "" {
+		t.Fatal("new access token should not be empty")
+	}
+}
+
+func TestMultipleDevicesPerUser(t *testing.T) {
+	svc, km, ctx, tmpDir := setupTestService(t)
+	defer func() {
+		svc.Shutdown(ctx)
+		km.Shutdown(ctx)
+		os.RemoveAll(tmpDir)
+	}()
+
+	userID := "multi-device-user"
+	devices := map[string]string{
+		"iPhone":  "device-iphone-uuid",
+		"Laptop":  "device-laptop-uuid",
+		"iPad":    "device-ipad-uuid",
+	}
+	refreshTokens := make(map[string]string)
+
+	// Step 1: User logs in on 3 different devices
+	for deviceName, deviceID := range devices {
+		metadata := map[string]interface{}{
+			"device":      deviceName,
+			"device_id":   deviceID,
+			"ip_address":  "192.168.1.100",
+			"user_agent":  "Mozilla/5.0 Device:" + deviceName,
+		}
+
+		token, err := svc.IssueRefreshTokenWithMetadata(ctx, userID, metadata)
+		if err != nil {
+			t.Fatalf("IssueRefreshTokenWithMetadata failed for %s: %v", deviceName, err)
+		}
+
+		refreshTokens[deviceName] = token
+	}
+
+	// Step 2: Each device refreshes independently
+	accessTokens := make(map[string]string)
+	for deviceName, refreshToken := range refreshTokens {
+		accessToken, err := svc.RefreshAccessToken(ctx, refreshToken)
+		if err != nil {
+			t.Fatalf("RefreshAccessToken failed for %s: %v", deviceName, err)
+		}
+
+		// Verify each device gets a unique access token
+		if accessToken == "" {
+			t.Fatalf("empty access token for %s", deviceName)
+		}
+
+		accessTokens[deviceName] = accessToken
+	}
+
+	// Step 3: Verify all access tokens are different
+	if len(accessTokens) != 3 {
+		t.Errorf("expected 3 unique access tokens, got %d", len(accessTokens))
+	}
+
+	seenTokens := make(map[string]bool)
+	for _, token := range accessTokens {
+		if seenTokens[token] {
+			t.Fatal("access tokens should be unique per device")
+		}
+		seenTokens[token] = true
+	}
+
+	// Step 4: Validate each access token still works
+	for deviceName, accessToken := range accessTokens {
+		claims, err := svc.ValidateAccessToken(ctx, accessToken)
+		if err != nil {
+			t.Fatalf("ValidateAccessToken failed for %s: %v", deviceName, err)
+		}
+		if claims.Subject != userID {
+			t.Errorf("expected subject %s, got %s for %s", userID, claims.Subject, deviceName)
+		}
+	}
+
+	// Step 5: Revoke all tokens for the user
+	err := svc.RevokeAllUserTokens(ctx, userID)
+	if err != nil {
+		t.Fatalf("RevokeAllUserTokens failed: %v", err)
+	}
+
+	// Step 6: Verify all refresh tokens are revoked
+	for deviceName, refreshToken := range refreshTokens {
+		_, err := svc.RefreshAccessToken(ctx, refreshToken)
+		if err == nil {
+			t.Fatalf("RefreshAccessToken should fail for revoked token (%s)", deviceName)
+		}
+	}
+}
+
+func TestInvalidRefreshTokenHandling(t *testing.T) {
+	svc, km, ctx, tmpDir := setupTestService(t)
+	defer func() {
+		svc.Shutdown(ctx)
+		km.Shutdown(ctx)
+		os.RemoveAll(tmpDir)
+	}()
+
+	validUserID := "valid-user"
+
+	// Step 1: Issue a valid refresh token for reference
+	validToken, err := svc.IssueRefreshToken(ctx, validUserID)
+	if err != nil {
+		t.Fatalf("IssueRefreshToken failed: %v", err)
+	}
+
+	// Step 2: Test malformed refresh token
+	malformedToken := "this-is-not-a-valid-token-format"
+	_, err = svc.RefreshAccessToken(ctx, malformedToken)
+	if err == nil {
+		t.Fatal("RefreshAccessToken should fail for malformed token")
+	}
+
+	// Step 3: Test expired refresh token
+	// Create a service with very short token duration
+	tmpDir2, _ := os.MkdirTemp("", "expired-test-*")
+	defer os.RemoveAll(tmpDir2)
+
+	km2, _ := keymanager.NewManager(keymanager.ManagerConfig{
+		KeyDirectory: tmpDir2,
+	})
+
+	store := storage.NewMemoryRefreshStore(nil)
+
+	expiredConfig := tokens.ServiceConfig{
+		KeyManager:           km2,
+		RefreshStore:         store,
+		AccessTokenDuration:  5 * time.Minute,
+		RefreshTokenDuration: 50 * time.Millisecond, // Very short
+		Issuer:               "integration-test",
+		Audience:             []string{"integration-test"},
+	}
+
+	svc2, _ := tokens.NewService(expiredConfig)
+	defer svc2.Shutdown(ctx)
+	svc2.Start(ctx)
+
+	expiredToken, _ := svc2.IssueRefreshToken(ctx, "expired-user")
+	time.Sleep(100 * time.Millisecond) // Wait for expiration
+
+	_, err = svc2.RefreshAccessToken(ctx, expiredToken)
+	if err == nil {
+		t.Fatal("RefreshAccessToken should fail for expired token")
+	}
+
+	// Step 4: Test revoked refresh token
+	revokeUserID := "revoke-user"
+	revokedToken, err := svc.IssueRefreshToken(ctx, revokeUserID)
+	if err != nil {
+		t.Fatalf("IssueRefreshToken failed: %v", err)
+	}
+
+	// Verify token works before revocation
+	beforeRevoke, err := svc.RefreshAccessToken(ctx, revokedToken)
+	if err != nil {
+		t.Fatalf("RefreshAccessToken should work before revocation: %v", err)
+	}
+	if beforeRevoke == "" {
+		t.Fatal("access token should not be empty")
+	}
+
+	// Revoke all tokens for this user
+	if err := svc.RevokeAllUserTokens(ctx, revokeUserID); err != nil {
+		t.Fatalf("RevokeAllUserTokens failed: %v", err)
+	}
+
+	// Try to refresh with revoked token - should fail with ErrTokenRevoked
+	_, err = svc.RefreshAccessToken(ctx, revokedToken)
+	if err == nil {
+		t.Fatal("RefreshAccessToken should fail for revoked token")
+	}
+	if err != tokens.ErrTokenRevoked {
+		t.Errorf("expected ErrTokenRevoked, got %v", err)
+	}
+
+	// Step 5: Test token for non-existent user (non-existent in the sense it was never issued)
+	// Any random token that wasn't issued by this service
+	nonExistentToken := "token-that-was-never-issued"
+	_, err = svc.RefreshAccessToken(ctx, nonExistentToken)
+	if err == nil {
+		t.Fatal("RefreshAccessToken should fail for token never issued")
+	}
+
+	// Step 6: Verify valid token still works
+	newAccessToken, err := svc.RefreshAccessToken(ctx, validToken)
+	if err != nil {
+		t.Fatalf("RefreshAccessToken failed for valid token: %v", err)
+	}
+	if newAccessToken == "" {
+		t.Fatal("new access token should not be empty")
+	}
+}
