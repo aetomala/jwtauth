@@ -48,6 +48,11 @@ func NewSlogAdapter(logger *slog.Logger) *SlogAdapter {
 	return &SlogAdapter{logger: logger}
 }
 
+// Debug logs a verbose diagnostic message with structured key-value pairs.
+func (s *SlogAdapter) Debug(msg string, keysAndValues ...interface{}) {
+	s.logger.Debug(msg, keysAndValues...)
+}
+
 // Info logs an informational message with structured key-value pairs.
 func (s *SlogAdapter) Info(msg string, keysAndValues ...interface{}) {
 	s.logger.Info(msg, keysAndValues...)
