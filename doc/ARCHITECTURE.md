@@ -383,12 +383,53 @@ Created → Start() → Running → Shutdown() → Stopped
 - Return 401 Unauthorized on invalid token
 - Apply rate limiting via infrastructure (API Gateway, Ingress) or a dedicated Go library — see `doc/DEPLOYMENT.md`
 
-### RefreshTokenStore (Future)
+### RefreshTokenStore
 
 **Responsibilities**:
-- Store refresh tokens (in-memory or Redis)
-- Revoke refresh tokens
-- Track refresh token usage
+- Store refresh tokens with expiration and revocation tracking
+- Retrieve tokens with validation checks (expiry, revocation)
+- Revoke individual or bulk tokens (by userID)
+- Clean up expired tokens
+- Maintain dual-index for efficient lookups (tokenID → token, userID → []tokenID)
+
+**Current Implementation: MemoryRefreshStore** ✅
+
+**Design**:
+```go
+type MemoryRefreshStore struct {
+    mu         sync.RWMutex             // Thread safety
+    tokens     map[string]*RefreshToken // tokenID → token
+    userTokens map[string][]string      // userID → []tokenID (for bulk ops)
+    logger     logging.Logger           // Optional logging
+}
+```
+
+**Key Features**:
+- **Defensive copying**: Metadata and token structs isolated from caller mutations
+- **RWMutex locking**: RLock for Retrieve (concurrent reads), Lock for mutations
+- **Idempotent operations**: Revoke returns nil if token doesn't exist
+- **Expiration checks**: Retrieve validates expiry at request time (not background)
+- **Revocation checks**: Retrieve returns ErrTokenRevoked for revoked tokens
+- **Bulk operations**: RevokeAllForUser uses userTokens index for O(n) performance
+- **Cleanup**: Removes expired tokens from both maps, updates userTokens index
+- **Context propagation**: All operations respect context.Context cancellation
+- **Structured logging**: Warn for validation failures, Info for successful ops
+
+**Thread Safety**:
+- Read operations (Retrieve): RLock allows concurrent reads
+- Write operations (Store, Revoke, Cleanup): Lock ensures exclusive access
+- No goroutines created (cleanup is caller-driven, not background)
+
+**Error Handling**:
+- `ErrInvalidTokenID` / `ErrInvalidUserID` for bad input
+- `ErrTokenNotFound` for missing tokens
+- `ErrTokenExpired` for expired tokens
+- `ErrTokenRevoked` for revoked tokens
+
+**Future Implementations**:
+- **Redis RefreshStore** for distributed deployments
+- Pub/Sub for revocation events
+- TTL-based automatic cleanup
 
 ---
 
@@ -416,6 +457,18 @@ Describe("KeyManager Persistence", func() {
 
 Describe("KeyManager Logging", func() {
     // Separate suite for logging behavior
+})
+
+Describe("MemoryRefreshStore", func() {
+    // Phase 1: Constructor
+    // Phase 2: Happy paths (Store, Retrieve)
+    // Phase 2.5: Context cancellation
+    // Phase 3: Input validation
+    // Phase 4: Defensive programming
+    // Phase 5: Contract compliance
+    // Phase 6: Concurrency safety
+    // Phase 7: Core methods
+    // Phase 8: Edge cases
 })
 ```
 
@@ -511,9 +564,10 @@ Catches:
 - ⏳ Rate limiting (token bucket, sliding window, Redis-backed)
 
 ### Phase 5: RefreshToken Storage Implementations
-- ⏳ Memory implementation (testing + development)
+- ✅ Memory implementation (testing + development) with 100% test coverage
 - ⏳ Redis implementation (production)
 - ✅ RefreshStore interface defined (pkg/storage)
+- ✅ MemoryRefreshStore with defensive copying, context propagation, and audit logging
 
 ### Phase 6: OpenTelemetry
 - ⏳ Distributed tracing
@@ -615,6 +669,6 @@ func (c *Component) Operation() error {
 
 ---
 
-**Last Updated**: March 2026
+**Last Updated**: March 30, 2026
 **Version**: 0.2.0-beta
-**Status**: Active Development
+**Status**: Active Development (TokenService + RefreshStore stable, Middleware in progress)
