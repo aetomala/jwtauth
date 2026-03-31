@@ -797,6 +797,7 @@ var _ = Describe("MemoryRefreshStore", func() {
 
 				soonExpires2 := time.Now().Add(60 * time.Millisecond)
 				err = store.Store(ctx, "expired-2", "other-user", soonExpires2, metadata)
+				Expect(err).NotTo(HaveOccurred())
 
 				// Store valid token
 				validTime := time.Now().Add(24 * time.Hour)

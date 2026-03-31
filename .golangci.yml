@@ -10,7 +10,16 @@ linters:
 linters-settings:
   errcheck:
     check-type-assertions: false
+    exclude-functions:
+      # Ginkgo test assertions and helpers
+      - (*github.com/onsi/gomega.GomegaWithT).Expect
+      - (github.com/onsi/gomega.Expect)
 
 issues:
+  exclude-rules:
+    # Ignore error checks in test files
+    - path: _test\.go
+      linters:
+        - errcheck
   max-issues-per-linter: 0
   max-same-issues: 0
