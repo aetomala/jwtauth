@@ -2,7 +2,7 @@
 
 **Production-ready JWT authentication library for distributed Go applications**
 
-> ⚠️ **Beta Status**: KeyManager is production-ready and fully tested. TokenService is in beta — core operations are complete with comprehensive test coverage. Middleware and storage implementations are under active development. API may change before v1.0.0.
+> ⚠️ **Beta Status**: KeyManager is production-ready and fully tested. TokenService is in beta — core operations are complete with comprehensive test coverage. API may change before v1.0.0.
 
 ## Overview
 
@@ -60,7 +60,6 @@
 
 ### 🚧 In Development
 
-- **HTTP Middleware**: Request authentication and user context injection
 - **Redis RefreshStore**: Distributed storage for multi-instance deployments
 - **Metrics Implementations**: Prometheus, StatsD, CloudWatch adapters
 - **OpenTelemetry**: Distributed tracing integration
@@ -284,6 +283,185 @@ func main() {
 - ✅ Background cleanup of expired refresh tokens
 - ✅ Structured logging integration
 
+## Framework Integration
+
+`jwtauth` is **framework-agnostic** — it provides core token operations without HTTP middleware. This keeps the library focused, lightweight, and easy to integrate with your chosen framework.
+
+### Writing Middleware for Your Framework
+
+Middleware is application code that your framework calls before reaching route handlers. Write middleware for your framework that uses `jwtauth` for token validation:
+
+#### Example: Gin
+
+```go
+package middleware
+
+import (
+    "net/http"
+    "strings"
+
+    "github.com/gin-gonic/gin"
+    "github.com/aetomala/jwtauth/pkg/tokens"
+)
+
+func AuthMiddleware(svc *tokens.Service) gin.HandlerFunc {
+    return func(c *gin.Context) {
+        // Extract token from Authorization header
+        authHeader := c.GetHeader("Authorization")
+        if authHeader == "" {
+            c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+                "error": "missing authorization header",
+            })
+            return
+        }
+
+        // Remove "Bearer " prefix
+        token := strings.TrimPrefix(authHeader, "Bearer ")
+        if token == authHeader {
+            c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+                "error": "invalid authorization format",
+            })
+            return
+        }
+
+        // Validate token using jwtauth
+        claims, err := svc.ValidateAccessToken(c.Request.Context(), token)
+        if err != nil {
+            c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+                "error": "invalid token",
+            })
+            return
+        }
+
+        // Attach claims to context for route handlers
+        c.Set("userID", claims.Subject)
+        c.Set("claims", claims)
+        c.Next()
+    }
+}
+
+// Usage in your main.go:
+// r := gin.Default()
+// r.Use(middleware.AuthMiddleware(tokenService))
+// r.GET("/protected", protectedHandler)
+```
+
+#### Example: Chi
+
+```go
+package middleware
+
+import (
+    "context"
+    "net/http"
+    "strings"
+
+    "github.com/aetomala/jwtauth/pkg/tokens"
+)
+
+func AuthMiddleware(svc *tokens.Service) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            // Extract token from Authorization header
+            authHeader := r.Header.Get("Authorization")
+            if authHeader == "" {
+                http.Error(w, "missing authorization header", http.StatusUnauthorized)
+                return
+            }
+
+            // Remove "Bearer " prefix
+            token := strings.TrimPrefix(authHeader, "Bearer ")
+            if token == authHeader {
+                http.Error(w, "invalid authorization format", http.StatusUnauthorized)
+                return
+            }
+
+            // Validate token using jwtauth
+            claims, err := svc.ValidateAccessToken(r.Context(), token)
+            if err != nil {
+                http.Error(w, "invalid token", http.StatusUnauthorized)
+                return
+            }
+
+            // Attach claims to context for route handlers
+            ctx := context.WithValue(r.Context(), "userID", claims.Subject)
+            ctx = context.WithValue(ctx, "claims", claims)
+
+            next.ServeHTTP(w, r.WithContext(ctx))
+        })
+    }
+}
+
+// Usage in your main.go:
+// r := chi.NewRouter()
+// r.Use(middleware.AuthMiddleware(tokenService))
+// r.Get("/protected", protectedHandler)
+```
+
+#### Example: Echo
+
+```go
+package middleware
+
+import (
+    "net/http"
+    "strings"
+
+    "github.com/labstack/echo/v4"
+    "github.com/aetomala/jwtauth/pkg/tokens"
+)
+
+func AuthMiddleware(svc *tokens.Service) echo.MiddlewareFunc {
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            // Extract token from Authorization header
+            authHeader := c.Request().Header.Get("Authorization")
+            if authHeader == "" {
+                return c.JSON(http.StatusUnauthorized, map[string]string{
+                    "error": "missing authorization header",
+                })
+            }
+
+            // Remove "Bearer " prefix
+            token := strings.TrimPrefix(authHeader, "Bearer ")
+            if token == authHeader {
+                return c.JSON(http.StatusUnauthorized, map[string]string{
+                    "error": "invalid authorization format",
+                })
+            }
+
+            // Validate token using jwtauth
+            claims, err := svc.ValidateAccessToken(c.Request().Context(), token)
+            if err != nil {
+                return c.JSON(http.StatusUnauthorized, map[string]string{
+                    "error": "invalid token",
+                })
+            }
+
+            // Attach claims to context for route handlers
+            c.Set("userID", claims.Subject)
+            c.Set("claims", claims)
+
+            return next(c)
+        }
+    }
+}
+
+// Usage in your main.go:
+// e := echo.New()
+// e.Use(middleware.AuthMiddleware(tokenService))
+// e.GET("/protected", protectedHandler)
+```
+
+### Design Philosophy
+
+- **No Framework Coupling**: `jwtauth` doesn't depend on any HTTP framework
+- **Your Middleware**: Write middleware appropriate for your architecture
+- **Simple Pattern**: Extract token → validate with `jwtauth` → attach to context → proceed
+- **Framework Flexibility**: Migrate between frameworks without changing token validation
+
+See the `/examples` directory for complete working applications with framework-specific middleware.
+
 ## Configuration
 
 ### ManagerConfig
@@ -392,7 +570,6 @@ github.com/aetomala/jwtauth/
 │   │   ├── errors.go             # Sentinel error types
 │   │   ├── memory.go             # In-memory implementation
 │   │   └── memory_test.go        # Comprehensive test suite (71 tests, 100% coverage)
-│   ├── middleware/               # HTTP middleware 🚧
 ├── internal/                     # Private packages
 │   └── testutil/                 # Shared test utilities
 ├── doc/                          # Documentation
@@ -499,7 +676,7 @@ Tests follow **progressive phase-based development**:
 - ✅ Simpler API focused on common use cases
 - ✅ Built-in key rotation and management
 - ✅ Observability as a first-class feature
-- ✅ Clear separation of concerns (KeyManager, TokenService, Middleware)
+- ✅ Clear separation of concerns (KeyManager, TokenService, RefreshStore)
 
 ### Unique Features
 
@@ -534,9 +711,8 @@ Tests follow **progressive phase-based development**:
 - 🚧 Prometheus metrics adapter
 
 ### v0.3.0 (Beta)
-- 🚧 HTTP Middleware
-- 🚧 Request authentication
-- 🚧 User context injection
+- 🚧 Redis RefreshStore for distributed deployments
+- 🚧 Prometheus metrics adapter
 - 🚧 Example applications
 
 ### v0.4.0 (Beta)
@@ -639,6 +815,6 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 
 **Status**: Beta (Active Development)
 **Version**: 0.2.0-beta
-**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore ✅ | Middleware 🚧
+**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore ✅
 **Test Coverage**: 197 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%), all passing, race-detection enabled
 **Last Updated**: March 2026

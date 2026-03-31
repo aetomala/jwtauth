@@ -1115,7 +1115,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 				"error", err)
 		}
 		// Propagate specific errors, default to invalid token for generic errors
-		if errors.Is(err, ErrTokenRevoked) {
+		if errors.Is(err, storage.ErrTokenRevoked) {
 			return "", ErrTokenRevoked
 		}
 		return "", ErrInvalidRefreshToken
@@ -1129,8 +1129,8 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 				"expiredAt", token.ExpiresAt)
 		}
 
-		// Clean up expired token
-		s.refreshStore.Revoke(ctx, refreshToken)
+		// Clean up expired token (ignore error — we're returning ErrRefreshTokenExpired anyway)
+		_ = s.refreshStore.Revoke(ctx, refreshToken)
 
 		return "", ErrRefreshTokenExpired
 	}
