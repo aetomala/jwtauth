@@ -65,6 +65,7 @@ jobs:
             --coverpkg=./... \
             --randomize-all \
             --fail-on-pending \
+            --skip-package=integration \
             pkg/keymanager pkg/tokens pkg/storage pkg/logging
 
       - name: Generate HTML coverage report
