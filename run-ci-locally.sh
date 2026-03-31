@@ -53,7 +53,7 @@ run_test "unit tests (race + coverage)" \
       pkg/keymanager pkg/tokens pkg/storage pkg/logging"
 
 run_test "integration tests (race)" \
-    "go test -race -v -timeout 120s -tags=integration ./pkg/tokens/integration/..."
+    "ginkgo -r --race --timeout=120s --tags=integration ./pkg/tokens/integration/..."
 
 # Coverage report
 echo -e "\n${YELLOW}[INFO]${NC} Generating coverage report..."

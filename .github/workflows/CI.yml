@@ -81,6 +81,8 @@ jobs:
 
       - name: Integration tests (race)
         run: |
-          go test -race -v -timeout 120s \
-            -tags=integration \
+          ginkgo -r \
+            --race \
+            --timeout=120s \
+            --tags=integration \
             ./pkg/tokens/integration/...
