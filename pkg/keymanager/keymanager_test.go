@@ -1910,7 +1910,7 @@ var _ = Describe("KeyManager Logging", func() {
 
 				// Should log the cancellation
 				Eventually(func() bool {
-					return mockLogger.HasLog("warn", "operation cancelled") ||
+					return mockLogger.HasLog("warn", "key rotation cancelled") ||
 						mockLogger.HasLog("error", "key rotation failed")
 				}).Should(BeTrue())
 			})
