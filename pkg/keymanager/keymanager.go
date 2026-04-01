@@ -356,6 +356,10 @@ func (m *Manager) GetCurrentSigningKey() (*rsa.PrivateKey, string, error) {
 		return nil, "", ErrManagerNotRunning
 	}
 
+	if m.config.Logger != nil {
+		m.config.Logger.Debug("getting current signing key")
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	keyPair, found := m.keys[m.currentKeyID]
@@ -466,11 +470,17 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 	m.mu.RLock()
 	if keyPair, exists := m.keys[keyID]; exists {
 		m.mu.RUnlock()
+		if m.config.Logger != nil {
+			m.config.Logger.Debug("public key cache hit", "keyID", keyID)
+		}
 		return keyPair.PublicKey, nil
 	}
 	m.mu.RUnlock()
 
 	// Load from disk for resilience (outside lock)
+	if m.config.Logger != nil {
+		m.config.Logger.Debug("public key not in memory, loading from disk", "keyID", keyID)
+	}
 	publicKey, err := m.loadPublicKeyFromDisk(keyID)
 	if err != nil {
 		return nil, err
@@ -552,7 +562,7 @@ func (m *Manager) loadAllKeysFromDisk() error {
 		// Skip already-expired keys
 		if !metadata.ExpiresAt.IsZero() && time.Now().After(metadata.ExpiresAt) {
 			if m.config.Logger != nil {
-				m.config.Logger.Info("fskipped expired key",
+				m.config.Logger.Info("skipped expired key",
 					"keyID", keyID,
 					"expiredAt", metadata.ExpiresAt.Format(time.RFC3339))
 			}
@@ -567,6 +577,9 @@ func (m *Manager) loadAllKeysFromDisk() error {
 			CreatedAt:  metadata.CreatedAt,
 			ExpiresAt:  metadata.ExpiresAt,
 			cachedJWK:  m.getJWK(privateKey, keyID),
+		}
+		if m.config.Logger != nil {
+			m.config.Logger.Debug("loaded key from disk", "keyID", keyID)
 		}
 
 		if mostRecentKeyID == "" || metadata.CreatedAt.After(mostRecentTime) {
@@ -601,6 +614,10 @@ func (m *Manager) GetJWKS() (*JWKS, error) {
 	// 1 check if running
 	if !m.IsRunning() {
 		return nil, ErrManagerNotRunning
+	}
+
+	if m.config.Logger != nil {
+		m.config.Logger.Debug("getting JWKS")
 	}
 
 	// 2 acquire lock
@@ -786,6 +803,9 @@ func (m *Manager) rotationSchedulerLoop(ctx context.Context) {
 
 		case <-cleanupTicker.C:
 			// Periodic cleanup
+			if m.config.Logger != nil {
+				m.config.Logger.Debug("rotation cleanup tick fired")
+			}
 			m.cleanupExpiredKeys()
 
 		case <-ctx.Done():
@@ -828,6 +848,9 @@ func (m *Manager) cleanupExpiredKeys() {
 		}
 	}
 	if m.config.Logger != nil {
+		if count == 0 {
+			m.config.Logger.Debug("no expired keys found during cleanup")
+		}
 		m.config.Logger.Info("expired key cleanup executed",
 			"deletedCount", count)
 		for _, key := range deletedKeys {

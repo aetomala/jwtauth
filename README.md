@@ -2,7 +2,7 @@
 
 **Production-ready JWT authentication library for distributed Go applications**
 
-> ⚠️ **Beta Status**: KeyManager is production-ready and fully tested. TokenService is in beta — core operations are complete with comprehensive test coverage. Middleware and storage implementations are under active development. API may change before v1.0.0.
+> ⚠️ **Beta Status**: KeyManager and RefreshStore are production-ready and fully tested. TokenService is in beta — core operations are complete with comprehensive test coverage. API may change before v1.0.0.
 
 ## Overview
 
@@ -46,22 +46,30 @@
 - **Service state management** ensuring tokens only issue when service is running
 - **Comprehensive BDD test coverage** (126 tests covering lifecycle, issuance, validation, refresh, revocation, and introspection; ~87% statement coverage)
 
-**RefreshTokenStore** (Memory Implementation) ✅
-- **In-memory token storage** with thread-safe RWMutex locking
-- **Token lifecycle management** (Store, Retrieve, Revoke, RevokeAllForUser, Cleanup)
-- **Defensive copying** (metadata and token structs isolated from mutations)
-- **Dual-index lookups** (tokenID → token, userID → []tokenID) for efficient bulk operations
-- **Expiration and revocation checks** with per-request validation
-- **Background cleanup** for expired token sweeps
-- **Idempotent revocation** (safe to call multiple times)
-- **Comprehensive context handling** with cancellation propagation
-- **Structured logging** for audit trail
-- **100% statement coverage** (71 tests covering all phases)
+**RefreshTokenStore** ✅
+- **Two implementations**: Memory (in-process) and Redis (distributed)
+- **MemoryRefreshStore**: In-memory storage with thread-safe RWMutex locking
+  - Perfect for single-instance deployments and testing
+  - Dual-index lookups (tokenID → token, userID → []tokenID) for O(1) retrieval
+  - Defensive copying for isolation from caller mutations
+  - 51 comprehensive tests with 100% statement coverage
+- **RedisRefreshStore**: Distributed storage for multi-instance deployments
+  - Uses go-redis/v9 with pipeline support for atomic operations
+  - Millisecond-precision timestamp storage
+  - Efficient SCAN-based cleanup for expired tokens
+  - Production-ready error handling and logging
+  - 51 comprehensive tests (identical test suite as Memory implementation)
+- **Shared test suite** pattern: Single suite (51 tests) runs against both implementations
+- **Common features** (both implementations):
+  - Token lifecycle management (Store, Retrieve, Revoke, RevokeAllForUser, Cleanup)
+  - Expiration and revocation checks with per-request validation
+  - Idempotent revocation (safe to call multiple times)
+  - Comprehensive context handling with cancellation propagation
+  - Structured logging for audit trail
+  - **170 total storage tests** (51 × 2 implementations + variations)
 
 ### 🚧 In Development
 
-- **HTTP Middleware**: Request authentication and user context injection
-- **Redis RefreshStore**: Distributed storage for multi-instance deployments
 - **Metrics Implementations**: Prometheus, StatsD, CloudWatch adapters
 - **OpenTelemetry**: Distributed tracing integration
 
@@ -390,9 +398,11 @@ github.com/aetomala/jwtauth/
 │   ├── storage/                  # Refresh token storage ✅
 │   │   ├── interface.go          # RefreshStore interface
 │   │   ├── errors.go             # Sentinel error types
-│   │   ├── memory.go             # In-memory implementation
-│   │   └── memory_test.go        # Comprehensive test suite (71 tests, 100% coverage)
-│   ├── middleware/               # HTTP middleware 🚧
+│   │   ├── memory.go             # In-memory implementation (~287 lines, production-ready)
+│   │   ├── memory_test.go        # Test runner for MemoryRefreshStore (26 lines)
+│   │   ├── redis.go              # Redis implementation (~497 lines, production-ready)
+│   │   ├── redis_test.go         # Test runner for RedisRefreshStore (60 lines)
+│   │   └── suite_test.go         # Shared test suite (642 lines, 51 tests run against both implementations)
 ├── internal/                     # Private packages
 │   └── testutil/                 # Shared test utilities
 ├── doc/                          # Documentation
@@ -404,7 +414,7 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 197 comprehensive tests across KeyManager, TokenService, and RefreshStore, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%)
+**Current**: 248 comprehensive tests across KeyManager, TokenService, and RefreshStore implementations, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%)
 
 **KeyManager** (3 test suites):
 - Constructor validation and defaults
@@ -436,17 +446,19 @@ github.com/aetomala/jwtauth/
   - CleanupExpiredTokens: manual sweep with error handling
 - **Concurrent Operations**: parallel token issuance and service state safety
 
-**RefreshStore** (MemoryRefreshStore, 71 total tests, 8 test phases):
-- **Phase 1**: Constructor initialization
-- **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
-- **Phase 2.5**: Context cancellation handling with proper logging
-- **Phase 3**: Input validation (empty/whitespace tokenID/userID, expired tokens, metadata defensive copy)
-- **Phase 4**: Defensive programming (userTokens cleanup on owner change, metadata isolation between calls)
-- **Phase 5**: Contract compliance (expiry checks, revocation checks, correct logging levels)
-- **Phase 6**: Concurrency safety (RLock for reads, parallel operations, mixed workloads)
-- **Phase 7**: Core methods (Revoke idempotency, RevokeAllForUser bulk operations, Cleanup expired tokens)
-- **Phase 8**: Edge cases (special characters, large-scale operations, UUID formats)
-- **Context Handling**: Proper cancellation and propagation across all operations
+**RefreshStore** (170 total tests: 51 MemoryRefreshStore + 51 RedisRefreshStore + shared test suite):
+- **Shared Test Suite** (51 tests, runs against both Memory and Redis):
+  - **Phase 1**: Constructor initialization
+  - **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
+  - **Phase 3**: Input validation (empty/whitespace tokenID/userID, expired tokens, metadata defensive copy)
+  - **Phase 4**: Defensive programming (metadata isolation between calls, defensive copying)
+  - **Phase 5**: Retrieve validation and state checks (revocation, expiration)
+  - **Phase 6**: Revoke idempotency and state-changing operations
+  - **Phase 7**: RevokeAllForUser bulk operations with user isolation
+  - **Phase 8**: Cleanup (expired token removal, mixed expiration states)
+  - **Phase 8.5**: Edge cases (unicode characters, large-scale operations, far-future timestamps)
+  - **Phase 9**: Context cancellation handling across all operations
+- **Test Suite Architecture**: Single parameterized suite eliminates 800+ lines of duplication, ensures both implementations have identical semantics
 
 **Test Organization**:
 - Separate test files for logical concerns (`service_test.go`, `service_lifecycle_test.go`)
@@ -499,15 +511,16 @@ Tests follow **progressive phase-based development**:
 - ✅ Simpler API focused on common use cases
 - ✅ Built-in key rotation and management
 - ✅ Observability as a first-class feature
-- ✅ Clear separation of concerns (KeyManager, TokenService, Middleware)
+- ✅ Clear separation of concerns (KeyManager, TokenService, Storage)
 
 ### Unique Features
 
 1. **Zero-downtime key rotation** - Most libraries require service restart
-2. **Observability-first design** - Logging and metrics built into every operation
+2. **Observability-first design** - Structured logging and metrics built into every operation
 3. **Dependency inversion** - Bring your own logger/metrics, no forced dependencies
-4. **Production patterns** - Graceful shutdown, persistence, error recovery
-5. **SOLID architecture** - Easy to test, extend, and maintain
+4. **Distributed token storage** - Memory for testing, Redis for production (multi-instance)
+5. **Production patterns** - Graceful shutdown, persistence, error recovery, defensive copying
+6. **SOLID architecture** - Easy to test, extend, and maintain
 
 ## Roadmap
 
@@ -528,20 +541,15 @@ Tests follow **progressive phase-based development**:
 - ✅ TokenService: Token introspection per RFC 7662 (IntrospectToken)
 - ✅ TokenService: Manual cleanup sweep (CleanupExpiredTokens)
 - ✅ TokenService: Comprehensive test coverage (126 tests, ~87% statement coverage, all passing with race detection)
-- ✅ RefreshStore: In-memory implementation (MemoryRefreshStore) with defensive copying and concurrent safety
-- ✅ RefreshStore: Complete lifecycle (Store, Retrieve, Revoke, RevokeAllForUser, Cleanup)
-- ✅ RefreshStore: Comprehensive test coverage (71 tests across 8 phases, 100% statement coverage, race-detection clean)
+- ✅ RefreshStore: Shared test suite pattern (51 tests, eliminates duplication, runs against all implementations)
+- ✅ RefreshStore: MemoryRefreshStore with defensive copying and concurrent safety
+- ✅ RefreshStore: RedisRefreshStore for distributed deployments with go-redis/v9
+- ✅ RefreshStore: Comprehensive test coverage (170 tests across 9 phases, 100% statement coverage, race-detection clean)
 - 🚧 Prometheus metrics adapter
 
 ### v0.3.0 (Beta)
-- 🚧 HTTP Middleware
-- 🚧 Request authentication
-- 🚧 User context injection
+- 🚧 Metrics implementations (Prometheus, StatsD, CloudWatch)
 - 🚧 Example applications
-
-### v0.4.0 (Beta)
-- 🚧 Refresh token storage (memory + Redis)
-- 🚧 Token revocation
 
 ### v1.0.0 (Stable)
 - API stability guarantee
@@ -576,9 +584,9 @@ Enforce rate limits at the API Gateway before requests reach your service. This 
 - **Kubernetes Ingress (NGINX)**: `nginx.ingress.kubernetes.io/limit-rps` annotation
 - **Cloudflare**: Zone-level rate limiting rules
 
-**Alternative: HTTP middleware (single-instance or with shared Redis)**
+**Alternative: Application-Level Rate Limiting**
 
-If you prefer application-level rate limiting, several well-maintained Go libraries exist:
+If you prefer application-level rate limiting (outside jwtauth), several well-maintained Go libraries exist:
 
 - [`golang.org/x/time/rate`](https://pkg.go.dev/golang.org/x/time/rate) — standard library token bucket
 - [`github.com/ulule/limiter`](https://github.com/ulule/limiter) — Redis-backed, works across instances
@@ -639,6 +647,6 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 
 **Status**: Beta (Active Development)
 **Version**: 0.2.0-beta
-**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore ✅ | Middleware 🚧
-**Test Coverage**: 197 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%), all passing, race-detection enabled
-**Last Updated**: March 2026
+**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore (Memory + Redis) ✅
+**Test Coverage**: 248 tests (KeyManager ~90%, TokenService ~87%, RefreshStore Memory+Redis 100%), all passing, race-detection enabled
+**Last Updated**: March 31, 2026

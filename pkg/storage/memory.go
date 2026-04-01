@@ -96,6 +96,12 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.logger != nil {
+		m.logger.Debug("storing token in memory",
+			"tokenID", tokenID,
+			"userID", userID)
+	}
+
 	// ===== STEP 5: Build and Store Token =====
 	token := &RefreshToken{
 		TokenID:   tokenID,
@@ -147,6 +153,11 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	// ===== STEP 3: Acquire Read Lock =====
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	if m.logger != nil {
+		m.logger.Debug("looking up token in memory",
+			"tokenID", tokenID)
+	}
 
 	// ===== STEP 4: Look Up Token =====
 	token, found := m.tokens[tokenID]
@@ -281,6 +292,11 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 	tokensIDs := m.userTokens[userID]
 	for _, tokenID := range tokensIDs {
 		if token, exists := m.tokens[tokenID]; exists {
+			if m.logger != nil {
+				m.logger.Debug("revoking token for user",
+					"tokenID", tokenID,
+					"userID", userID)
+			}
 			token.Revoked = true
 		}
 	}
@@ -317,6 +333,11 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	// ===== STEP 3: Sweep and Remove Expired Tokens =====
 	for tokenID, token := range m.tokens {
 		if token.ExpiresAt.Before(now) || token.ExpiresAt.Equal(now) {
+			if m.logger != nil {
+				m.logger.Debug("removing expired token",
+					"tokenID", token.TokenID,
+					"expiredAt", token.ExpiresAt)
+			}
 			delete(m.tokens, token.TokenID)
 			m.removeFromUserTokens(token.UserID, tokenID)
 			count++
