@@ -1,19 +1,9 @@
 package storage_test
 
 import (
-	"testing"
-
-	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
-
 	"github.com/aetomala/jwtauth/internal/testutil"
 	"github.com/aetomala/jwtauth/pkg/storage"
 )
-
-func TestMemoryRefreshStore(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Memory Storage Suite")
-}
 
 var _ = RunRefreshStoreTests(
 	"MemoryRefreshStore",

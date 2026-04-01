@@ -2,7 +2,6 @@ package storage_test
 
 import (
 	"context"
-	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -17,11 +16,6 @@ import (
 var (
 	miniRedis *miniredis.Miniredis
 )
-
-func TestRedisRefreshStore(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Redis Storage Suite")
-}
 
 var _ = RunRefreshStoreTests(
 	"RedisRefreshStore",
