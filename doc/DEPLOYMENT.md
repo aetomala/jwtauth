@@ -87,64 +87,152 @@ spec:
 
 ---
 
-## Layer 2: HTTP Middleware (Single-Instance or Redis-Backed)
+## Refresh Token Storage: Memory vs Redis
 
-If you need application-level rate limiting — for example, per-user limits not expressible at the gateway — use an existing Go library. Do not implement your own.
+`jwtauth` provides two RefreshStore implementations for different deployment topologies. Choosing the right one is a deployment decision, not a code decision.
 
-### golang.org/x/time/rate (standard library, single-instance)
+### MemoryRefreshStore (In-Process)
 
+**When to use**:
+- ✅ Single-instance deployments (one app server)
+- ✅ Development and testing environments
+- ✅ High-frequency token operations with low latency requirements
+- ✅ Small-scale deployments with bounded token volume
+
+**Characteristics**:
+- Stores tokens in process memory (Go maps)
+- Dual-index design for O(1) lookups and bulk operations
+- Thread-safe with RWMutex (concurrent reads, exclusive writes)
+- No network I/O (fast)
+- No persistence (tokens lost on restart — acceptable for short-lived refresh tokens)
+- Perfect for dev/test environments
+
+**Configuration**:
 ```go
-import "golang.org/x/time/rate"
+refreshStore := storage.NewMemoryRefreshStore(logger)
 
-// 10 requests per second, burst of 20
-limiter := rate.NewLimiter(rate.Limit(10), 20)
-
-func AuthMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if !limiter.Allow() {
-            http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
-            return
-        }
-        next.ServeHTTP(w, r)
-    })
+config := tokens.ServiceConfig{
+    RefreshStore: refreshStore,
+    // ... other config
 }
 ```
 
-### github.com/ulule/limiter (Redis-backed, works across instances)
+### RedisRefreshStore (Distributed)
 
+**When to use**:
+- ✅ Multi-instance deployments (Kubernetes, load-balanced)
+- ✅ Need shared state across service instances
+- ✅ Production environments with strict uptime requirements
+- ✅ Large-scale deployments with thousands of concurrent users
+- ✅ Deployments where revocation must be immediate across all instances
+
+**Characteristics**:
+- Stores tokens in Redis (external service)
+- Atomic operations via Redis pipelines
+- Millisecond-precision timestamps
+- Thread-safe (go-redis/v9 client handles concurrency)
+- Network I/O required (adds latency, typically < 5ms)
+- Persistent (tokens survive service restarts)
+- TTL-based automatic cleanup (Redis EXPIRE)
+- Works correctly in multi-instance/multi-region setups
+
+**Configuration**:
 ```go
-import (
-    "github.com/ulule/limiter/v3"
-    limiterRedis "github.com/ulule/limiter/v3/drivers/store/redis"
-    limiterMiddleware "github.com/ulule/limiter/v3/drivers/middleware/stdlib"
-)
+redisClient := redis.NewClient(&redis.Options{
+    Addr: "redis.default.svc.cluster.local:6379",
+})
 
-store, _ := limiterRedis.NewStore(redisClient)
-rate, _ := limiter.NewRateFromFormatted("100-M") // 100 per minute
+refreshStore := storage.NewRedisRefreshStore(redisClient, logger)
 
-middleware := limiterMiddleware.NewMiddleware(limiter.New(store, rate))
+config := tokens.ServiceConfig{
+    RefreshStore: refreshStore,
+    // ... other config
+}
+```
 
-mux.Handle("/auth/refresh", middleware.Handler(
-    http.HandlerFunc(refreshHandler),
-))
+**Kubernetes Example**:
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-config
+data:
+  REDIS_ADDR: "redis-cache.default.svc.cluster.local:6379"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+spec:
+  replicas: 3  # Multiple instances share Redis backend
+  template:
+    spec:
+      containers:
+      - name: auth
+        env:
+        - name: REDIS_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: auth-config
+              key: REDIS_ADDR
+```
+
+### Decision Matrix
+
+| Factor | Memory | Redis |
+|--------|--------|-------|
+| **Instances** | 1 | 2+ |
+| **Shared state** | ❌ | ✅ |
+| **Revocation sync** | Per-instance | Immediate across all |
+| **Latency** | < 1ms | ~5ms |
+| **Persistence** | ❌ | ✅ |
+| **Auto-cleanup** | Manual (caller) | Automatic (TTL) |
+| **Scale** | Thousands tokens | Millions tokens |
+| **Cost** | Free | Redis service required |
+| **Setup** | Trivial | Add Redis dependency |
+
+### Practical Guidance
+
+**Development**: Always use MemoryRefreshStore.
+```bash
+# Easy to test, no external dependencies, fast iteration
+go test -race ./...
+```
+
+**Single-instance production** (small deployment):
+```go
+// MemoryRefreshStore is sufficient
+// Tokens are short-lived (typically 24 hours)
+// Loss on restart is acceptable
+refreshStore := storage.NewMemoryRefreshStore(logger)
+```
+
+**Multi-instance production** (Kubernetes, load-balanced):
+```go
+// Redis is required for consistency
+// Revocation must apply across all instances
+// Shared state ensures "logout" works everywhere
+redisClient := redis.NewClient(&redis.Options{
+    Addr: os.Getenv("REDIS_ADDR"),
+})
+refreshStore := storage.NewRedisRefreshStore(redisClient, logger)
+```
+
+**High-traffic production** (SaaS, consumer app):
+```go
+// Redis with cluster/sentinel for HA
+// Multiple Redis replicas for failover
+// Monitoring and alerting on Redis health
+redisClient := redis.NewClient(&redis.Options{
+    Addr: os.Getenv("REDIS_SENTINEL_ADDR"),
+    // Sentinel configuration for failover...
+})
+refreshStore := storage.NewRedisRefreshStore(redisClient, logger)
 ```
 
 ---
 
-## Typical Configuration Reference
-
-| Endpoint          | Recommended Limit   | Rationale                              |
-|-------------------|---------------------|----------------------------------------|
-| `POST /auth/login`    | 10 req/min per IP   | Prevent credential stuffing            |
-| `POST /auth/refresh`  | 100 req/min per user | Normal refresh cadence                |
-| `POST /auth/register` | 5 req/min per IP    | Prevent account farming                |
-| `GET /auth/me`        | 1000 req/min per user | Read-only, low risk                  |
-
-These are starting points — tune based on observed traffic patterns.
-
----
-
-## What jwtauth Handles vs. What You Handle
+## Layered Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -175,10 +263,13 @@ These are starting points — tune based on observed traffic patterns.
                            ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  Storage Layer                                               │
-│  PostgreSQL / Redis (via RefreshStore implementation)        │
+│  MemoryRefreshStore (dev/single-instance)                   │
+│  RedisRefreshStore (production/multi-instance)              │
+│                                                              │
+│  Choose based on deployment topology, not preference        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-**See also**: [ARCHITECTURE.md](ARCHITECTURE.md) for component design and dependency inversion patterns.
+**See also**: [ARCHITECTURE.md](ARCHITECTURE.md) for component design, dependency inversion patterns, and RefreshStore implementation details.

@@ -58,7 +58,7 @@ Each package has one clear responsibility:
 - `pkg/logging` - Logging abstraction and adapters
 - `pkg/metrics` - Metrics abstraction and implementations
 - `pkg/tokens` - JWT token creation, validation, and lifecycle management
-- `pkg/middleware` (future) - HTTP middleware for token validation
+- `pkg/storage` - Refresh token persistence (memory, Redis, extensible)
 
 ### 3. Interface Segregation
 
@@ -79,7 +79,7 @@ Shared interfaces prevent duplication:
 Build what's needed now:
 - No interfaces until multiple implementations exist
 - Metrics interface defined, but implementations added as needed
-- Simple Logger interface (no Debug level initially)
+- Logger interface evolved from Info/Warn/Error to include Debug for development tracing
 
 ---
 
@@ -106,8 +106,11 @@ github.com/aetomala/jwtauth/
 │   │   ├── service_test.go        # Token operations tests
 │   │   ├── service_lifecycle_test.go  # Lifecycle management tests
 │   │   └── claims.go              # Claims management
-│   ├── middleware/                # HTTP middleware (future)
-│   └── storage/                   # Refresh token storage (future)
+│   └── storage/                   # Refresh token storage ✅
+│       ├── interface.go           # RefreshStore interface
+│       ├── memory.go              # In-memory implementation
+│       ├── redis.go               # Redis implementation
+│       └── suite_test.go          # Shared test suite
 ├── internal/                      # Private packages
 │   └── testutil/                  # Shared test utilities
 │       └── mock_logger.go         # Reusable mock logger
@@ -163,7 +166,7 @@ github.com/aetomala/jwtauth/
 ├─────────────────────────────────────────────┤
 │         Component Layer                      │
 │  ┌───────────┐ ┌─────────┐ ┌────────────┐  │
-│  │KeyManager │ │  Tokens │ │ Middleware │  │
+│  │KeyManager │ │  Tokens │ │  Storage   │  │
 │  └───────────┘ └─────────┘ └────────────┘  │
 └─────────────────────────────────────────────┘
            ↓ Observability Signals
@@ -182,10 +185,39 @@ github.com/aetomala/jwtauth/
 **Interface**: `pkg/logging/Logger`
 
 **Design Decisions**:
-- **3 levels only** (Info, Warn, Error) - simple and sufficient
+- **4 levels** (Debug, Info, Warn, Error) - stratified by use case
 - **Structured** (key-value pairs) - machine-readable
 - **Optional** (nil-safe) - works without logger
 - **stdlib adapter** (slog) - no external dependencies
+
+**Log Levels by Purpose**:
+
+| Level | Use Case | Examples |
+|-------|----------|----------|
+| **Debug** | Development & troubleshooting | Entry points, cache hits/misses, intermediate state, "no-op" outcomes |
+| **Info** | Terminal outcomes | Token issued, key rotated, cleanup completed |
+| **Warn** | Expected but notable conditions | Empty inputs, missing tokens, expired items, context cancellation |
+| **Error** | Failures requiring attention | I/O errors, invalid state, operation failures |
+
+**Debug Usage Pattern**:
+```go
+// High-frequency read operations (cache lookups, token validation entry)
+if m.config.Logger != nil {
+    m.config.Logger.Debug("public key cache hit", "keyID", keyID)
+}
+
+// Intermediate steps in loops (per-token operations)
+if m.logger != nil {
+    m.logger.Debug("revoking token for user",
+        "tokenID", tokenID,
+        "userID", userID)
+}
+
+// No-op outcomes (nothing to do during cleanup)
+if m.logger != nil {
+    m.logger.Debug("no expired keys found during cleanup")
+}
+```
 
 **Flow**:
 ```go
@@ -197,6 +229,7 @@ KeyManager → logging.Logger interface → SlogAdapter → os.Stdout → K8s lo
 - ✅ JSON format for log aggregators (ELK, Loki, Splunk)
 - ✅ Flexible (swap logger without changing code)
 - ✅ Testable (MockLogger)
+- ✅ Debug level disableable in production (disable at handler, not in code)
 
 ### Metrics
 
@@ -370,18 +403,9 @@ Created → Start() → Running → Shutdown() → Stopped
 - **Synchronization**: `atomic.Bool` for running state; cleanup uses channel signaling and `sync.WaitGroup` for graceful shutdown
 
 **Key Design Decisions**:
-- Rate limiting is intentionally **not** in TokenService — it belongs at the HTTP middleware layer where per-route and per-IP policies apply
+- Rate limiting is intentionally **not** in TokenService — it belongs at the infrastructure layer (API Gateway, Ingress, Load Balancer) where per-route and per-IP policies apply globally
 - All storage operations accept `context.Context` for cancellation propagation
 - Reserved JWT claims (`sub`, `iss`, `aud`, `exp`, `iat`, `jti`) cannot be overridden by custom claims
-
-### Middleware (Future)
-
-**Responsibilities**:
-- Extract token from HTTP request (Authorization header)
-- Validate token using TokenService
-- Inject user context into request
-- Return 401 Unauthorized on invalid token
-- Apply rate limiting via infrastructure (API Gateway, Ingress) or a dedicated Go library — see `doc/DEPLOYMENT.md`
 
 ### RefreshTokenStore
 
@@ -390,9 +414,11 @@ Created → Start() → Running → Shutdown() → Stopped
 - Retrieve tokens with validation checks (expiry, revocation)
 - Revoke individual or bulk tokens (by userID)
 - Clean up expired tokens
-- Maintain dual-index for efficient lookups (tokenID → token, userID → []tokenID)
+- Maintain lookups optimized for each implementation
 
-**Current Implementation: MemoryRefreshStore** ✅
+**Implementations**:
+
+#### MemoryRefreshStore (In-Process, Testing & Single-Instance) ✅
 
 **Design**:
 ```go
@@ -405,31 +431,103 @@ type MemoryRefreshStore struct {
 ```
 
 **Key Features**:
+- **Dual-index data structure**: `tokens` map for O(1) lookup, `userTokens` set for O(1) bulk revocation
 - **Defensive copying**: Metadata and token structs isolated from caller mutations
 - **RWMutex locking**: RLock for Retrieve (concurrent reads), Lock for mutations
 - **Idempotent operations**: Revoke returns nil if token doesn't exist
-- **Expiration checks**: Retrieve validates expiry at request time (not background)
-- **Revocation checks**: Retrieve returns ErrTokenRevoked for revoked tokens
-- **Bulk operations**: RevokeAllForUser uses userTokens index for O(n) performance
-- **Cleanup**: Removes expired tokens from both maps, updates userTokens index
+- **Expiration/Revocation checks**: Retrieve validates expiry and revocation at request time
+- **Cleanup**: Removes expired tokens from both maps and userTokens index
 - **Context propagation**: All operations respect context.Context cancellation
 - **Structured logging**: Warn for validation failures, Info for successful ops
+- **Thread-safe**: Read operations concurrent, write operations exclusive
 
-**Thread Safety**:
-- Read operations (Retrieve): RLock allows concurrent reads
-- Write operations (Store, Revoke, Cleanup): Lock ensures exclusive access
-- No goroutines created (cleanup is caller-driven, not background)
+#### RedisRefreshStore (Distributed, Multi-Instance) ✅
 
-**Error Handling**:
-- `ErrInvalidTokenID` / `ErrInvalidUserID` for bad input
-- `ErrTokenNotFound` for missing tokens
-- `ErrTokenExpired` for expired tokens
-- `ErrTokenRevoked` for revoked tokens
+**Design**:
+```go
+type RedisRefreshStore struct {
+    client *redis.Client  // go-redis/v9 client (internally thread-safe)
+    logger logging.Logger // Optional logging
+}
+```
 
-**Future Implementations**:
-- **Redis RefreshStore** for distributed deployments
-- Pub/Sub for revocation events
-- TTL-based automatic cleanup
+**Redis Data Structure**:
+```
+tokens:{tokenID}        → Hash with fields: userID, expiresAt, createdAt, revoked, metadata
+user_tokens:{userID}    → Set of tokenIDs for that user
+```
+
+**Key Features**:
+- **Distributed**: Works across multiple instances (Redis is the shared backend)
+- **Pipeline atomicity**: Multi-operation transactions via Redis pipelines
+- **Millisecond-precision timestamps**: Stored as UnixMilli (preserves precision across serialization)
+- **Efficient cleanup**: SCAN-based key iteration for expired token sweeps
+- **TTL management**: Token keys automatically expire via Redis EXPIRE
+- **Context propagation**: All operations respect context.Context cancellation
+- **Structured logging**: Same error/info patterns as MemoryRefreshStore
+- **Thread-safe**: go-redis/v9 client is internally thread-safe
+- **Error handling**: Proper error wrapping with context
+
+**Why Redis?**:
+- ✅ Shared state across service instances (no distributed consensus issues)
+- ✅ TTL-based automatic cleanup (keys expire automatically)
+- ✅ Atomic transactions via pipelines
+- ✅ Familiar operations (HSet, SAdd, SRem, Scan)
+- ✅ Production-proven (widely used in Go services)
+
+**Common Features** (Both Implementations):
+
+| Aspect | Details |
+|--------|---------|
+| **Error Handling** | `ErrInvalidTokenID` / `ErrInvalidUserID`, `ErrTokenNotFound`, `ErrTokenExpired`, `ErrTokenRevoked` |
+| **Validation** | Empty/whitespace input rejection, expiry checks, revocation checks |
+| **Idempotence** | Revoke returns nil if token doesn't exist (safe to call multiple times) |
+| **Context** | Full support for context.Context cancellation propagation |
+| **Logging** | Structured key-value logs with operation names and fields |
+| **Testing** | Identical comprehensive test suite (51 tests per implementation) |
+
+#### Shared Test Suite Pattern
+
+**Problem Solved**: Without shared testing, maintaining two implementations risks:
+- Test divergence (Memory tests differ from Redis tests)
+- Duplicate test code (800+ lines of duplication)
+- Inconsistent semantics (implementations evolve differently)
+
+**Solution**: Single parameterized test suite runs against all implementations:
+
+```go
+// suite_test.go defines 51 comprehensive tests
+func RunRefreshStoreTests(description string, factory StoreFactory, cleanup CleanupFunc) bool {
+    Describe(description, func() {
+        // All 51 tests run here
+        // Verify all error conditions, edge cases, context handling
+    })
+}
+
+// memory_test.go uses the suite
+var _ = RunRefreshStoreTests(
+    "MemoryRefreshStore",
+    func(logger) storage.RefreshStore { return storage.NewMemoryRefreshStore(logger) },
+    nil,  // No cleanup needed
+)
+
+// redis_test.go uses the same suite
+var _ = RunRefreshStoreTests(
+    "RedisRefreshStore",
+    func(logger) storage.RefreshStore {
+        mini := miniredis.Run()
+        return storage.NewRedisRefreshStore(redis.NewClient(...), logger)
+    },
+    func() { mini.FlushAll() },  // Cleanup after each test
+)
+```
+
+**Benefits**:
+- ✅ Both implementations pass identical tests (semantic equivalence)
+- ✅ No duplication (single suite shared by all)
+- ✅ Easy to add new implementations (just add a new test file calling RunRefreshStoreTests)
+- ✅ Same behavior guaranteed (same test code)
+- ✅ Reduces maintenance burden (update tests once, benefits both)
 
 ---
 
@@ -556,20 +654,28 @@ Catches:
 - ✅ Comprehensive test coverage (126 tests, ~87% coverage, race-detection clean)
 - ✅ RefreshStore interface with context propagation
 
-### Phase 4: HTTP Middleware
-- ⏳ Token extraction from Authorization header
-- ⏳ Validation pipeline using TokenService
-- ⏳ User context injection into requests
-- ⏳ 401 Unauthorized on invalid tokens
-- ⏳ Rate limiting (token bucket, sliding window, Redis-backed)
-
-### Phase 5: RefreshToken Storage Implementations
-- ✅ Memory implementation (testing + development) with 100% test coverage
-- ⏳ Redis implementation (production)
+### Phase 4: RefreshToken Storage Implementations ✅
 - ✅ RefreshStore interface defined (pkg/storage)
-- ✅ MemoryRefreshStore with defensive copying, context propagation, and audit logging
+- ✅ MemoryRefreshStore (in-process, testing + single-instance deployments)
+  - Dual-index design for O(1) lookups and bulk operations
+  - Defensive copying for metadata isolation
+  - 51 comprehensive tests with 100% statement coverage
+- ✅ RedisRefreshStore (distributed, multi-instance deployments)
+  - Pipeline-based atomic operations
+  - Millisecond-precision timestamp handling
+  - Efficient SCAN-based cleanup
+  - 51 comprehensive tests (identical suite as Memory)
+- ✅ Shared test suite pattern (eliminates 800+ lines of duplication)
+  - Single parameterized suite runs against all implementations
+  - Ensures semantic equivalence across backends
+  - Easy to add new implementations
 
-### Phase 6: OpenTelemetry
+### Phase 5: Metrics Implementations (In Progress)
+- 🚧 Prometheus adapter with `/metrics` endpoint
+- 🚧 StatsD integration (Datadog, Graphite compatible)
+- 🚧 CloudWatch metrics for AWS environments
+
+### Phase 6: OpenTelemetry (Future)
 - ⏳ Distributed tracing
 - ⏳ Span creation across token operations
 - ⏳ Context propagation
@@ -669,6 +775,6 @@ func (c *Component) Operation() error {
 
 ---
 
-**Last Updated**: March 30, 2026
+**Last Updated**: March 31, 2026
 **Version**: 0.2.0-beta
-**Status**: Active Development (TokenService + RefreshStore stable, Middleware in progress)
+**Status**: Active Development (TokenService + RefreshStore [Memory + Redis] stable, Metrics implementations in progress)

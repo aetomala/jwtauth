@@ -172,7 +172,7 @@ func (s *Service) Start(ctx context.Context) error {
 		s.isRunning.Store(false) // Revert state
 
 		if s.logger != nil {
-			s.logger.Error("starting token service",
+			s.logger.Error("failed to start token service",
 				"error", err)
 		}
 		return fmt.Errorf("failed to start keymanager: %w", err)
@@ -204,6 +204,9 @@ func (s *Service) cleanupLoop(ctx context.Context) {
 				s.logger.Debug("cleanup loop tick started")
 			}
 			// Cleanup expired refresh tokens
+			if s.logger != nil {
+				s.logger.Debug("cleanup ticker fired")
+			}
 			if count, err := s.refreshStore.Cleanup(ctx); err != nil {
 				if s.logger != nil {
 					s.logger.Error("refresh token cleanup failed",
@@ -345,6 +348,12 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 			"keyID", keyID)
 	}
 
+	if s.logger != nil {
+		s.logger.Debug("signing key retrieved",
+			"userID", userID,
+			"keyID", keyID)
+	}
+
 	// ===== STEP 5: Create JWT Claims =====
 	now := time.Now()
 	expiresAt := now.Add(s.accessTokenDuration)
@@ -371,6 +380,13 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	}
 	if s.logger != nil {
 		s.logger.Debug("access token claims created",
+			"userID", userID,
+			"tokenID", tokenID,
+			"expiresAt", expiresAt)
+	}
+
+	if s.logger != nil {
+		s.logger.Debug("claims constructed",
 			"userID", userID,
 			"tokenID", tokenID,
 			"expiresAt", expiresAt)
@@ -594,6 +610,10 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		return "", err
 	}
 
+	if s.logger != nil {
+		s.logger.Debug("issuing refresh token", "userID", userID)
+	}
+
 	// ===== STEP 4: Generate Refresh Token =====
 	// Create cryptographic random token
 	// this is an OPAQUE token (not a JWT)
@@ -693,6 +713,10 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 				"error", err)
 		}
 		return "", err
+	}
+
+	if s.logger != nil {
+		s.logger.Debug("issuing refresh token with metadata", "userID", userID)
 	}
 
 	// ===== STEP 4: Generate Refresh Token =====
@@ -796,6 +820,10 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 				"error", err)
 		}
 		return "", "", err
+	}
+
+	if s.logger != nil {
+		s.logger.Debug("issuing token pair", "userID", userID)
 	}
 
 	// ===== STEP 4: Get Signing Key =====
@@ -926,6 +954,10 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 				"error", err)
 		}
 		return nil, err
+	}
+
+	if s.logger != nil {
+		s.logger.Debug("validating access token")
 	}
 
 	// ===== STEP 3: Parse JWT Token =====
@@ -1099,6 +1131,10 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		return "", err
 	}
 
+	if s.logger != nil {
+		s.logger.Debug("attempting token refresh")
+	}
+
 	// ===== STEP 3: Input Validation =====
 	if refreshToken == "" {
 		if s.logger != nil {
@@ -1119,6 +1155,12 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 			return "", ErrTokenRevoked
 		}
 		return "", ErrInvalidRefreshToken
+	}
+
+	if s.logger != nil {
+		s.logger.Debug("refresh token retrieved from store",
+			"userID", token.UserID,
+			"tokenID", token.TokenID)
 	}
 
 	// ===== STEP 5: Check Expiration =====
@@ -1292,6 +1334,10 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 			s.logger.Info("context cancelled during token introspection")
 		}
 		return nil, err
+	}
+
+	if s.logger != nil {
+		s.logger.Debug("introspecting token")
 	}
 
 	// ===== STEP 3: Input Validation =====
