@@ -70,7 +70,7 @@
 
 ### 🚧 In Development
 
-- **Metrics Implementations**: Prometheus, StatsD, CloudWatch adapters
+- **Metrics Wiring**: Inject `PrometheusMetrics` into KeyManager, TokenService, and RefreshStore
 - **OpenTelemetry**: Distributed tracing integration
 
 ## Architecture Highlights
@@ -94,8 +94,10 @@ config := keymanager.ManagerConfig{
     // Optional: Bring your own logger
     Logger: logging.NewJSONLogger(slog.LevelInfo),
     
-    // Optional: Bring your own metrics (interface defined, impl coming)
-    Metrics: nil, // metrics.NewPrometheusMetrics() // Coming soon
+    // Optional: Bring your own metrics
+    Metrics: metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
+        Namespace: "myapp",
+    }),
 }
 ```
 
@@ -208,13 +210,14 @@ import (
 func main() {
     // Configure structured logging (JSON for production)
     logger := logging.NewJSONLogger(slog.LevelInfo)
-    
+    pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{})
+
     config := keymanager.ManagerConfig{
         KeyDirectory:        "./keys",
         KeyRotationInterval: 30 * 24 * time.Hour,
         KeyOverlapPeriod:    1 * time.Hour,
         Logger:              logger,
-        // Metrics: metrics.NewPrometheusMetrics(), // Coming soon
+        Metrics:             pm,
     }
     
     manager, err := keymanager.NewManager(config)
@@ -230,6 +233,9 @@ func main() {
     // Example log output:
     // {"time":"2026-02-07T12:00:00Z","level":"INFO","msg":"key manager started","active_keys":2}
     // {"time":"2026-02-07T12:30:00Z","level":"INFO","msg":"key rotation successful","key_id":"key_20260207_120000","duration":"150ms"}
+
+    // Metrics are available at /metrics (Prometheus text format)
+    http.Handle("/metrics", pm.Handler())
 }
 ```
 
@@ -357,20 +363,39 @@ func (m *MyZapAdapter) Info(msg string, args ...interface{}) {
 // ... implement Warn, Error
 ```
 
-### Metrics (Coming Soon)
+### Metrics
 
-**Planned interface**:
+**Interface** (`pkg/metrics/Metrics`):
 ```go
 type Metrics interface {
-    RecordRotation(success bool, duration time.Duration)
-    RecordKeyGeneration(duration time.Duration)
-    RecordSigningOperation(success bool, duration time.Duration)
-    RecordValidationOperation(success bool, duration time.Duration)
+    IncrementCounter(name string, labels map[string]string)
+    AddCounter(name string, value float64, labels map[string]string)
+    SetGauge(name string, value float64, labels map[string]string)
+    RecordHistogram(name string, value float64, labels map[string]string)
+    RecordDuration(name string, duration time.Duration, labels map[string]string)
+}
+```
+
+**Available implementations**:
+- `metrics.NewPrometheusMetrics()` — Prometheus with `/metrics` endpoint, pre-registers all jwtauth metrics at construction time
+- `metrics.NewNoOpMetrics()` — no-op, zero overhead, for when metrics are disabled
+
+**Prometheus quick start**:
+```go
+pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
+    Namespace: "myapp",   // defaults to "jwtauth"
+})
+
+// Serve metrics endpoint
+http.Handle("/metrics", pm.Handler())
+
+// Pass to components
+config := keymanager.ManagerConfig{
+    Metrics: pm,
 }
 ```
 
 **Planned implementations**:
-- Prometheus (with `/metrics` endpoint)
 - StatsD (for Datadog, Graphite)
 - CloudWatch (for AWS environments)
 
@@ -383,9 +408,13 @@ github.com/aetomala/jwtauth/
 │   │   ├── logger.go             # Logger interface (4 methods: Debug, Info, Warn, Error)
 │   │   ├── slog_adapter.go       # Standard library adapter
 │   │   └── noop.go               # NoOp implementation
-│   ├── metrics/                  # Metrics abstraction
-│   │   ├── metrics.go            # Metrics interface
-│   │   └── noop.go               # NoOp implementation
+│   ├── metrics/                  # Metrics abstraction and implementations
+│   │   ├── interface.go          # Metrics interface
+│   │   ├── noop.go               # NoOp implementation
+│   │   ├── prometheus.go         # Prometheus implementation
+│   │   ├── metrics_suite_test.go # Ginkgo bootstrap
+│   │   ├── prometheus_test.go    # 9-phase Prometheus test suite
+│   │   └── noop_test.go          # NoOp tests
 │   ├── keymanager/               # Key rotation and management ✅
 │   │   ├── manager.go            # Core implementation
 │   │   ├── persistence.go        # Disk operations
@@ -405,6 +434,8 @@ github.com/aetomala/jwtauth/
 │   │   └── suite_test.go         # Shared test suite (642 lines, 51 tests run against both implementations)
 ├── internal/                     # Private packages
 │   └── testutil/                 # Shared test utilities
+│       ├── mock_logger.go        # Reusable MockLogger
+│       └── mock_metrics.go       # gomock-generated MockMetrics
 ├── doc/                          # Documentation
 │   └── ARCHITECTURE.md           # Design decisions and patterns
 └── examples/                     # Usage examples (coming)
@@ -414,7 +445,7 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 248 comprehensive tests across KeyManager, TokenService, and RefreshStore implementations, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%)
+**Current**: 321 comprehensive tests across KeyManager, TokenService, RefreshStore, and Metrics, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%)
 
 **KeyManager** (3 test suites):
 - Constructor validation and defaults
@@ -545,10 +576,12 @@ Tests follow **progressive phase-based development**:
 - ✅ RefreshStore: MemoryRefreshStore with defensive copying and concurrent safety
 - ✅ RefreshStore: RedisRefreshStore for distributed deployments with go-redis/v9
 - ✅ RefreshStore: Comprehensive test coverage (170 tests across 9 phases, 100% statement coverage, race-detection clean)
-- 🚧 Prometheus metrics adapter
+- ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with pre-registered jwtauth metrics, 100% test coverage
+- 🚧 Wire metrics into KeyManager, TokenService, and RefreshStore
 
 ### v0.3.0 (Beta)
-- 🚧 Metrics implementations (Prometheus, StatsD, CloudWatch)
+- 🚧 Wire Prometheus metrics into all components
+- 🚧 StatsD and CloudWatch metrics adapters
 - 🚧 Example applications
 
 ### v1.0.0 (Stable)
@@ -647,6 +680,6 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 
 **Status**: Beta (Active Development)
 **Version**: 0.2.0-beta
-**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore (Memory + Redis) ✅
-**Test Coverage**: 248 tests (KeyManager ~90%, TokenService ~87%, RefreshStore Memory+Redis 100%), all passing, race-detection enabled
-**Last Updated**: March 31, 2026
+**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅
+**Test Coverage**: 321 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%), all passing, race-detection enabled
+**Last Updated**: April 6, 2026
