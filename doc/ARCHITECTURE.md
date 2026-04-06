@@ -63,7 +63,7 @@ Each package has one clear responsibility:
 ### 3. Interface Segregation
 
 Interfaces are small and focused:
-- `Logger` - Only 3 methods (Info, Warn, Error)
+- `Logger` - Only 4 methods (Debug, Info, Warn, Error)
 - `Metrics` - Domain-specific methods, not generic
 - Easy to implement, test, and maintain
 
@@ -93,10 +93,13 @@ github.com/aetomala/jwtauth/
 │   │   ├── noop.go                # NoOp implementation
 │   │   ├── slog_adapter.go        # Standard library adapter
 │   │   └── README.md              # Usage documentation
-│   ├── metrics/                   # Metrics abstraction
-│   │   ├── metrics.go             # Metrics interface
+│   ├── metrics/                   # Metrics abstraction and implementations
+│   │   ├── interface.go           # Metrics interface
 │   │   ├── noop.go                # NoOp implementation
-│   │   └── README.md              # Usage documentation
+│   │   ├── prometheus.go          # Prometheus implementation
+│   │   ├── metrics_suite_test.go  # Ginkgo bootstrap
+│   │   ├── prometheus_test.go     # 9-phase Prometheus test suite (73 specs)
+│   │   └── noop_test.go           # NoOp tests
 │   ├── keymanager/                # Key rotation and management
 │   │   ├── manager.go             # Core implementation
 │   │   ├── persistence.go         # Disk operations
@@ -113,7 +116,8 @@ github.com/aetomala/jwtauth/
 │       └── suite_test.go          # Shared test suite
 ├── internal/                      # Private packages
 │   └── testutil/                  # Shared test utilities
-│       └── mock_logger.go         # Reusable mock logger
+│       ├── mock_logger.go         # Reusable MockLogger
+│       └── mock_metrics.go        # gomock-generated MockMetrics
 ├── docs/                          # Documentation
 │   └── ARCHITECTURE.md            # This file
 ├── examples/                      # Usage examples
@@ -236,20 +240,49 @@ KeyManager → logging.Logger interface → SlogAdapter → os.Stdout → K8s lo
 **Interface**: `pkg/metrics/Metrics`
 
 **Design Decisions**:
-- **Domain-specific** methods (not generic counters)
-- **Type-safe** (prevents errors)
-- **Optional** (nil-safe) - works without metrics
-- **Future implementations** (Prometheus, StatsD, CloudWatch)
+- **Generic primitives** (counters, gauges, histograms, durations) with label maps — backend-agnostic
+- **Optional** (nil-safe) — works without metrics
+- **Pre-registration at construction** — naming conflicts caught early, not at observation time
+- **Graceful label handling** — wrong or missing labels log a warning and skip rather than panic
 
-**Why domain-specific**:
+**Interface**:
 ```go
-// ✅ Good: Clear intent, type-safe
-metrics.RecordRotation(true, 150*time.Millisecond)
-
-// ❌ Alternative: Generic, error-prone
-metrics.IncrementCounter("key.rotation.success", 1)
-metrics.RecordDuration("key.rotation.duration", 150)
+type Metrics interface {
+    IncrementCounter(name string, labels map[string]string)
+    AddCounter(name string, value float64, labels map[string]string)
+    SetGauge(name string, value float64, labels map[string]string)
+    RecordHistogram(name string, value float64, labels map[string]string)
+    RecordDuration(name string, duration time.Duration, labels map[string]string)
+}
 ```
+
+**Implementations**:
+- `PrometheusMetrics` — Prometheus client, isolated registry, OpenMetrics `/metrics` handler, 100% test coverage
+- `NoOpMetrics` — zero overhead no-op for when metrics are disabled
+
+**PrometheusMetrics pre-registered metrics** (grouped by component):
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `jwtauth_tokens_issued_total` | Counter | status, error_type |
+| `jwtauth_tokens_validated_total` | Counter | status, error_type |
+| `jwtauth_tokens_refreshed_total` | Counter | status, error_type |
+| `jwtauth_tokens_revoked_total` | Counter | operation, status |
+| `jwtauth_tokens_introspected_total` | Counter | status |
+| `jwtauth_operations_total` | Counter | operation, status |
+| `jwtauth_operation_duration_seconds` | Histogram | operation |
+| `jwtauth_active_tokens` | Gauge | storage_backend |
+| `jwtauth_service_running` | Gauge | — |
+| `jwtauth_storage_operations_total` | Counter | operation, status, storage_backend |
+| `jwtauth_storage_cleanup_tokens_removed_total` | Counter | storage_backend |
+| `jwtauth_storage_operation_duration_seconds` | Histogram | operation, storage_backend |
+| `jwtauth_storage_tokens_count` | Gauge | storage_backend |
+| `jwtauth_key_rotations_total` | Counter | status |
+| `jwtauth_key_signing_operations_total` | Counter | status |
+| `jwtauth_key_validation_operations_total` | Counter | status |
+| `jwtauth_key_operation_duration_seconds` | Histogram | operation |
+| `jwtauth_key_current_version` | Gauge | — |
+| `jwtauth_key_active_versions_count` | Gauge | — |
 
 ### Integration Pattern
 
@@ -281,7 +314,10 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
     
     // Optional metrics
     if m.config.Metrics != nil {
-        m.config.Metrics.RecordRotation(true, time.Since(start))
+        m.config.Metrics.IncrementCounter("jwtauth_key_rotations_total",
+            map[string]string{"status": "success"})
+        m.config.Metrics.RecordDuration("jwtauth_key_operation_duration_seconds",
+            time.Since(start), map[string]string{"operation": "rotate"})
     }
     
     return nil
@@ -638,10 +674,12 @@ Catches:
 - ✅ KeyManager integrated
 - ✅ Tests comprehensive
 
-### Phase 2: Metrics
+### Phase 2: Metrics ✅
 - ✅ Metrics interface defined
-- ⏳ Prometheus implementation
-- ⏳ KeyManager integration
+- ✅ Prometheus implementation (`PrometheusMetrics`) with 19 pre-registered metrics, 100% test coverage
+- ✅ NoOp implementation
+- ✅ gomock `MockMetrics` for dependency injection in tests
+- ⏳ Wire into KeyManager, TokenService, and RefreshStore
 
 ### Phase 3: TokenService ✅ (Beta)
 - ✅ JWT creation with RS256 signing and custom claims
@@ -670,10 +708,11 @@ Catches:
   - Ensures semantic equivalence across backends
   - Easy to add new implementations
 
-### Phase 5: Metrics Implementations (In Progress)
-- 🚧 Prometheus adapter with `/metrics` endpoint
-- 🚧 StatsD integration (Datadog, Graphite compatible)
-- 🚧 CloudWatch metrics for AWS environments
+### Phase 5: Metrics Wiring (In Progress)
+- ✅ Prometheus adapter with `/metrics` endpoint (`PrometheusMetrics`)
+- ⏳ Wire `PrometheusMetrics` into KeyManager, TokenService, and RefreshStore
+- ⏳ StatsD integration (Datadog, Graphite compatible)
+- ⏳ CloudWatch metrics for AWS environments
 
 ### Phase 6: OpenTelemetry (Future)
 - ⏳ Distributed tracing
@@ -775,6 +814,6 @@ func (c *Component) Operation() error {
 
 ---
 
-**Last Updated**: March 31, 2026
+**Last Updated**: April 6, 2026
 **Version**: 0.2.0-beta
-**Status**: Active Development (TokenService + RefreshStore [Memory + Redis] stable, Metrics implementations in progress)
+**Status**: Active Development (TokenService + RefreshStore [Memory + Redis] + Metrics [Prometheus] stable, wiring metrics into components in progress)
