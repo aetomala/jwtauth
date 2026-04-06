@@ -462,7 +462,9 @@ type MemoryRefreshStore struct {
     mu         sync.RWMutex             // Thread safety
     tokens     map[string]*RefreshToken // tokenID → token
     userTokens map[string][]string      // userID → []tokenID (for bulk ops)
-    logger     logging.Logger           // Optional logging
+    logger     logging.Logger           // Optional; nil disables logging
+    metrics    metrics.Metrics          // Optional; nil disables metrics
+    backend    string                   // storage_backend label value; always "memory"
 }
 ```
 
@@ -475,6 +477,7 @@ type MemoryRefreshStore struct {
 - **Cleanup**: Removes expired tokens from both maps and userTokens index
 - **Context propagation**: All operations respect context.Context cancellation
 - **Structured logging**: Warn for validation failures, Info for successful ops
+- **Metrics instrumentation**: Counter + duration recorded on every exit path; token-count gauge updated on Store and Cleanup
 - **Thread-safe**: Read operations concurrent, write operations exclusive
 
 #### RedisRefreshStore (Distributed, Multi-Instance) ✅
@@ -482,8 +485,10 @@ type MemoryRefreshStore struct {
 **Design**:
 ```go
 type RedisRefreshStore struct {
-    client *redis.Client  // go-redis/v9 client (internally thread-safe)
-    logger logging.Logger // Optional logging
+    client  *redis.Client   // go-redis/v9 client (internally thread-safe)
+    logger  logging.Logger  // Optional; nil disables logging
+    metrics metrics.Metrics // Optional; nil disables metrics
+    backend string          // storage_backend label value; always "redis"
 }
 ```
 
@@ -520,7 +525,96 @@ user_tokens:{userID}    → Set of tokenIDs for that user
 | **Idempotence** | Revoke returns nil if token doesn't exist (safe to call multiple times) |
 | **Context** | Full support for context.Context cancellation propagation |
 | **Logging** | Structured key-value logs with operation names and fields |
-| **Testing** | Identical comprehensive test suite (51 tests per implementation) |
+| **Metrics** | Counter + duration on every operation; cleanup records removed count and token-count gauge |
+| **Testing** | Identical comprehensive test suite (61 tests per implementation, 122 total) |
+
+#### Storage Metrics Instrumentation
+
+Every public method records two metrics unconditionally, regardless of outcome:
+
+| Metric | Type | When recorded |
+|--------|------|---------------|
+| `jwtauth_storage_operations_total` | Counter | Every exit path — success, validation error, not found, etc. |
+| `jwtauth_storage_operation_duration_seconds` | Histogram | Every exit path — full method duration including lock wait |
+
+Cleanup additionally records:
+
+| Metric | Type | When recorded |
+|--------|------|---------------|
+| `jwtauth_storage_cleanup_tokens_removed_total` | Counter | Cleanup success only — value is the removed count |
+| `jwtauth_storage_tokens_count` | Gauge | Cleanup success (both backends); Store success (Memory only — see below) |
+
+**Status label values** for `jwtauth_storage_operations_total`:
+
+| Value | Meaning |
+|-------|---------|
+| `success` | Operation completed normally |
+| `validation_error` | Input rejected (empty ID, expired token at write time) |
+| `not_found` | Token does not exist in storage |
+| `revoked` | Token exists but has been revoked |
+| `expired` | Token exists but has passed its expiry |
+| `cancelled` | Context was cancelled before the operation began |
+| `error` | Unexpected backend failure (Redis pipeline error, marshal error, scan error) |
+
+Separating `cancelled` from `error` allows clean alerting: a spike in `error` indicates a backend problem; a spike in `cancelled` indicates client timeouts or graceful shutdown — two different on-call responses.
+
+**Recording pattern** — deferred closure with a captured `status` variable:
+
+```go
+func (m *MemoryRefreshStore) Store(ctx context.Context, ...) error {
+    start := time.Now()
+    status := "error"          // default; overwritten at each return point
+    defer func() {
+        if m.metrics != nil {
+            m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+                "operation": "store", "status": status, "storage_backend": m.backend,
+            })
+            m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), ...)
+        }
+    }()
+    // ...
+    status = "validation_error"
+    return ErrInvalidTokenID
+    // ...
+    status = "success"
+    return nil
+}
+```
+
+**Token-count gauge asymmetry**:
+
+`MemoryRefreshStore` updates `jwtauth_storage_tokens_count` on every successful `Store` call because `len(m.tokens)` is O(1) and available while the write lock is already held. This gives a real-time count.
+
+`RedisRefreshStore` only updates the gauge during `Cleanup` because an exact live count would require a separate `DBSIZE` or `SCAN` command — an additional network round-trip that is not justified for a gauge update on an already-costly write path. The gauge is therefore a post-cleanup snapshot for Redis.
+
+**Metric name constants** — all four metric names are defined once in `pkg/storage/observability.go` and referenced by both implementations:
+
+```go
+const (
+    metricStorageOpsTotal     = "jwtauth_storage_operations_total"
+    metricStorageOpDuration   = "jwtauth_storage_operation_duration_seconds"
+    metricStorageRemovedTotal = "jwtauth_storage_cleanup_tokens_removed_total"
+    metricStorageTokensCount  = "jwtauth_storage_tokens_count"
+)
+```
+
+A typo in a string literal silently drops data; a typo in a constant reference fails to compile.
+
+**Hot-path performance consideration** — label map allocations:
+
+`Store` and `Retrieve` are on the hot path. Every call currently allocates two `map[string]string` inside the deferred closure for the `operation`/`status`/`storage_backend` label sets. At high throughput (tens of thousands of operations/second) this creates sustained GC pressure.
+
+*Why it is not yet addressed*: The allocation is O(1) and tiny relative to what it measures — a `sync.RWMutex` acquire + map write for Memory, or a Redis pipeline round-trip for Redis. Profiling is required before optimizing.
+
+*Possible mitigations when profiling confirms it is a bottleneck*:
+
+1. **Pre-allocate per-status label maps at construction** — since `operation` and `storage_backend` are fixed per method, build one `map[string]string` per `(operation, status)` pair once in the constructor and reuse them. There are 5 operations × 7 status values = 35 maps maximum, all constant after `New...`. No allocation on the hot path at all.
+
+2. **`sync.Pool` for label maps** — pool map instances and reset/return them after `IncrementCounter`/`RecordDuration` complete. Works for any backend but requires the `Metrics` implementation to not retain the map beyond the call.
+
+3. **Promote to `PrometheusMetrics` internals** — bypass the `map[string]string` interface entirely for the storage hot path by holding pre-resolved `prometheus.Counter` and `prometheus.Histogram` handles directly in the store struct. This is the most efficient option but breaks the abstraction and couples the store to Prometheus.
+
+The right choice depends on profiled evidence. Start with option 1 if the benchmark shows label-map allocation is significant; it requires no interface changes and has no trade-offs.
 
 #### Shared Test Suite Pattern
 
@@ -532,37 +626,42 @@ user_tokens:{userID}    → Set of tokenIDs for that user
 **Solution**: Single parameterized test suite runs against all implementations:
 
 ```go
-// suite_test.go defines 51 comprehensive tests
-func RunRefreshStoreTests(description string, factory StoreFactory, cleanup CleanupFunc) bool {
+// suite_test.go defines 61 comprehensive tests across 10 phases
+// StoreFactory accepts optional MockMetrics — nil for phases 1–9, live mock for Phase 10
+type StoreFactory func(logger *testutil.MockLogger, m metrics.Metrics) storage.RefreshStore
+
+func RunRefreshStoreTests(description, backend string, factory StoreFactory, cleanup CleanupFunc) bool {
     Describe(description, func() {
-        // All 51 tests run here
-        // Verify all error conditions, edge cases, context handling
+        // Phases 1–9: functional correctness (nil metrics)
+        // Phase 10:   metrics recording assertions (MockMetrics via gomock)
     })
 }
 
 // memory_test.go uses the suite
 var _ = RunRefreshStoreTests(
-    "MemoryRefreshStore",
-    func(logger) storage.RefreshStore { return storage.NewMemoryRefreshStore(logger) },
-    nil,  // No cleanup needed
+    "MemoryRefreshStore", "memory",
+    func(logger *testutil.MockLogger, m metrics.Metrics) storage.RefreshStore {
+        return storage.NewMemoryRefreshStore(logger, m)
+    },
+    nil,
 )
 
 // redis_test.go uses the same suite
 var _ = RunRefreshStoreTests(
-    "RedisRefreshStore",
-    func(logger) storage.RefreshStore {
-        mini := miniredis.Run()
-        return storage.NewRedisRefreshStore(redis.NewClient(...), logger)
+    "RedisRefreshStore", "redis",
+    func(logger *testutil.MockLogger, m metrics.Metrics) storage.RefreshStore {
+        mini, _ := miniredis.Run()
+        return storage.NewRedisRefreshStore(redis.NewClient(...), logger, m)
     },
-    func() { mini.FlushAll() },  // Cleanup after each test
+    func() { mini.FlushAll() },
 )
 ```
 
 **Benefits**:
 - ✅ Both implementations pass identical tests (semantic equivalence)
 - ✅ No duplication (single suite shared by all)
-- ✅ Easy to add new implementations (just add a new test file calling RunRefreshStoreTests)
-- ✅ Same behavior guaranteed (same test code)
+- ✅ Phase 10 uses gomock to assert exact metric calls per operation and status label
+- ✅ Easy to add new implementations (add a new file calling `RunRefreshStoreTests`)
 - ✅ Reduces maintenance burden (update tests once, benefits both)
 
 ---
@@ -710,7 +809,13 @@ Catches:
 
 ### Phase 5: Metrics Wiring (In Progress)
 - ✅ Prometheus adapter with `/metrics` endpoint (`PrometheusMetrics`)
-- ⏳ Wire `PrometheusMetrics` into KeyManager, TokenService, and RefreshStore
+- ✅ `MemoryRefreshStore` and `RedisRefreshStore` fully instrumented
+  - Counter + duration on every operation exit path
+  - `"cancelled"` status distinct from `"error"` for context cancellation
+  - Token-count gauge updated in real time on Memory `Store`; post-cleanup for Redis
+  - Metric name constants centralised in `pkg/storage/observability.go`
+  - Phase 10 test suite verifies exact metric calls via gomock
+- ⏳ Wire metrics into KeyManager and TokenService
 - ⏳ StatsD integration (Datadog, Graphite compatible)
 - ⏳ CloudWatch metrics for AWS environments
 
@@ -816,4 +921,4 @@ func (c *Component) Operation() error {
 
 **Last Updated**: April 6, 2026
 **Version**: 0.2.0-beta
-**Status**: Active Development (TokenService + RefreshStore [Memory + Redis] + Metrics [Prometheus] stable, wiring metrics into components in progress)
+**Status**: Active Development (TokenService + RefreshStore [Memory + Redis] + Metrics [Prometheus] stable; RefreshStore fully instrumented; metrics wiring into KeyManager and TokenService in progress)
