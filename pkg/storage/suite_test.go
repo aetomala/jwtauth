@@ -4,21 +4,27 @@ import (
 	"context"
 	"fmt"
 	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.uber.org/mock/gomock"
 
 	"github.com/aetomala/jwtauth/internal/testutil"
+	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/storage"
 )
 
-// StoreFactory creates a RefreshStore for testing
-type StoreFactory func(logger *testutil.MockLogger) storage.RefreshStore
+// StoreFactory creates a RefreshStore for testing. Pass nil for m to disable
+// metrics instrumentation (used by phases 1–9).
+type StoreFactory func(logger *testutil.MockLogger, m metrics.Metrics) storage.RefreshStore
 
 // CleanupFunc cleans up after each test (implementation-specific)
 type CleanupFunc func()
 
-// RunRefreshStoreTests runs the complete test suite against any RefreshStore implementation
-func RunRefreshStoreTests(description string, factory StoreFactory, cleanup CleanupFunc) bool {
+// RunRefreshStoreTests runs the complete test suite against any RefreshStore
+// implementation. backend is the storage_backend label value used in metric
+// assertions (e.g. "memory" or "redis").
+func RunRefreshStoreTests(description, backend string, factory StoreFactory, cleanup CleanupFunc) bool {
 	return Describe(description, func() {
 		var (
 			store      storage.RefreshStore
@@ -34,7 +40,7 @@ func RunRefreshStoreTests(description string, factory StoreFactory, cleanup Clea
 		BeforeEach(func() {
 			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 			mockLogger = testutil.NewMockLogger()
-			store = factory(mockLogger)
+			store = factory(mockLogger, nil)
 
 			tokenID = "token-12345"
 			userID = "user-67890"
@@ -65,7 +71,7 @@ func RunRefreshStoreTests(description string, factory StoreFactory, cleanup Clea
 			})
 
 			It("should create store with nil logger", func() {
-				storeWithoutLogger := factory(nil)
+				storeWithoutLogger := factory(nil, nil)
 				Expect(storeWithoutLogger).NotTo(BeNil())
 			})
 
@@ -589,6 +595,232 @@ func RunRefreshStoreTests(description string, factory StoreFactory, cleanup Clea
 				token, err := store.Retrieve(ctx, tokenID)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(token.ExpiresAt).To(BeTemporally("~", farFuture, time.Second))
+			})
+		})
+
+		// ============================================================
+		// PHASE 10: Metrics Recording
+		// Checkpoint: Every operation records the correct metric calls
+		// ============================================================
+		Describe("Phase 10: Metrics Recording", func() {
+			var (
+				ctrl  *gomock.Controller
+				mockM *testutil.MockMetrics
+				ms    storage.RefreshStore // store with live MockMetrics
+			)
+
+			BeforeEach(func() {
+				ctrl = gomock.NewController(GinkgoT())
+				mockM = testutil.NewMockMetrics(ctrl)
+				ms = factory(mockLogger, mockM)
+			})
+
+			AfterEach(func() {
+				ctrl.Finish()
+			})
+
+			It("should record counter and duration on Store success", func() {
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "store", "storage_backend": backend})
+				// Some implementations (e.g. Memory) update the token-count gauge on
+				// every Store; others (e.g. Redis) only update it in Cleanup.
+				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
+					gomock.Any(),
+					map[string]string{"storage_backend": backend}).AnyTimes()
+
+				err := ms.Store(ctx, tokenID, userID, expiresAt, metadata)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should record validation_error status on Store with empty tokenID", func() {
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "store", "status": "validation_error", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "store", "storage_backend": backend})
+
+				err := ms.Store(ctx, "", userID, expiresAt, metadata)
+				Expect(err).To(HaveOccurred())
+			})
+
+			It("should record counter and duration on Retrieve success", func() {
+				// Setup: Store the token (expect those metrics too)
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "store", "storage_backend": backend})
+				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
+					gomock.Any(),
+					map[string]string{"storage_backend": backend}).AnyTimes()
+				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
+
+				// Retrieve expectations
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "retrieve", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "retrieve", "storage_backend": backend})
+
+				token, err := ms.Retrieve(ctx, tokenID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(token).NotTo(BeNil())
+			})
+
+			It("should record not_found status on Retrieve for nonexistent token", func() {
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "retrieve", "status": "not_found", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "retrieve", "storage_backend": backend})
+
+				_, err := ms.Retrieve(ctx, "nonexistent-token")
+				Expect(err).To(MatchError(storage.ErrTokenNotFound))
+			})
+
+			It("should record revoked status on Retrieve for revoked token", func() {
+				// Store
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "store", "storage_backend": backend})
+				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
+					gomock.Any(),
+					map[string]string{"storage_backend": backend}).AnyTimes()
+				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
+
+				// Revoke
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "revoke", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "revoke", "storage_backend": backend})
+				Expect(ms.Revoke(ctx, tokenID)).To(Succeed())
+
+				// Retrieve
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "retrieve", "status": "revoked", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "retrieve", "storage_backend": backend})
+
+				_, err := ms.Retrieve(ctx, tokenID)
+				Expect(err).To(MatchError(storage.ErrTokenRevoked))
+			})
+
+			It("should record counter and duration on Revoke success", func() {
+				// Store
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "store", "storage_backend": backend})
+				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
+					gomock.Any(),
+					map[string]string{"storage_backend": backend}).AnyTimes()
+				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
+
+				// Revoke
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "revoke", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "revoke", "storage_backend": backend})
+
+				Expect(ms.Revoke(ctx, tokenID)).To(Succeed())
+			})
+
+			It("should record counter and duration on RevokeAllForUser success", func() {
+				// Store
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "store", "storage_backend": backend})
+				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
+					gomock.Any(),
+					map[string]string{"storage_backend": backend}).AnyTimes()
+				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
+
+				// RevokeAllForUser
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "revoke_all", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "revoke_all", "storage_backend": backend})
+
+				Expect(ms.RevokeAllForUser(ctx, userID)).To(Succeed())
+			})
+
+			It("should record counter, duration, removed count, and gauge on Cleanup with expired tokens", func() {
+				veryShortLived := time.Now().Add(50 * time.Millisecond)
+
+				// Store short-lived token
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "store", "storage_backend": backend})
+				// Memory updates the gauge on Store (value=1 after first insert); Redis does not.
+				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
+					float64(1),
+					map[string]string{"storage_backend": backend}).AnyTimes()
+				err := ms.Store(ctx, tokenID, userID, veryShortLived, metadata)
+				if err != nil {
+					Skip("store rejected short-lived token")
+				}
+
+				time.Sleep(100 * time.Millisecond)
+
+				// Cleanup expectations
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "cleanup", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "cleanup", "storage_backend": backend})
+				mockM.EXPECT().AddCounter("jwtauth_storage_cleanup_tokens_removed_total",
+					float64(1),
+					map[string]string{"storage_backend": backend})
+				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
+					float64(0),
+					map[string]string{"storage_backend": backend})
+
+				count, err := ms.Cleanup(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(count).To(Equal(1))
+			})
+
+			It("should record zero removed count and gauge on Cleanup with no tokens", func() {
+				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
+					map[string]string{"operation": "cleanup", "status": "success", "storage_backend": backend})
+				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
+					gomock.Any(),
+					map[string]string{"operation": "cleanup", "storage_backend": backend})
+				mockM.EXPECT().AddCounter("jwtauth_storage_cleanup_tokens_removed_total",
+					float64(0),
+					map[string]string{"storage_backend": backend})
+				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
+					float64(0),
+					map[string]string{"storage_backend": backend})
+
+				count, err := ms.Cleanup(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(count).To(Equal(0))
+			})
+
+			It("should not panic when metrics is nil", func() {
+				nilMetricsStore := factory(mockLogger, nil)
+				Expect(func() {
+					_ = nilMetricsStore.Store(ctx, tokenID, userID, expiresAt, metadata)
+					_, _ = nilMetricsStore.Retrieve(ctx, tokenID)
+					_ = nilMetricsStore.Revoke(ctx, tokenID)
+					_ = nilMetricsStore.RevokeAllForUser(ctx, userID)
+					_, _ = nilMetricsStore.Cleanup(ctx)
+				}).NotTo(Panic())
 			})
 		})
 
