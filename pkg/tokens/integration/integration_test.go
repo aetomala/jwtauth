@@ -45,7 +45,7 @@ var _ = Describe("TokenService Integration", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		store = storage.NewMemoryRefreshStore(nil)
+		store = storage.NewMemoryRefreshStore(nil, nil)
 
 		svc, err = tokens.NewService(tokens.ServiceConfig{
 			KeyManager:           km,
@@ -192,7 +192,7 @@ var _ = Describe("TokenService Integration", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		store2 := storage.NewMemoryRefreshStore(nil)
+		store2 := storage.NewMemoryRefreshStore(nil, nil)
 
 		svc2, err := tokens.NewService(tokens.ServiceConfig{
 			KeyManager:           km2,
@@ -282,7 +282,7 @@ var _ = Describe("TokenService Integration", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		store2 := storage.NewMemoryRefreshStore(nil)
+		store2 := storage.NewMemoryRefreshStore(nil, nil)
 
 		svc2, err := tokens.NewService(tokens.ServiceConfig{
 			KeyManager:           km2,
@@ -401,7 +401,7 @@ var _ = Describe("TokenService Integration", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		store2 := storage.NewMemoryRefreshStore(nil)
+		store2 := storage.NewMemoryRefreshStore(nil, nil)
 		svc2, err := tokens.NewService(tokens.ServiceConfig{
 			KeyManager:           km2,
 			RefreshStore:         store2,
