@@ -1,5 +1,9 @@
 # jwtauth
 
+![Tests](https://github.com/aetomala/jwtauth/actions/workflows/CI.yml/badge.svg?branch=main)
+![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+
 **Production-ready JWT authentication library for distributed Go applications**
 
 > ⚠️ **Beta Status**: KeyManager and RefreshStore are production-ready and fully tested. TokenService is in beta — core operations are complete with comprehensive test coverage. API may change before v1.0.0.
