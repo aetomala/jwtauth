@@ -50,7 +50,7 @@ run_test "unit tests (race + coverage)" \
       --covermode=atomic \
       --coverpkg=./... \
       --skip-package=integration \
-      pkg/keymanager pkg/tokens pkg/storage pkg/logging"
+      pkg/keymanager pkg/tokens pkg/storage pkg/logging pkg/metrics"
 
 run_test "integration tests (race)" \
     "ginkgo -r --race --timeout=120s --tags=integration ./pkg/tokens/integration/..."
