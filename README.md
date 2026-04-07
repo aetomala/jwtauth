@@ -427,7 +427,8 @@ github.com/aetomala/jwtauth/
 │   ├── logging/                  # Logging abstraction
 │   │   ├── logger.go             # Logger interface (4 methods: Debug, Info, Warn, Error)
 │   │   ├── slog_adapter.go       # Standard library adapter
-│   │   └── noop.go               # NoOp implementation
+│   │   ├── noop.go               # NoOp implementation
+│   │   └── logger_test.go        # Logging tests (76 specs)
 │   ├── metrics/                  # Metrics abstraction and implementations
 │   │   ├── interface.go          # Metrics interface
 │   │   ├── noop.go               # NoOp implementation
@@ -445,25 +446,37 @@ github.com/aetomala/jwtauth/
 │   │   └── disk_test.go          # 9-phase DiskKeyStore tests (38 specs)
 │   ├── tokens/                   # JWT operations (Beta) 🟡
 │   │   ├── service.go            # TokenService implementation
+│   │   ├── claims.go             # Claims management
 │   │   ├── service_test.go       # Token operations tests
 │   │   ├── service_lifecycle_test.go  # Lifecycle management tests
-│   │   └── claims.go             # Claims management
-│   ├── storage/                  # Refresh token storage ✅
-│   │   ├── interface.go          # RefreshStore interface
-│   │   ├── errors.go             # Sentinel error types
-│   │   ├── memory.go             # In-memory implementation (~287 lines, production-ready)
-│   │   ├── memory_test.go        # Test runner for MemoryRefreshStore (26 lines)
-│   │   ├── redis.go              # Redis implementation (~497 lines, production-ready)
-│   │   ├── redis_test.go         # Test runner for RedisRefreshStore (60 lines)
-│   │   └── suite_test.go         # Shared test suite (642 lines, 51 tests run against both implementations)
+│   │   └── integration/          # Integration tests
+│   │       └── integration_test.go
+│   └── storage/                  # Refresh token storage ✅
+│       ├── interface.go          # RefreshStore interface
+│       ├── errors.go             # Sentinel error types
+│       ├── observability.go      # Metric name constants
+│       ├── memory.go             # In-memory implementation
+│       ├── memory_test.go        # Test runner for MemoryRefreshStore
+│       ├── redis.go              # Redis implementation
+│       ├── redis_test.go         # Test runner for RedisRefreshStore
+│       ├── storage_suite_test.go # Ginkgo bootstrap
+│       └── suite_test.go         # Shared test suite (61 tests, runs against both implementations)
 ├── internal/                     # Private packages
 │   └── testutil/                 # Shared test utilities
+│       ├── errors.go             # Shared test error helpers
+│       ├── mock_keymanager.go    # gomock-generated MockKeyManager
+│       ├── mock_keystore.go      # gomock-generated MockKeyStore
 │       ├── mock_logger.go        # Reusable MockLogger
 │       ├── mock_metrics.go       # gomock-generated MockMetrics
-│       └── mock_keystore.go      # gomock-generated MockKeyStore
+│       └── mock_refreshstore.go  # gomock-generated MockRefreshStore
 ├── doc/                          # Documentation
-│   └── ARCHITECTURE.md           # Design decisions and patterns
-└── examples/                     # Usage examples (coming)
+│   ├── ARCHITECTURE.md           # Design decisions and patterns
+│   └── DEPLOYMENT.md             # Deployment guide
+├── examples/                     # Framework usage examples
+│   ├── gin-example/              # Gin HTTP framework
+│   ├── echo-example/             # Echo HTTP framework
+│   └── chi-example/              # Chi HTTP router
+└── jwtauth_suite_test.go         # Root Ginkgo suite bootstrap
 ```
 
 ## Testing

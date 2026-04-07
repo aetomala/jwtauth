@@ -92,39 +92,56 @@ github.com/aetomala/jwtauth/
 │   │   ├── logger.go              # Logger interface
 │   │   ├── noop.go                # NoOp implementation
 │   │   ├── slog_adapter.go        # Standard library adapter
+│   │   ├── logger_test.go         # Logging tests (76 specs)
 │   │   └── README.md              # Usage documentation
 │   ├── metrics/                   # Metrics abstraction and implementations
 │   │   ├── interface.go           # Metrics interface
 │   │   ├── noop.go                # NoOp implementation
 │   │   ├── prometheus.go          # Prometheus implementation
 │   │   ├── metrics_suite_test.go  # Ginkgo bootstrap
-│   │   ├── prometheus_test.go     # 9-phase Prometheus test suite (73 specs)
+│   │   ├── prometheus_test.go     # 9-phase Prometheus test suite (66 specs)
 │   │   └── noop_test.go           # NoOp tests
-│   ├── keymanager/                # Key rotation and management
-│   │   ├── manager.go             # Core implementation
-│   │   ├── persistence.go         # Disk operations
-│   │   └── keymanager_test.go    # Comprehensive tests
+│   ├── keymanager/                # Key rotation and management ✅
+│   │   ├── keymanager.go          # Manager: lifecycle, rotation, JWKS generation
+│   │   ├── interface.go           # Manager interface
+│   │   ├── keystore.go            # KeyStore interface, StoredKey type, sentinel errors
+│   │   ├── disk.go                # DiskKeyStore — filesystem-backed KeyStore
+│   │   ├── observability.go       # Metric name constants
+│   │   ├── keymanager_test.go     # 8-phase Manager tests (44 specs, MockKeyStore)
+│   │   └── disk_test.go           # 9-phase DiskKeyStore tests (38 specs)
 │   ├── tokens/                    # JWT token operations (Beta)
 │   │   ├── service.go             # TokenService implementation
+│   │   ├── claims.go              # Claims management
 │   │   ├── service_test.go        # Token operations tests
 │   │   ├── service_lifecycle_test.go  # Lifecycle management tests
-│   │   └── claims.go              # Claims management
+│   │   └── integration/           # Integration tests
+│   │       └── integration_test.go
 │   └── storage/                   # Refresh token storage ✅
 │       ├── interface.go           # RefreshStore interface
+│       ├── errors.go              # Sentinel error types
+│       ├── observability.go       # Metric name constants
 │       ├── memory.go              # In-memory implementation
+│       ├── memory_test.go         # Test runner for MemoryRefreshStore
 │       ├── redis.go               # Redis implementation
-│       └── suite_test.go          # Shared test suite
+│       ├── redis_test.go          # Test runner for RedisRefreshStore
+│       ├── storage_suite_test.go  # Ginkgo bootstrap
+│       └── suite_test.go          # Shared test suite (61 tests, runs against both implementations)
 ├── internal/                      # Private packages
 │   └── testutil/                  # Shared test utilities
+│       ├── errors.go              # Shared test error helpers
+│       ├── mock_keymanager.go     # gomock-generated MockKeyManager
+│       ├── mock_keystore.go       # gomock-generated MockKeyStore
 │       ├── mock_logger.go         # Reusable MockLogger
-│       └── mock_metrics.go        # gomock-generated MockMetrics
-├── docs/                          # Documentation
-│   └── ARCHITECTURE.md            # This file
-├── examples/                      # Usage examples
-│   └── keymanager/                # KeyManager examples
-│       ├── basic.go               # Basic usage
-│       └── with_logging.go        # With logging and metrics
-└── go.mod
+│       ├── mock_metrics.go        # gomock-generated MockMetrics
+│       └── mock_refreshstore.go   # gomock-generated MockRefreshStore
+├── doc/                           # Documentation
+│   ├── ARCHITECTURE.md            # This file
+│   └── DEPLOYMENT.md              # Deployment guide
+├── examples/                      # Framework usage examples
+│   ├── gin-example/               # Gin HTTP framework
+│   ├── echo-example/              # Echo HTTP framework
+│   └── chi-example/               # Chi HTTP router
+└── jwtauth_suite_test.go          # Root Ginkgo suite bootstrap
 ```
 
 ### Package Organization
