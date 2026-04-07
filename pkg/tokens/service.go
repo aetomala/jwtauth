@@ -13,6 +13,7 @@ import (
 
 	"github.com/aetomala/jwtauth/pkg/keymanager"
 	"github.com/aetomala/jwtauth/pkg/logging"
+	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -27,7 +28,8 @@ type ServiceConfig struct {
 	RefreshStore storage.RefreshStore  // Persists refresh tokens
 
 	// Optional
-	Logger logging.Logger // Structured logger; nil disables logging
+	Logger  logging.Logger  // Structured logger; nil disables logging
+	Metrics metrics.Metrics // Optional; nil disables metrics.
 
 	// Token lifetimes — defaults applied by NewService if zero
 	AccessTokenDuration  time.Duration // Default: 15 minutes
@@ -49,6 +51,7 @@ type Service struct {
 	keyManager   keymanager.KeyManager // Crypto operations
 	refreshStore storage.RefreshStore  // Token storage
 	logger       logging.Logger        // Optional logging
+	metrics      metrics.Metrics       // Optional metrics recorder
 
 	// ===== Configuration (Immutable) =====
 	accessTokenDuration  time.Duration // e.g., 15 minutes
@@ -136,12 +139,13 @@ func NewService(config ServiceConfig) (*Service, error) {
 		keyManager:           config.KeyManager,
 		refreshStore:         config.RefreshStore,
 		logger:               config.Logger,
+		metrics:              config.Metrics,
 		accessTokenDuration:  config.AccessTokenDuration,
 		refreshTokenDuration: config.RefreshTokenDuration,
 		cleanupInterval:      config.CleanupInterval,
 		issuer:               config.Issuer,
 		audience:             config.Audience,
-		shutdownChan: make(chan struct{}),
+		shutdownChan:         make(chan struct{}),
 	}
 
 	return s, nil
@@ -156,6 +160,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 func (s *Service) Start(ctx context.Context) error {
 	// ===== STEP 1: Check If Already Running (Idempotent) =====
 	if !s.isRunning.CompareAndSwap(false, true) {
+		// Already running — idempotent no-op, no metric recorded
 		if s.logger != nil {
 			s.logger.Warn("start called but service already running")
 		}
@@ -182,7 +187,10 @@ func (s *Service) Start(ctx context.Context) error {
 	s.wg.Add(1)
 	go s.cleanupLoop(ctx)
 
-	// ===== STEP 5: Log Success =====
+	// ===== STEP 5: Record Metric and Log Success =====
+	if s.metrics != nil {
+		s.metrics.SetGauge(metricServiceRunning, 1.0, map[string]string{})
+	}
 	if s.logger != nil {
 		s.logger.Info("token service started")
 	}
@@ -280,7 +288,10 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("failed to shutdown keymanager: %w", err)
 	}
 
-	// ===== STEP 6: Log Success =====
+	// ===== STEP 6: Record Metric and Log Success =====
+	if s.metrics != nil {
+		s.metrics.SetGauge(metricServiceRunning, 0.0, map[string]string{})
+	}
 	if s.logger != nil {
 		s.logger.Info("token service stopped")
 	}
@@ -295,16 +306,34 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // Returns ErrInvalidUserID for empty/whitespace-only user IDs, ErrServiceNotRunning
 // if the service is stopped, or the context error if the context is already cancelled.
 func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, error) {
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+				"status":     status,
+				"error_type": errorType,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "issue_access_token",
+			})
+		}
+	}()
 
 	// ===== STEP 1: Validate user id ====
 	// validate user ID Split into two to optimize in the event of high volume of invalid requests
 	if len(userID) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("attempted to get token with empty userID")
 		}
 		return "", ErrInvalidUserID
 	}
 	if len(strings.TrimSpace(userID)) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("attempted to get token with empty userID")
 		}
@@ -313,6 +342,8 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 
 	//===== STEP 2: Service State Check =====
 	if !s.IsRunning() {
+		status = "not_running"
+		errorType = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("service not running")
 		}
@@ -322,6 +353,8 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	// Check if context is already cancelled/expired
 	// Fail fast if client already disconnected
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
 		if s.logger != nil {
 			s.logger.Warn("context cancelled during token issuance",
 				"userID", userID,
@@ -418,7 +451,9 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 			"tokenID", tokenID)
 	}
 
-	// ===== STEP 8: Log Success =====
+	// ===== STEP 8: Record Success and Log =====
+	status = "success"
+	errorType = ""
 	if s.logger != nil {
 		s.logger.Info("access token issued",
 			"userID", userID,
@@ -437,14 +472,33 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 //
 // Returns the same errors as IssueAccessToken.
 func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string, customClaims map[string]interface{}) (string, error) {
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+				"status":     status,
+				"error_type": errorType,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "issue_access_token",
+			})
+		}
+	}()
+
 	// ===== STEP 1: Validate User ID =====
 	if len(userID) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("attempted to get token with empty userID")
 		}
 		return "", ErrInvalidUserID
 	}
 	if len(strings.TrimSpace(userID)) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("attempted to get token with empty userID")
 		}
@@ -453,6 +507,8 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 
 	// ===== STEP 2: Service State Check =====
 	if !s.IsRunning() {
+		status = "not_running"
+		errorType = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("service not running")
 		}
@@ -461,6 +517,8 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 
 	// ===== STEP 3: Context Check =====
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
 		if s.logger != nil {
 			s.logger.Warn("context cancelled during token issuance",
 				"userID", userID,
@@ -555,7 +613,9 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 			"userID", userID,
 			"tokenID", tokenID)
 	}
-	// Log success
+	// ===== STEP 8: Record Success and Log =====
+	status = "success"
+	errorType = ""
 	if s.logger != nil {
 		s.logger.Info("access token with custom claims issued",
 			"userID", userID,
@@ -574,15 +634,34 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 //
 // Returns the same errors as IssueAccessToken.
 func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string, error) {
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+				"status":     status,
+				"error_type": errorType,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "issue_refresh_token",
+			})
+		}
+	}()
+
 	// ===== STEP 1: Validate user id ====
 	// validate user ID Split into two to optimize in the event of high volume of invalid requests
 	if len(userID) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("attempted to get token with empty userID")
 		}
 		return "", ErrInvalidUserID
 	}
 	if len(strings.TrimSpace(userID)) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("attempted to get token with empty userID")
 		}
@@ -592,6 +671,8 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	//===== STEP 2: Service State Check =====
 
 	if !s.IsRunning() {
+		status = "not_running"
+		errorType = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("service not running")
 		}
@@ -602,6 +683,8 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	// Check if context is already cancelled/expired
 	// Fail fast if client already disconnected
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
 		if s.logger != nil {
 			s.logger.Warn("context cancelled during token issuance",
 				"userID", userID,
@@ -663,7 +746,9 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 			"expiresAt", expiresAt)
 	}
 
-	// ===== STEP 7: Log Success =====
+	// ===== STEP 7: Record Success and Log =====
+	status = "success"
+	errorType = ""
 	if s.logger != nil {
 		s.logger.Info("refresh token issued",
 			"userID", userID,
@@ -680,15 +765,34 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 //
 // Returns the same errors as IssueAccessToken.
 func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID string, metadata map[string]interface{}) (string, error) {
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+				"status":     status,
+				"error_type": errorType,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "issue_refresh_token",
+			})
+		}
+	}()
+
 	// ===== STEP 1: Validate user id ====
 	// validate user ID Split into two to optimize in the event of high volume of invalid requests
 	if len(userID) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("attempted to get token with empty userID")
 		}
 		return "", ErrInvalidUserID
 	}
 	if len(strings.TrimSpace(userID)) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("attempted to get token with empty userID")
 		}
@@ -697,6 +801,8 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 
 	//===== STEP 2: Service State Check =====
 	if !s.IsRunning() {
+		status = "not_running"
+		errorType = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("service not running")
 		}
@@ -707,6 +813,8 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	// Check if context is already cancelled/expired
 	// Fail fast if client already disconnected
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
 		if s.logger != nil {
 			s.logger.Warn("context cancelled during token issuance",
 				"userID", userID,
@@ -769,7 +877,9 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 			"expiresAt", expiresAt)
 	}
 
-	// ===== STEP 7: Log Success =====
+	// ===== STEP 7: Record Success and Log =====
+	status = "success"
+	errorType = ""
 	if s.logger != nil {
 		s.logger.Info("refresh token with metadata issued",
 			"userID", userID,
@@ -787,15 +897,34 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 // Returns (accessToken, refreshToken, error). Returns the same errors as
 // IssueAccessToken.
 func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, string, error) {
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+				"status":     status,
+				"error_type": errorType,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "issue_token_pair",
+			})
+		}
+	}()
+
 	// ===== STEP 1: Validate user id ====
 	// validate user ID Split into two to optimize in the event of high volume of invalid requests
 	if len(userID) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("attempted to get token with empty userID")
 		}
 		return "", "", ErrInvalidUserID
 	}
 	if len(strings.TrimSpace(userID)) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("attempted to get token with empty userID")
 		}
@@ -804,6 +933,8 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 
 	//===== STEP 2: Service State Check =====
 	if !s.IsRunning() {
+		status = "not_running"
+		errorType = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("service not running")
 		}
@@ -814,6 +945,8 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	// Check if context is already cancelled/expired
 	// Fail fast if client already disconnected
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
 		if s.logger != nil {
 			s.logger.Warn("context cancelled during token issuance",
 				"userID", userID,
@@ -921,7 +1054,9 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		return "", "", fmt.Errorf("failed to store refresh token: %w", err)
 	}
 
-	// ===== STEP 11: Log Success =====
+	// ===== STEP 11: Record Success and Log =====
+	status = "success"
+	errorType = ""
 	if s.logger != nil {
 		s.logger.Info("token pair issued",
 			"userID", userID,
@@ -939,8 +1074,25 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 // ErrTokenExpired, ErrTokenNotYetValid, ErrInvalidSignature, ErrInvalidIssuer,
 // ErrInvalidAudience, ErrInvalidToken, or the context error.
 func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, error) {
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricTokensValidatedTotal, map[string]string{
+				"status":     status,
+				"error_type": errorType,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "validate_access_token",
+			})
+		}
+	}()
+
 	// ===== STEP 1: Service State Check =====
 	if !s.IsRunning() {
+		status = "not_running"
+		errorType = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("attempted token validation while service stopped")
 		}
@@ -949,6 +1101,8 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
 		if s.logger != nil {
 			s.logger.Info("context cancelled during token validation",
 				"error", err)
@@ -1015,15 +1169,21 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 
 		// Provide specific error messages
 		if errors.Is(err, jwt.ErrTokenExpired) {
+			status = "expired"
+			errorType = "expired"
 			if s.logger != nil {
 				s.logger.Warn("token expired")
 			}
 			return nil, ErrTokenExpired
 		}
 		if errors.Is(err, jwt.ErrTokenNotValidYet) {
+			status = "error"
+			errorType = "not_yet_valid"
 			return nil, ErrTokenNotYetValid
 		}
 		if errors.Is(err, keymanager.ErrKeyNotFound) {
+			status = "error"
+			errorType = "invalid_signature"
 			return nil, ErrInvalidSignature
 		}
 
@@ -1098,7 +1258,9 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		}
 	}
 
-	// ===== STEP 10: Log Success =====
+	// ===== STEP 10: Record Success and Log =====
+	status = "success"
+	errorType = ""
 	if s.logger != nil {
 		s.logger.Info("access token validated",
 			"userID", claims.Subject,
@@ -1115,8 +1277,25 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 // Returns ErrServiceNotRunning, ErrInvalidRefreshToken, ErrRefreshTokenExpired,
 // ErrTokenRevoked, or the context error.
 func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (string, error) {
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricTokensRefreshedTotal, map[string]string{
+				"status":     status,
+				"error_type": errorType,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "refresh_access_token",
+			})
+		}
+	}()
+
 	// ===== STEP 1: Service State Check =====
 	if !s.isRunning.Load() {
+		status = "not_running"
+		errorType = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("attempted to refresh while service was stopped")
 		}
@@ -1125,6 +1304,8 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
 		if s.logger != nil {
 			s.logger.Info("context cancelled during token refresh")
 		}
@@ -1137,6 +1318,8 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 
 	// ===== STEP 3: Input Validation =====
 	if refreshToken == "" {
+		status = "invalid_input"
+		errorType = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("empty refresh token provided")
 		}
@@ -1152,8 +1335,12 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		}
 		// Propagate specific errors, default to invalid token for generic errors
 		if errors.Is(err, storage.ErrTokenRevoked) {
+			status = "revoked"
+			errorType = "revoked"
 			return "", ErrTokenRevoked
 		}
+		status = "not_found"
+		errorType = "not_found"
 		return "", ErrInvalidRefreshToken
 	}
 
@@ -1165,6 +1352,8 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 
 	// ===== STEP 5: Check Expiration =====
 	if token.ExpiresAt.Before(time.Now()) {
+		status = "expired"
+		errorType = "expired"
 		if s.logger != nil {
 			s.logger.Warn("refresh token has expired",
 				"tokenID", refreshToken,
@@ -1179,6 +1368,8 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 
 	// ===== STEP 6: Check If Revoked =====
 	if token.Revoked {
+		status = "revoked"
+		errorType = "revoked"
 		if s.logger != nil {
 			s.logger.Warn("refresh token has been revoked",
 				"tokenID", refreshToken)
@@ -1197,7 +1388,9 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		return "", fmt.Errorf("failed to issue access token: %w", err)
 	}
 
-	// ===== STEP 9: Log Success =====
+	// ===== STEP 9: Record Success and Log =====
+	status = "success"
+	errorType = ""
 	if s.logger != nil {
 		s.logger.Info("access token refreshed",
 			"userID", token.UserID,
@@ -1214,8 +1407,23 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 // Returns ErrServiceNotRunning, ErrInvalidRefreshToken for empty tokenID, or
 // the context error.
 func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error {
+	start := time.Now()
+	status := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
+				"operation": "single",
+				"status":    status,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "revoke_token",
+			})
+		}
+	}()
+
 	// ===== STEP 1: Service State Check =====
 	if !s.isRunning.Load() {
+		status = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("attempted to revoke token while service stopped")
 		}
@@ -1224,6 +1432,7 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
 		if s.logger != nil {
 			s.logger.Info("context cancelled during token revocation")
 		}
@@ -1232,6 +1441,7 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 
 	// ===== STEP 3: Input Validation =====
 	if tokenID == "" {
+		status = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("empty token ID provided for revocation")
 		}
@@ -1250,7 +1460,8 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 		return fmt.Errorf("failed to revoke token: %w", err)
 	}
 
-	// ===== STEP 5: Log Success =====
+	// ===== STEP 5: Record Success and Log =====
+	status = "success"
 	if s.logger != nil {
 		s.logger.Info("refresh token revoked",
 			"tokenID", tokenID)
@@ -1265,8 +1476,23 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 // Returns ErrServiceNotRunning, ErrInvalidUserID for empty userID, or the
 // context error.
 func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error {
+	start := time.Now()
+	status := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
+				"operation": "all_user",
+				"status":    status,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "revoke_all_user_tokens",
+			})
+		}
+	}()
+
 	// ===== STEP 1: Service State Check =====
 	if !s.isRunning.Load() {
+		status = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("attempted to revoke all user tokens while service stopped")
 		}
@@ -1275,6 +1501,7 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
 		if s.logger != nil {
 			s.logger.Info("context cancelled during bulk token revocation",
 				"error", err)
@@ -1284,6 +1511,7 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 
 	// ===== STEP 3: Input Validation =====
 	if userID == "" {
+		status = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("empty user ID provided for bulk revocation")
 		}
@@ -1301,7 +1529,8 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 		return fmt.Errorf("failed to revoke all tokens: %w", err)
 	}
 
-	// ===== STEP 5: Log Success =====
+	// ===== STEP 5: Record Success and Log =====
+	status = "success"
 	if s.logger != nil {
 		s.logger.Info("all refresh tokens revoked for user",
 			"userID", userID)
@@ -1320,8 +1549,22 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 // Returns ErrServiceNotRunning, ErrInvalidRefreshToken for empty tokens, or
 // the context error.
 func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMetadata, error) {
+	start := time.Now()
+	status := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricTokensIntrospectedTotal, map[string]string{
+				"status": status,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "introspect_token",
+			})
+		}
+	}()
+
 	// ===== STEP 1: Service State Check =====
 	if !s.isRunning.Load() {
+		status = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("attempted to introspect token while service is stopped")
 		}
@@ -1330,6 +1573,7 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
 		if s.logger != nil {
 			s.logger.Info("context cancelled during token introspection")
 		}
@@ -1342,6 +1586,7 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// ===== STEP 3: Input Validation =====
 	if token == "" {
+		status = "invalid_input"
 		if s.logger != nil {
 			s.logger.Warn("empty token provided for introspection")
 		}
@@ -1351,11 +1596,12 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	// ===== STEP 4: Retrieve Token From Storage =====
 	refreshToken, err := s.refreshStore.Retrieve(ctx, token)
 	if err != nil {
+		// Return inactive metadata instead of error — introspect never errors on unknown tokens
+		status = "success"
 		if s.logger != nil {
 			s.logger.Info("token not found during introspection",
 				"error", err)
 		}
-		// Return inactive metadata instead of error
 		return &TokenMetadata{
 			Active:    false,
 			Subject:   "",
@@ -1370,6 +1616,7 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// Check if expired
 	if refreshToken.ExpiresAt.Before(now) {
+		status = "success"
 		if s.logger != nil {
 			s.logger.Info("introspect token is expired",
 				"token", token,
@@ -1386,6 +1633,7 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// Check if revoked
 	if refreshToken.Revoked {
+		status = "success"
 		if s.logger != nil {
 			s.logger.Info("introspected token is revoked",
 				"tokenID", token)
@@ -1400,7 +1648,8 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 		}, nil
 	}
 
-	// ===== STEP 6: Return Active Token Metadata =====
+	// ===== STEP 6: Record Success and Return Active Token Metadata =====
+	status = "success"
 	if s.logger != nil {
 		s.logger.Info("token introspection successfully",
 			"tokenID", token,
@@ -1422,8 +1671,23 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 //
 // Returns the number of tokens deleted, ErrServiceNotRunning, or the context error.
 func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
+	start := time.Now()
+	status := "error"
+	defer func() {
+		if s.metrics != nil {
+			s.metrics.IncrementCounter(metricOperationsTotal, map[string]string{
+				"operation": "cleanup",
+				"status":    status,
+			})
+			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "cleanup",
+			})
+		}
+	}()
+
 	// ===== STEP 1: Service State Check =====
 	if !s.isRunning.Load() {
+		status = "not_running"
 		if s.logger != nil {
 			s.logger.Warn("attempted cleanup while service stopped")
 		}
@@ -1432,6 +1696,7 @@ func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
+		status = "cancelled"
 		if s.logger != nil {
 			s.logger.Info("context cancelled during cleanup",
 				"error", err)
@@ -1449,7 +1714,8 @@ func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("cleanup failed: %w", err)
 	}
 
-	// ===== STEP 4: Log Success =====
+	// ===== STEP 4: Record Success and Log =====
+	status = "success"
 	if s.logger != nil {
 		s.logger.Info("expired tokens cleaned up",
 			"deleted", count)
