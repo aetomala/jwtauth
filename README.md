@@ -29,11 +29,11 @@
 - **Automatic background rotation** with cleanup
 - **RSA key pair generation** and management
 - **JWKS (JSON Web Key Set)** endpoint support
-- **Persistence** to disk with atomic file operations
+- **Two KeyStore backends**: `DiskKeyStore` (PEM + JSON files) for single-instance; `RedisKeyStore` for distributed/multi-instance deployments
 - **Thread-safe** concurrent operations with proper locking
 - **Graceful shutdown** with in-flight operation completion
 - **Structured logging** (slog adapter included, bring your own logger)
-- **Domain-specific metrics** interface (Prometheus adapter coming)
+- **Full metrics instrumentation** — KeyStore and Manager operations via `jwtauth_keystore_*` and `jwtauth_key_*` metrics
 - **Comprehensive test coverage** with race detection
 
 **TokenService** (Beta)
@@ -74,7 +74,7 @@
 
 ### 🚧 In Development
 
-- **Metrics Wiring**: Wire `PrometheusMetrics` into TokenService and RefreshStore (KeyManager already wired via DiskKeyStore)
+- **Metrics Wiring**: Wire `PrometheusMetrics` into `TokenService` — KeyManager, DiskKeyStore, and RedisKeyStore are fully instrumented
 - **OpenTelemetry**: Distributed tracing integration
 
 ## Architecture Highlights
@@ -326,13 +326,25 @@ func main() {
 
 ### Recommended Settings
 
-**Production**:
+**Production (single-instance)**:
 ```go
 ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
 config := keymanager.ManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour,  // 30 days
     KeyOverlapDuration:  1 * time.Hour,         // 1 hour
+    Logger:              logging.NewJSONLogger(slog.LevelInfo),
+}
+```
+
+**Production (distributed / multi-instance)**:
+```go
+client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
+ks, _ := keymanager.NewRedisKeyStore(client, logger, nil)
+config := keymanager.ManagerConfig{
+    KeyStore:            ks,
+    KeyRotationInterval: 30 * 24 * time.Hour,
+    KeyOverlapDuration:  1 * time.Hour,
     Logger:              logging.NewJSONLogger(slog.LevelInfo),
 }
 ```
@@ -407,10 +419,15 @@ pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
 // Serve metrics endpoint
 http.Handle("/metrics", pm.Handler())
 
-// Pass to components
+// Single-instance: DiskKeyStore
 ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, pm)
+
+// Distributed: RedisKeyStore
+// client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
+// ks, _ := keymanager.NewRedisKeyStore(client, nil, pm)
+
 config := keymanager.ManagerConfig{
-    KeyStore: ks,
+    KeyStore: ks,   // same interface — swap backends without changing Manager code
     Metrics:  pm,
 }
 ```
@@ -441,9 +458,11 @@ github.com/aetomala/jwtauth/
 │   │   ├── interface.go          # Manager interface
 │   │   ├── keystore.go           # KeyStore interface, StoredKey type, sentinel errors
 │   │   ├── disk.go               # DiskKeyStore — filesystem-backed KeyStore
-│   │   ├── observability.go      # Metric name constants
-│   │   ├── keymanager_test.go    # 8-phase Manager tests (44 specs, MockKeyStore)
-│   │   └── disk_test.go          # 9-phase DiskKeyStore tests (38 specs)
+│   │   ├── redis.go              # RedisKeyStore — Redis-backed KeyStore for distributed deployments
+│   │   ├── observability.go      # Metric name constants (KeyStore + Manager)
+│   │   ├── keymanager_test.go    # 9-phase Manager tests (52 specs, MockKeyStore)
+│   │   ├── disk_test.go          # 9-phase DiskKeyStore tests (38 specs)
+│   │   └── redis_test.go         # 9-phase RedisKeyStore tests (35 specs, miniredis)
 │   ├── tokens/                   # JWT operations (Beta) 🟡
 │   │   ├── service.go            # TokenService implementation
 │   │   ├── claims.go             # Claims management
@@ -485,17 +504,23 @@ github.com/aetomala/jwtauth/
 
 **Current**: 472 comprehensive tests across KeyManager, TokenService, RefreshStore, Metrics, and Logging, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%)
 
-**KeyManager** (2 test suites — 82 total specs):
-- **8-phase Manager tests** (44 specs, MockKeyStore — no filesystem I/O):
+**KeyManager** (3 test suites — 125 total specs):
+- **9-phase Manager tests** (52 specs, MockKeyStore — no I/O):
   - Constructor validation, config defaults, ErrInvalidKeyStore
   - Start: loads from store, generates key on empty store, error paths
   - GetCurrentSigningKey, GetPublicKey (cache hit/miss), GetJWKS
   - RotateKeys: Save + UpdateMetadata calls, currentKeyID update
   - Shutdown: scheduler stop, idempotency, context timeout
+  - Metrics recording: rotation counter/duration, signing/validation counters, active-versions gauge
 - **9-phase DiskKeyStore tests** (38 specs, real tmp directory):
   - Constructor, Save (0600 permissions, companion JSON), LoadAll
   - LoadKey (key size validation), UpdateMetadata, Delete (idempotent)
-  - Error handling, concurrency, metrics recording
+  - Error handling, concurrency, metrics recording (storage_backend: "disk")
+- **9-phase RedisKeyStore tests** (35 specs, miniredis):
+  - Constructor (nil client returns ErrNilRedisClient), Save round-trip, LoadAll (skip expired)
+  - LoadKey, UpdateMetadata, Delete (idempotent)
+  - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
+  - Concurrency, metrics recording (storage_backend: "redis")
 
 **TokenService** (7 test suites, 126 total tests):
 - **Lifecycle Management Tests** (20 tests):
@@ -516,7 +541,7 @@ github.com/aetomala/jwtauth/
   - CleanupExpiredTokens: manual sweep with error handling
 - **Concurrent Operations**: parallel token issuance and service state safety
 
-**RefreshStore** (170 total tests: 51 MemoryRefreshStore + 51 RedisRefreshStore + shared test suite):
+**RefreshStore** (122 total tests: 61 per implementation × 2):
 - **Shared Test Suite** (51 tests, runs against both Memory and Redis):
   - **Phase 1**: Constructor initialization
   - **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
@@ -616,9 +641,10 @@ Tests follow **progressive phase-based development**:
 - ✅ RefreshStore: RedisRefreshStore for distributed deployments with go-redis/v9
 - ✅ RefreshStore: Comprehensive test coverage (170 tests across 9 phases, 100% statement coverage, race-detection clean)
 - ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with pre-registered jwtauth metrics, 100% test coverage
-- ✅ KeyStore interface extracted from KeyManager — `DiskKeyStore` for single-instance, interface seam for distributed backends
-- ✅ Wire metrics into KeyManager (DiskKeyStore operations via `jwtauth_keystore_*` metrics)
-- 🚧 Wire metrics into TokenService and RefreshStore
+- ✅ KeyStore interface extracted from KeyManager — `DiskKeyStore` for single-instance, `RedisKeyStore` for distributed deployments
+- ✅ `RedisKeyStore` — Redis-backed KeyStore using `ks:pem:<id>` / `ks:meta:<id>` layout, atomic Pipeline writes, SCAN-based LoadAll
+- ✅ Wire metrics into all KeyStore implementations and Manager (`jwtauth_keystore_*` + `jwtauth_key_*`)
+- 🚧 Wire metrics into TokenService
 
 ### v0.3.0 (Beta)
 - 🚧 Wire Prometheus metrics into all components
@@ -722,5 +748,5 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 **Status**: Beta (Active Development)
 **Version**: 0.2.0-beta
 **Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅
-**Test Coverage**: 472 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%), all passing, race-detection enabled
+**Test Coverage**: 525 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%), all passing, race-detection enabled
 **Last Updated**: April 6, 2026

@@ -106,9 +106,11 @@ github.com/aetomala/jwtauth/
 │   │   ├── interface.go           # Manager interface
 │   │   ├── keystore.go            # KeyStore interface, StoredKey type, sentinel errors
 │   │   ├── disk.go                # DiskKeyStore — filesystem-backed KeyStore
-│   │   ├── observability.go       # Metric name constants
-│   │   ├── keymanager_test.go     # 8-phase Manager tests (44 specs, MockKeyStore)
-│   │   └── disk_test.go           # 9-phase DiskKeyStore tests (38 specs)
+│   │   ├── redis.go               # RedisKeyStore — Redis-backed KeyStore for distributed deployments
+│   │   ├── observability.go       # Metric name constants (KeyStore + Manager)
+│   │   ├── keymanager_test.go     # 9-phase Manager tests (52 specs, MockKeyStore)
+│   │   ├── disk_test.go           # 9-phase DiskKeyStore tests (38 specs)
+│   │   └── redis_test.go          # 9-phase RedisKeyStore tests (35 specs, miniredis)
 │   ├── tokens/                    # JWT token operations (Beta)
 │   │   ├── service.go             # TokenService implementation
 │   │   ├── claims.go              # Claims management
@@ -294,6 +296,9 @@ type Metrics interface {
 | `jwtauth_storage_cleanup_tokens_removed_total` | Counter | storage_backend |
 | `jwtauth_storage_operation_duration_seconds` | Histogram | operation, storage_backend |
 | `jwtauth_storage_tokens_count` | Gauge | storage_backend |
+| `jwtauth_keystore_operations_total` | Counter | operation, status, storage_backend |
+| `jwtauth_keystore_operation_duration_seconds` | Histogram | operation, storage_backend |
+| `jwtauth_keystore_keys_count` | Gauge | storage_backend |
 | `jwtauth_key_rotations_total` | Counter | status |
 | `jwtauth_key_signing_operations_total` | Counter | status |
 | `jwtauth_key_validation_operations_total` | Counter | status |
@@ -442,8 +447,8 @@ type KeyStore interface {
 
 This enables:
 - **Single-instance deployments**: `DiskKeyStore` (PEM + JSON files, local filesystem)
-- **Distributed deployments**: `RedisKeyStore` (future — shared backend, horizontal scale)
-- **Testing**: `MockKeyStore` (gomock, no filesystem I/O in Manager unit tests)
+- **Distributed deployments**: `RedisKeyStore` (shared Redis backend, horizontal scale)
+- **Testing**: `MockKeyStore` (gomock, no I/O in Manager unit tests)
 
 **DiskKeyStore**:
 
@@ -455,13 +460,34 @@ km, err := keymanager.NewManager(keymanager.ManagerConfig{
 })
 ```
 
-File format (unchanged from pre-refactor behaviour):
+File format:
 ```
 {dir}/{keyID}.pem   — PKCS#1 RSA private key, 0600 permissions
 {dir}/{keyID}.json  — {"id":"…","created_at":"…","expires_at":"…"}
 ```
 
-**KeyStore Metrics**:
+**RedisKeyStore**:
+
+```go
+client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
+ks, err := keymanager.NewRedisKeyStore(client, logger, metrics)
+km, err := keymanager.NewManager(keymanager.ManagerConfig{
+    KeyStore: ks,
+    Logger:   logger,
+})
+```
+
+Redis data layout:
+```
+ks:pem:<keyID>   — PKCS#1 PEM-encoded RSA private key (string)
+ks:meta:<keyID>  — JSON-encoded KeyMetadata (string)
+```
+
+Keys carry no TTL — Manager owns the lifecycle and calls `Delete` explicitly via `cleanupExpiredKeys`. `LoadAll` uses `SCAN ks:pem:*` to enumerate all stored keys. `Save` writes both entries via a Redis Pipeline, so either both succeed or both fail — no partial state and no rollback code needed.
+
+`ErrNilRedisClient` is returned by the constructor if client is nil. All other sentinel errors (`ErrKeyStoreKeyNotFound`, `ErrKeyStoreInvalidKeyID`) are shared with `DiskKeyStore` and defined in `keystore.go`.
+
+**KeyStore Metrics** (both implementations, same names):
 
 | Metric | Type | Labels |
 |--------|------|--------|
@@ -473,9 +499,9 @@ File format (unchanged from pre-refactor behaviour):
 
 `status` values: `"success"`, `"not_found"`, `"error"`, `"cancelled"`
 
-`storage_backend` values: `"disk"` (expandable to `"redis"`)
+`storage_backend` values: `"disk"`, `"redis"`
 
-`SetGauge(jwtauth_keystore_keys_count)` is recorded only by `LoadAll` — set to the count of valid keys returned. This is sufficient because `GetCurrentSigningKey` never calls the store after startup and `GetPublicKey` only calls `LoadKey` on rare cache misses, so KeyStore operations are not on the hot path.
+`SetGauge(jwtauth_keystore_keys_count)` is recorded only by `LoadAll` — set to the count of valid non-expired keys returned. This is sufficient because `GetCurrentSigningKey` never calls the store after startup and `GetPublicKey` only calls `LoadKey` on rare cache misses, so KeyStore operations are not on the hot path.
 
 ### TokenService (Beta)
 
@@ -802,8 +828,11 @@ Phase 7: Concurrency
 
 **Usage**:
 ```go
+ctrl      := gomock.NewController(GinkgoT())
 mockLogger := testutil.NewMockLogger()
-mockKS := testutil.NewMockKeyStore(ctrl)
+mockKS     := testutil.NewMockKeyStore(ctrl)
+
+mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
 
 manager, _ := keymanager.NewManager(keymanager.ManagerConfig{
     KeyStore: mockKS,
@@ -885,7 +914,7 @@ Catches:
   - 44 Manager specs + 38 DiskKeyStore specs (9 phases), all race-clean
   - `MockKeyStore` generated via gomock
 - ⏳ Wire `PrometheusMetrics` into TokenService
-- ⏳ `RedisKeyStore` implementation (enables distributed KeyManager deployments)
+- ✅ `RedisKeyStore` implementation — `ks:pem:<id>` / `ks:meta:<id>` Redis layout, atomic Pipeline writes, SCAN-based `LoadAll`, full metrics with `storage_backend: "redis"`
 - ⏳ StatsD integration (Datadog, Graphite compatible)
 - ⏳ CloudWatch metrics for AWS environments
 
@@ -991,4 +1020,4 @@ func (c *Component) Operation() error {
 
 **Last Updated**: April 6, 2026
 **Version**: 0.2.0-beta
-**Status**: Active Development (TokenService + RefreshStore [Memory + Redis] + Metrics [Prometheus] stable; RefreshStore fully instrumented; metrics wiring into KeyManager and TokenService in progress)
+**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] stable and fully instrumented; TokenService metrics wiring in progress)
