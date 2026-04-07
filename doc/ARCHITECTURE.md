@@ -92,39 +92,56 @@ github.com/aetomala/jwtauth/
 │   │   ├── logger.go              # Logger interface
 │   │   ├── noop.go                # NoOp implementation
 │   │   ├── slog_adapter.go        # Standard library adapter
+│   │   ├── logger_test.go         # Logging tests (76 specs)
 │   │   └── README.md              # Usage documentation
 │   ├── metrics/                   # Metrics abstraction and implementations
 │   │   ├── interface.go           # Metrics interface
 │   │   ├── noop.go                # NoOp implementation
 │   │   ├── prometheus.go          # Prometheus implementation
 │   │   ├── metrics_suite_test.go  # Ginkgo bootstrap
-│   │   ├── prometheus_test.go     # 9-phase Prometheus test suite (73 specs)
+│   │   ├── prometheus_test.go     # 9-phase Prometheus test suite (66 specs)
 │   │   └── noop_test.go           # NoOp tests
-│   ├── keymanager/                # Key rotation and management
-│   │   ├── manager.go             # Core implementation
-│   │   ├── persistence.go         # Disk operations
-│   │   └── keymanager_test.go    # Comprehensive tests
+│   ├── keymanager/                # Key rotation and management ✅
+│   │   ├── keymanager.go          # Manager: lifecycle, rotation, JWKS generation
+│   │   ├── interface.go           # Manager interface
+│   │   ├── keystore.go            # KeyStore interface, StoredKey type, sentinel errors
+│   │   ├── disk.go                # DiskKeyStore — filesystem-backed KeyStore
+│   │   ├── observability.go       # Metric name constants
+│   │   ├── keymanager_test.go     # 8-phase Manager tests (44 specs, MockKeyStore)
+│   │   └── disk_test.go           # 9-phase DiskKeyStore tests (38 specs)
 │   ├── tokens/                    # JWT token operations (Beta)
 │   │   ├── service.go             # TokenService implementation
+│   │   ├── claims.go              # Claims management
 │   │   ├── service_test.go        # Token operations tests
 │   │   ├── service_lifecycle_test.go  # Lifecycle management tests
-│   │   └── claims.go              # Claims management
+│   │   └── integration/           # Integration tests
+│   │       └── integration_test.go
 │   └── storage/                   # Refresh token storage ✅
 │       ├── interface.go           # RefreshStore interface
+│       ├── errors.go              # Sentinel error types
+│       ├── observability.go       # Metric name constants
 │       ├── memory.go              # In-memory implementation
+│       ├── memory_test.go         # Test runner for MemoryRefreshStore
 │       ├── redis.go               # Redis implementation
-│       └── suite_test.go          # Shared test suite
+│       ├── redis_test.go          # Test runner for RedisRefreshStore
+│       ├── storage_suite_test.go  # Ginkgo bootstrap
+│       └── suite_test.go          # Shared test suite (61 tests, runs against both implementations)
 ├── internal/                      # Private packages
 │   └── testutil/                  # Shared test utilities
+│       ├── errors.go              # Shared test error helpers
+│       ├── mock_keymanager.go     # gomock-generated MockKeyManager
+│       ├── mock_keystore.go       # gomock-generated MockKeyStore
 │       ├── mock_logger.go         # Reusable MockLogger
-│       └── mock_metrics.go        # gomock-generated MockMetrics
-├── docs/                          # Documentation
-│   └── ARCHITECTURE.md            # This file
-├── examples/                      # Usage examples
-│   └── keymanager/                # KeyManager examples
-│       ├── basic.go               # Basic usage
-│       └── with_logging.go        # With logging and metrics
-└── go.mod
+│       ├── mock_metrics.go        # gomock-generated MockMetrics
+│       └── mock_refreshstore.go   # gomock-generated MockRefreshStore
+├── doc/                           # Documentation
+│   ├── ARCHITECTURE.md            # This file
+│   └── DEPLOYMENT.md              # Deployment guide
+├── examples/                      # Framework usage examples
+│   ├── gin-example/               # Gin HTTP framework
+│   ├── echo-example/              # Echo HTTP framework
+│   └── chi-example/               # Chi HTTP router
+└── jwtauth_suite_test.go          # Root Ginkgo suite bootstrap
 ```
 
 ### Package Organization
@@ -291,7 +308,7 @@ Every component accepts optional observability:
 ```go
 type ManagerConfig struct {
     // Core configuration
-    KeyDirectory        string
+    KeyStore            KeyStore        // Required: injected key persistence backend
     KeyRotationInterval time.Duration
     
     // Observability (optional)
@@ -383,7 +400,7 @@ Low-Level Module (SlogAdapter, ZapAdapter, etc.)
 - Rotate keys on schedule
 - Maintain overlap period (old + new keys valid simultaneously)
 - Cleanup expired keys
-- Persist keys to disk
+- Delegate key persistence to an injected `KeyStore`
 - Provide JWKS endpoint
 
 **State Machine**:
@@ -409,10 +426,56 @@ Day 30+1h: Key A deleted, Key B (current)
 Day 60:   Rotate → Key B (expires in 1 hour), Key C (current)
 ```
 
-**Persistence**:
-- **PEM files**: `{keyID}.pem` - RSA private keys
-- **Metadata files**: `{keyID}.json` - CreatedAt, ExpiresAt timestamps
-- **Load on restart**: All valid keys loaded, most recent becomes current
+**KeyStore Interface**:
+
+`Manager` delegates all I/O to an injected `KeyStore`, keeping the two concerns separate:
+
+```go
+type KeyStore interface {
+    LoadAll(ctx context.Context) ([]*StoredKey, error)
+    Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta KeyMetadata) error
+    UpdateMetadata(ctx context.Context, keyID string, meta KeyMetadata) error
+    LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *KeyMetadata, error)
+    Delete(ctx context.Context, keyID string) error
+}
+```
+
+This enables:
+- **Single-instance deployments**: `DiskKeyStore` (PEM + JSON files, local filesystem)
+- **Distributed deployments**: `RedisKeyStore` (future — shared backend, horizontal scale)
+- **Testing**: `MockKeyStore` (gomock, no filesystem I/O in Manager unit tests)
+
+**DiskKeyStore**:
+
+```go
+ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, metrics)
+km, err := keymanager.NewManager(keymanager.ManagerConfig{
+    KeyStore: ks,
+    Logger:   logger,
+})
+```
+
+File format (unchanged from pre-refactor behaviour):
+```
+{dir}/{keyID}.pem   — PKCS#1 RSA private key, 0600 permissions
+{dir}/{keyID}.json  — {"id":"…","created_at":"…","expires_at":"…"}
+```
+
+**KeyStore Metrics**:
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `jwtauth_keystore_operations_total` | Counter | `operation`, `status`, `storage_backend` |
+| `jwtauth_keystore_operation_duration_seconds` | Histogram | `operation`, `storage_backend` |
+| `jwtauth_keystore_keys_count` | Gauge | `storage_backend` |
+
+`operation` values: `"load_all"`, `"save"`, `"update_metadata"`, `"load_key"`, `"delete"`
+
+`status` values: `"success"`, `"not_found"`, `"error"`, `"cancelled"`
+
+`storage_backend` values: `"disk"` (expandable to `"redis"`)
+
+`SetGauge(jwtauth_keystore_keys_count)` is recorded only by `LoadAll` — set to the count of valid keys returned. This is sufficient because `GetCurrentSigningKey` never calls the store after startup and `GetPublicKey` only calls `LoadKey` on rare cache misses, so KeyStore operations are not on the hot path.
 
 ### TokenService (Beta)
 
@@ -462,7 +525,9 @@ type MemoryRefreshStore struct {
     mu         sync.RWMutex             // Thread safety
     tokens     map[string]*RefreshToken // tokenID → token
     userTokens map[string][]string      // userID → []tokenID (for bulk ops)
-    logger     logging.Logger           // Optional logging
+    logger     logging.Logger           // Optional; nil disables logging
+    metrics    metrics.Metrics          // Optional; nil disables metrics
+    backend    string                   // storage_backend label value; always "memory"
 }
 ```
 
@@ -475,6 +540,7 @@ type MemoryRefreshStore struct {
 - **Cleanup**: Removes expired tokens from both maps and userTokens index
 - **Context propagation**: All operations respect context.Context cancellation
 - **Structured logging**: Warn for validation failures, Info for successful ops
+- **Metrics instrumentation**: Counter + duration recorded on every exit path; token-count gauge updated on Store and Cleanup
 - **Thread-safe**: Read operations concurrent, write operations exclusive
 
 #### RedisRefreshStore (Distributed, Multi-Instance) ✅
@@ -482,8 +548,10 @@ type MemoryRefreshStore struct {
 **Design**:
 ```go
 type RedisRefreshStore struct {
-    client *redis.Client  // go-redis/v9 client (internally thread-safe)
-    logger logging.Logger // Optional logging
+    client  *redis.Client   // go-redis/v9 client (internally thread-safe)
+    logger  logging.Logger  // Optional; nil disables logging
+    metrics metrics.Metrics // Optional; nil disables metrics
+    backend string          // storage_backend label value; always "redis"
 }
 ```
 
@@ -520,7 +588,96 @@ user_tokens:{userID}    → Set of tokenIDs for that user
 | **Idempotence** | Revoke returns nil if token doesn't exist (safe to call multiple times) |
 | **Context** | Full support for context.Context cancellation propagation |
 | **Logging** | Structured key-value logs with operation names and fields |
-| **Testing** | Identical comprehensive test suite (51 tests per implementation) |
+| **Metrics** | Counter + duration on every operation; cleanup records removed count and token-count gauge |
+| **Testing** | Identical comprehensive test suite (61 tests per implementation, 122 total) |
+
+#### Storage Metrics Instrumentation
+
+Every public method records two metrics unconditionally, regardless of outcome:
+
+| Metric | Type | When recorded |
+|--------|------|---------------|
+| `jwtauth_storage_operations_total` | Counter | Every exit path — success, validation error, not found, etc. |
+| `jwtauth_storage_operation_duration_seconds` | Histogram | Every exit path — full method duration including lock wait |
+
+Cleanup additionally records:
+
+| Metric | Type | When recorded |
+|--------|------|---------------|
+| `jwtauth_storage_cleanup_tokens_removed_total` | Counter | Cleanup success only — value is the removed count |
+| `jwtauth_storage_tokens_count` | Gauge | Cleanup success (both backends); Store success (Memory only — see below) |
+
+**Status label values** for `jwtauth_storage_operations_total`:
+
+| Value | Meaning |
+|-------|---------|
+| `success` | Operation completed normally |
+| `validation_error` | Input rejected (empty ID, expired token at write time) |
+| `not_found` | Token does not exist in storage |
+| `revoked` | Token exists but has been revoked |
+| `expired` | Token exists but has passed its expiry |
+| `cancelled` | Context was cancelled before the operation began |
+| `error` | Unexpected backend failure (Redis pipeline error, marshal error, scan error) |
+
+Separating `cancelled` from `error` allows clean alerting: a spike in `error` indicates a backend problem; a spike in `cancelled` indicates client timeouts or graceful shutdown — two different on-call responses.
+
+**Recording pattern** — deferred closure with a captured `status` variable:
+
+```go
+func (m *MemoryRefreshStore) Store(ctx context.Context, ...) error {
+    start := time.Now()
+    status := "error"          // default; overwritten at each return point
+    defer func() {
+        if m.metrics != nil {
+            m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+                "operation": "store", "status": status, "storage_backend": m.backend,
+            })
+            m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), ...)
+        }
+    }()
+    // ...
+    status = "validation_error"
+    return ErrInvalidTokenID
+    // ...
+    status = "success"
+    return nil
+}
+```
+
+**Token-count gauge asymmetry**:
+
+`MemoryRefreshStore` updates `jwtauth_storage_tokens_count` on every successful `Store` call because `len(m.tokens)` is O(1) and available while the write lock is already held. This gives a real-time count.
+
+`RedisRefreshStore` only updates the gauge during `Cleanup` because an exact live count would require a separate `DBSIZE` or `SCAN` command — an additional network round-trip that is not justified for a gauge update on an already-costly write path. The gauge is therefore a post-cleanup snapshot for Redis.
+
+**Metric name constants** — all four metric names are defined once in `pkg/storage/observability.go` and referenced by both implementations:
+
+```go
+const (
+    metricStorageOpsTotal     = "jwtauth_storage_operations_total"
+    metricStorageOpDuration   = "jwtauth_storage_operation_duration_seconds"
+    metricStorageRemovedTotal = "jwtauth_storage_cleanup_tokens_removed_total"
+    metricStorageTokensCount  = "jwtauth_storage_tokens_count"
+)
+```
+
+A typo in a string literal silently drops data; a typo in a constant reference fails to compile.
+
+**Hot-path performance consideration** — label map allocations:
+
+`Store` and `Retrieve` are on the hot path. Every call currently allocates two `map[string]string` inside the deferred closure for the `operation`/`status`/`storage_backend` label sets. At high throughput (tens of thousands of operations/second) this creates sustained GC pressure.
+
+*Why it is not yet addressed*: The allocation is O(1) and tiny relative to what it measures — a `sync.RWMutex` acquire + map write for Memory, or a Redis pipeline round-trip for Redis. Profiling is required before optimizing.
+
+*Possible mitigations when profiling confirms it is a bottleneck*:
+
+1. **Pre-allocate per-status label maps at construction** — since `operation` and `storage_backend` are fixed per method, build one `map[string]string` per `(operation, status)` pair once in the constructor and reuse them. There are 5 operations × 7 status values = 35 maps maximum, all constant after `New...`. No allocation on the hot path at all.
+
+2. **`sync.Pool` for label maps** — pool map instances and reset/return them after `IncrementCounter`/`RecordDuration` complete. Works for any backend but requires the `Metrics` implementation to not retain the map beyond the call.
+
+3. **Promote to `PrometheusMetrics` internals** — bypass the `map[string]string` interface entirely for the storage hot path by holding pre-resolved `prometheus.Counter` and `prometheus.Histogram` handles directly in the store struct. This is the most efficient option but breaks the abstraction and couples the store to Prometheus.
+
+The right choice depends on profiled evidence. Start with option 1 if the benchmark shows label-map allocation is significant; it requires no interface changes and has no trade-offs.
 
 #### Shared Test Suite Pattern
 
@@ -532,37 +689,42 @@ user_tokens:{userID}    → Set of tokenIDs for that user
 **Solution**: Single parameterized test suite runs against all implementations:
 
 ```go
-// suite_test.go defines 51 comprehensive tests
-func RunRefreshStoreTests(description string, factory StoreFactory, cleanup CleanupFunc) bool {
+// suite_test.go defines 61 comprehensive tests across 10 phases
+// StoreFactory accepts optional MockMetrics — nil for phases 1–9, live mock for Phase 10
+type StoreFactory func(logger *testutil.MockLogger, m metrics.Metrics) storage.RefreshStore
+
+func RunRefreshStoreTests(description, backend string, factory StoreFactory, cleanup CleanupFunc) bool {
     Describe(description, func() {
-        // All 51 tests run here
-        // Verify all error conditions, edge cases, context handling
+        // Phases 1–9: functional correctness (nil metrics)
+        // Phase 10:   metrics recording assertions (MockMetrics via gomock)
     })
 }
 
 // memory_test.go uses the suite
 var _ = RunRefreshStoreTests(
-    "MemoryRefreshStore",
-    func(logger) storage.RefreshStore { return storage.NewMemoryRefreshStore(logger) },
-    nil,  // No cleanup needed
+    "MemoryRefreshStore", "memory",
+    func(logger *testutil.MockLogger, m metrics.Metrics) storage.RefreshStore {
+        return storage.NewMemoryRefreshStore(logger, m)
+    },
+    nil,
 )
 
 // redis_test.go uses the same suite
 var _ = RunRefreshStoreTests(
-    "RedisRefreshStore",
-    func(logger) storage.RefreshStore {
-        mini := miniredis.Run()
-        return storage.NewRedisRefreshStore(redis.NewClient(...), logger)
+    "RedisRefreshStore", "redis",
+    func(logger *testutil.MockLogger, m metrics.Metrics) storage.RefreshStore {
+        mini, _ := miniredis.Run()
+        return storage.NewRedisRefreshStore(redis.NewClient(...), logger, m)
     },
-    func() { mini.FlushAll() },  // Cleanup after each test
+    func() { mini.FlushAll() },
 )
 ```
 
 **Benefits**:
 - ✅ Both implementations pass identical tests (semantic equivalence)
 - ✅ No duplication (single suite shared by all)
-- ✅ Easy to add new implementations (just add a new test file calling RunRefreshStoreTests)
-- ✅ Same behavior guaranteed (same test code)
+- ✅ Phase 10 uses gomock to assert exact metric calls per operation and status label
+- ✅ Easy to add new implementations (add a new file calling `RunRefreshStoreTests`)
 - ✅ Reduces maintenance burden (update tests once, benefits both)
 
 ---
@@ -641,9 +803,11 @@ Phase 7: Concurrency
 **Usage**:
 ```go
 mockLogger := testutil.NewMockLogger()
+mockKS := testutil.NewMockKeyStore(ctrl)
 
-manager := keymanager.NewManager(keymanager.ManagerConfig{
-    Logger: mockLogger,
+manager, _ := keymanager.NewManager(keymanager.ManagerConfig{
+    KeyStore: mockKS,
+    Logger:   mockLogger,
 })
 
 manager.Start(ctx)
@@ -708,9 +872,20 @@ Catches:
   - Ensures semantic equivalence across backends
   - Easy to add new implementations
 
-### Phase 5: Metrics Wiring (In Progress)
+### Phase 5: Metrics Wiring and KeyStore Abstraction (In Progress)
 - ✅ Prometheus adapter with `/metrics` endpoint (`PrometheusMetrics`)
-- ⏳ Wire `PrometheusMetrics` into KeyManager, TokenService, and RefreshStore
+- ✅ `MemoryRefreshStore` and `RedisRefreshStore` fully instrumented
+  - Counter + duration on every operation exit path
+  - `"cancelled"` status distinct from `"error"` for context cancellation
+  - Token-count gauge updated in real time on Memory `Store`; post-cleanup for Redis
+  - Metric name constants centralised in `pkg/storage/observability.go`
+  - Phase 10 test suite verifies exact metric calls via gomock
+- ✅ `KeyStore` interface extracted from `Manager` — `DiskKeyStore` implementation with full metrics
+  - `Manager` unit tests are now filesystem-free (use `MockKeyStore`)
+  - 44 Manager specs + 38 DiskKeyStore specs (9 phases), all race-clean
+  - `MockKeyStore` generated via gomock
+- ⏳ Wire `PrometheusMetrics` into TokenService
+- ⏳ `RedisKeyStore` implementation (enables distributed KeyManager deployments)
 - ⏳ StatsD integration (Datadog, Graphite compatible)
 - ⏳ CloudWatch metrics for AWS environments
 
@@ -816,4 +991,4 @@ func (c *Component) Operation() error {
 
 **Last Updated**: April 6, 2026
 **Version**: 0.2.0-beta
-**Status**: Active Development (TokenService + RefreshStore [Memory + Redis] + Metrics [Prometheus] stable, wiring metrics into components in progress)
+**Status**: Active Development (TokenService + RefreshStore [Memory + Redis] + Metrics [Prometheus] stable; RefreshStore fully instrumented; metrics wiring into KeyManager and TokenService in progress)

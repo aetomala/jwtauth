@@ -1,5 +1,9 @@
 # jwtauth
 
+![Tests](https://github.com/aetomala/jwtauth/actions/workflows/CI.yml/badge.svg?branch=main)
+![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+
 **Production-ready JWT authentication library for distributed Go applications**
 
 > ⚠️ **Beta Status**: KeyManager and RefreshStore are production-ready and fully tested. TokenService is in beta — core operations are complete with comprehensive test coverage. API may change before v1.0.0.
@@ -52,25 +56,25 @@
   - Perfect for single-instance deployments and testing
   - Dual-index lookups (tokenID → token, userID → []tokenID) for O(1) retrieval
   - Defensive copying for isolation from caller mutations
-  - 51 comprehensive tests with 100% statement coverage
+  - 61 comprehensive tests with 100% statement coverage
 - **RedisRefreshStore**: Distributed storage for multi-instance deployments
   - Uses go-redis/v9 with pipeline support for atomic operations
   - Millisecond-precision timestamp storage
   - Efficient SCAN-based cleanup for expired tokens
   - Production-ready error handling and logging
-  - 51 comprehensive tests (identical test suite as Memory implementation)
-- **Shared test suite** pattern: Single suite (51 tests) runs against both implementations
+  - 61 comprehensive tests (identical test suite as Memory implementation)
+- **Shared test suite** pattern: Single suite (61 tests) runs against both implementations
 - **Common features** (both implementations):
   - Token lifecycle management (Store, Retrieve, Revoke, RevokeAllForUser, Cleanup)
   - Expiration and revocation checks with per-request validation
   - Idempotent revocation (safe to call multiple times)
   - Comprehensive context handling with cancellation propagation
   - Structured logging for audit trail
-  - **170 total storage tests** (51 × 2 implementations + variations)
+  - **122 total storage tests** (61 × 2 implementations)
 
 ### 🚧 In Development
 
-- **Metrics Wiring**: Inject `PrometheusMetrics` into KeyManager, TokenService, and RefreshStore
+- **Metrics Wiring**: Wire `PrometheusMetrics` into TokenService and RefreshStore (KeyManager already wired via DiskKeyStore)
 - **OpenTelemetry**: Distributed tracing integration
 
 ## Architecture Highlights
@@ -86,14 +90,15 @@ import (
     "github.com/aetomala/jwtauth/pkg/metrics"
 )
 
+ks, _ := keymanager.NewDiskKeyStore("/var/keys", 2048, nil, nil)
 config := keymanager.ManagerConfig{
-    KeyDirectory:        "/var/keys",
+    KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour, // 30 days
-    KeyOverlapPeriod:    1 * time.Hour,        // 1 hour overlap
-    
+    KeyOverlapDuration:  1 * time.Hour,        // 1 hour overlap
+
     // Optional: Bring your own logger
     Logger: logging.NewJSONLogger(slog.LevelInfo),
-    
+
     // Optional: Bring your own metrics
     Metrics: metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
         Namespace: "myapp",
@@ -120,8 +125,9 @@ Components depend on abstractions, not concrete implementations:
 ```go
 // ✅ KeyManager depends on interfaces
 type ManagerConfig struct {
-    Logger  logging.Logger   // Interface, not *slog.Logger
-    Metrics metrics.Metrics  // Interface, not *PrometheusMetrics
+    KeyStore KeyStore         // Interface, not *DiskKeyStore
+    Logger   logging.Logger  // Interface, not *slog.Logger
+    Metrics  metrics.Metrics // Interface, not *PrometheusMetrics
 }
 
 // Easy to swap implementations:
@@ -162,14 +168,18 @@ import (
 )
 
 func main() {
-    // Create KeyManager
-    config := keymanager.ManagerConfig{
-        KeyDirectory:        "./keys",
-        KeyRotationInterval: 30 * 24 * time.Hour,
-        KeyOverlapPeriod:    1 * time.Hour,
+    // Create DiskKeyStore for key persistence
+    ks, err := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
+    if err != nil {
+        log.Fatal(err)
     }
-    
-    manager, err := keymanager.NewManager(config)
+
+    // Create KeyManager
+    manager, err := keymanager.NewManager(keymanager.ManagerConfig{
+        KeyStore:            ks,
+        KeyRotationInterval: 30 * 24 * time.Hour,
+        KeyOverlapDuration:  1 * time.Hour,
+    })
     if err != nil {
         log.Fatal(err)
     }
@@ -182,16 +192,17 @@ func main() {
     defer manager.Shutdown(ctx)
     
     // Get current signing key
-    key, err := manager.GetCurrentSigningKey()
+    _, keyID, err := manager.GetCurrentSigningKey()
     if err != nil {
         log.Fatal(err)
     }
-    
-    // Use key to sign tokens (TokenService coming soon)
-    log.Printf("Current key ID: %s", key.KeyID)
+    log.Printf("Current key ID: %s", keyID)
     
     // Get JWKS for token validation
-    jwks := manager.GetJWKS()
+    jwks, err := manager.GetJWKS()
+    if err != nil {
+        log.Fatal(err)
+    }
     log.Printf("Available keys: %d", len(jwks.Keys))
 }
 ```
@@ -212,15 +223,18 @@ func main() {
     logger := logging.NewJSONLogger(slog.LevelInfo)
     pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{})
 
-    config := keymanager.ManagerConfig{
-        KeyDirectory:        "./keys",
+    ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    manager, err := keymanager.NewManager(keymanager.ManagerConfig{
+        KeyStore:            ks,
         KeyRotationInterval: 30 * 24 * time.Hour,
-        KeyOverlapPeriod:    1 * time.Hour,
+        KeyOverlapDuration:  1 * time.Hour,
         Logger:              logger,
         Metrics:             pm,
-    }
-    
-    manager, err := keymanager.NewManager(config)
+    })
     if err != nil {
         log.Fatal(err)
     }
@@ -304,9 +318,9 @@ func main() {
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `KeyDirectory` | `string` | Yes | - | Directory for key persistence |
+| `KeyStore` | `KeyStore` | Yes | - | Key persistence backend — use `NewDiskKeyStore` for single-instance or a custom implementation for distributed deployments |
 | `KeyRotationInterval` | `time.Duration` | Yes | - | How often to rotate keys (e.g., 30 days) |
-| `KeyOverlapPeriod` | `time.Duration` | Yes | - | Overlap period for zero-downtime rotation |
+| `KeyOverlapDuration` | `time.Duration` | Yes | - | Overlap period for zero-downtime rotation |
 | `Logger` | `logging.Logger` | No | `nil` | Optional structured logger |
 | `Metrics` | `metrics.Metrics` | No | `nil` | Optional metrics collector |
 
@@ -314,18 +328,22 @@ func main() {
 
 **Production**:
 ```go
+ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
 config := keymanager.ManagerConfig{
+    KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour,  // 30 days
-    KeyOverlapPeriod:    1 * time.Hour,         // 1 hour
+    KeyOverlapDuration:  1 * time.Hour,         // 1 hour
     Logger:              logging.NewJSONLogger(slog.LevelInfo),
 }
 ```
 
 **Development**:
 ```go
+ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
 config := keymanager.ManagerConfig{
+    KeyStore:            ks,
     KeyRotationInterval: 24 * time.Hour,        // 1 day (faster testing)
-    KeyOverlapPeriod:    5 * time.Minute,       // 5 minutes
+    KeyOverlapDuration:  5 * time.Minute,        // 5 minutes
     Logger:              logging.NewTextLogger(slog.LevelDebug),
 }
 ```
@@ -390,8 +408,10 @@ pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
 http.Handle("/metrics", pm.Handler())
 
 // Pass to components
+ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, pm)
 config := keymanager.ManagerConfig{
-    Metrics: pm,
+    KeyStore: ks,
+    Metrics:  pm,
 }
 ```
 
@@ -407,7 +427,8 @@ github.com/aetomala/jwtauth/
 │   ├── logging/                  # Logging abstraction
 │   │   ├── logger.go             # Logger interface (4 methods: Debug, Info, Warn, Error)
 │   │   ├── slog_adapter.go       # Standard library adapter
-│   │   └── noop.go               # NoOp implementation
+│   │   ├── noop.go               # NoOp implementation
+│   │   └── logger_test.go        # Logging tests (76 specs)
 │   ├── metrics/                  # Metrics abstraction and implementations
 │   │   ├── interface.go          # Metrics interface
 │   │   ├── noop.go               # NoOp implementation
@@ -416,47 +437,65 @@ github.com/aetomala/jwtauth/
 │   │   ├── prometheus_test.go    # 9-phase Prometheus test suite
 │   │   └── noop_test.go          # NoOp tests
 │   ├── keymanager/               # Key rotation and management ✅
-│   │   ├── manager.go            # Core implementation
-│   │   ├── persistence.go        # Disk operations
-│   │   └── keymanager_test.go   # Comprehensive tests
+│   │   ├── keymanager.go         # Manager: lifecycle, rotation, JWKS generation
+│   │   ├── interface.go          # Manager interface
+│   │   ├── keystore.go           # KeyStore interface, StoredKey type, sentinel errors
+│   │   ├── disk.go               # DiskKeyStore — filesystem-backed KeyStore
+│   │   ├── observability.go      # Metric name constants
+│   │   ├── keymanager_test.go    # 8-phase Manager tests (44 specs, MockKeyStore)
+│   │   └── disk_test.go          # 9-phase DiskKeyStore tests (38 specs)
 │   ├── tokens/                   # JWT operations (Beta) 🟡
 │   │   ├── service.go            # TokenService implementation
+│   │   ├── claims.go             # Claims management
 │   │   ├── service_test.go       # Token operations tests
 │   │   ├── service_lifecycle_test.go  # Lifecycle management tests
-│   │   └── claims.go             # Claims management
-│   ├── storage/                  # Refresh token storage ✅
-│   │   ├── interface.go          # RefreshStore interface
-│   │   ├── errors.go             # Sentinel error types
-│   │   ├── memory.go             # In-memory implementation (~287 lines, production-ready)
-│   │   ├── memory_test.go        # Test runner for MemoryRefreshStore (26 lines)
-│   │   ├── redis.go              # Redis implementation (~497 lines, production-ready)
-│   │   ├── redis_test.go         # Test runner for RedisRefreshStore (60 lines)
-│   │   └── suite_test.go         # Shared test suite (642 lines, 51 tests run against both implementations)
+│   │   └── integration/          # Integration tests
+│   │       └── integration_test.go
+│   └── storage/                  # Refresh token storage ✅
+│       ├── interface.go          # RefreshStore interface
+│       ├── errors.go             # Sentinel error types
+│       ├── observability.go      # Metric name constants
+│       ├── memory.go             # In-memory implementation
+│       ├── memory_test.go        # Test runner for MemoryRefreshStore
+│       ├── redis.go              # Redis implementation
+│       ├── redis_test.go         # Test runner for RedisRefreshStore
+│       ├── storage_suite_test.go # Ginkgo bootstrap
+│       └── suite_test.go         # Shared test suite (61 tests, runs against both implementations)
 ├── internal/                     # Private packages
 │   └── testutil/                 # Shared test utilities
+│       ├── errors.go             # Shared test error helpers
+│       ├── mock_keymanager.go    # gomock-generated MockKeyManager
+│       ├── mock_keystore.go      # gomock-generated MockKeyStore
 │       ├── mock_logger.go        # Reusable MockLogger
-│       └── mock_metrics.go       # gomock-generated MockMetrics
+│       ├── mock_metrics.go       # gomock-generated MockMetrics
+│       └── mock_refreshstore.go  # gomock-generated MockRefreshStore
 ├── doc/                          # Documentation
-│   └── ARCHITECTURE.md           # Design decisions and patterns
-└── examples/                     # Usage examples (coming)
+│   ├── ARCHITECTURE.md           # Design decisions and patterns
+│   └── DEPLOYMENT.md             # Deployment guide
+├── examples/                     # Framework usage examples
+│   ├── gin-example/              # Gin HTTP framework
+│   ├── echo-example/             # Echo HTTP framework
+│   └── chi-example/              # Chi HTTP router
+└── jwtauth_suite_test.go         # Root Ginkgo suite bootstrap
 ```
 
 ## Testing
 
 ### Test Coverage
 
-**Current**: 321 comprehensive tests across KeyManager, TokenService, RefreshStore, and Metrics, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%)
+**Current**: 472 comprehensive tests across KeyManager, TokenService, RefreshStore, Metrics, and Logging, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%)
 
-**KeyManager** (3 test suites):
-- Constructor validation and defaults
-- Lifecycle management (Start/Stop/Shutdown)
-- Core operations (key generation, rotation, retrieval)
-- JWKS endpoint data generation
-- Manual and automatic rotation
-- Persistence (load/save from disk)
-- Concurrency and race conditions
-- Graceful shutdown with in-flight operations
-- Logging integration and verification
+**KeyManager** (2 test suites — 82 total specs):
+- **8-phase Manager tests** (44 specs, MockKeyStore — no filesystem I/O):
+  - Constructor validation, config defaults, ErrInvalidKeyStore
+  - Start: loads from store, generates key on empty store, error paths
+  - GetCurrentSigningKey, GetPublicKey (cache hit/miss), GetJWKS
+  - RotateKeys: Save + UpdateMetadata calls, currentKeyID update
+  - Shutdown: scheduler stop, idempotency, context timeout
+- **9-phase DiskKeyStore tests** (38 specs, real tmp directory):
+  - Constructor, Save (0600 permissions, companion JSON), LoadAll
+  - LoadKey (key size validation), UpdateMetadata, Delete (idempotent)
+  - Error handling, concurrency, metrics recording
 
 **TokenService** (7 test suites, 126 total tests):
 - **Lifecycle Management Tests** (20 tests):
@@ -577,7 +616,9 @@ Tests follow **progressive phase-based development**:
 - ✅ RefreshStore: RedisRefreshStore for distributed deployments with go-redis/v9
 - ✅ RefreshStore: Comprehensive test coverage (170 tests across 9 phases, 100% statement coverage, race-detection clean)
 - ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with pre-registered jwtauth metrics, 100% test coverage
-- 🚧 Wire metrics into KeyManager, TokenService, and RefreshStore
+- ✅ KeyStore interface extracted from KeyManager — `DiskKeyStore` for single-instance, interface seam for distributed backends
+- ✅ Wire metrics into KeyManager (DiskKeyStore operations via `jwtauth_keystore_*` metrics)
+- 🚧 Wire metrics into TokenService and RefreshStore
 
 ### v0.3.0 (Beta)
 - 🚧 Wire Prometheus metrics into all components
@@ -681,5 +722,5 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 **Status**: Beta (Active Development)
 **Version**: 0.2.0-beta
 **Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅
-**Test Coverage**: 321 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%), all passing, race-detection enabled
+**Test Coverage**: 472 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%), all passing, race-detection enabled
 **Last Updated**: April 6, 2026

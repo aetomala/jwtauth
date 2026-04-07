@@ -36,9 +36,10 @@ func main() {
     // logger := logging.NewJSONLogger(slog.LevelInfo)
     
     // Use with KeyManager
+    ks, _ := keymanager.NewDiskKeyStore("/keys", 2048, logger, nil)
     manager, _ := keymanager.NewManager(keymanager.ManagerConfig{
-        KeyDirectory: "/keys",
-        Logger:       logger,
+        KeyStore: ks,
+        Logger:   logger,
     })
     
     manager.Start(context.Background())

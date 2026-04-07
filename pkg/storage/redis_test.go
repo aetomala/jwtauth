@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/aetomala/jwtauth/internal/testutil"
+	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/storage"
 )
 
@@ -18,9 +19,9 @@ var (
 )
 
 var _ = RunRefreshStoreTests(
-	"RedisRefreshStore",
+	"RedisRefreshStore", "redis",
 	// Factory: creates RedisRefreshStore with miniredis
-	func(logger *testutil.MockLogger) storage.RefreshStore {
+	func(logger *testutil.MockLogger, m metrics.Metrics) storage.RefreshStore {
 		var err error
 		miniRedis, err = miniredis.Run()
 		Expect(err).NotTo(HaveOccurred())
@@ -36,7 +37,7 @@ var _ = RunRefreshStoreTests(
 		_, err = client.Ping(ctx).Result()
 		Expect(err).NotTo(HaveOccurred())
 
-		return storage.NewRedisRefreshStore(client, logger)
+		return storage.NewRedisRefreshStore(client, logger, m)
 	},
 	// Cleanup: flush miniredis after each test
 	func() {
