@@ -786,9 +786,11 @@ Phase 7: Concurrency
 **Usage**:
 ```go
 mockLogger := testutil.NewMockLogger()
+mockKS := testutil.NewMockKeyStore(ctrl)
 
-manager := keymanager.NewManager(keymanager.ManagerConfig{
-    Logger: mockLogger,
+manager, _ := keymanager.NewManager(keymanager.ManagerConfig{
+    KeyStore: mockKS,
+    Logger:   mockLogger,
 })
 
 manager.Start(ctx)
