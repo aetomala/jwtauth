@@ -38,8 +38,11 @@ var _ = Describe("TokenService Integration", func() {
 		tmpDir, err = os.MkdirTemp("", "integration-test-*")
 		Expect(err).NotTo(HaveOccurred())
 
+		ks, err := keymanager.NewDiskKeyStore(tmpDir, 2048, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+
 		km, err = keymanager.NewManager(keymanager.ManagerConfig{
-			KeyDirectory:        tmpDir,
+			KeyStore:            ks,
 			KeyRotationInterval: 30 * 24 * time.Hour,
 			KeySize:             2048,
 		})
@@ -187,8 +190,11 @@ var _ = Describe("TokenService Integration", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer os.RemoveAll(tmpDir2)
 
+		ks2, err := keymanager.NewDiskKeyStore(tmpDir2, 2048, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+
 		km2, err := keymanager.NewManager(keymanager.ManagerConfig{
-			KeyDirectory: tmpDir2,
+			KeyStore: ks2,
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -277,8 +283,11 @@ var _ = Describe("TokenService Integration", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer os.RemoveAll(tmpDir2)
 
+		ks2, err := keymanager.NewDiskKeyStore(tmpDir2, 2048, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+
 		km2, err := keymanager.NewManager(keymanager.ManagerConfig{
-			KeyDirectory: tmpDir2,
+			KeyStore: ks2,
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -396,8 +405,11 @@ var _ = Describe("TokenService Integration", func() {
 		Expect(err).NotTo(HaveOccurred())
 		defer os.RemoveAll(tmpDir2)
 
+		ks2, err := keymanager.NewDiskKeyStore(tmpDir2, 2048, nil, nil)
+		Expect(err).NotTo(HaveOccurred())
+
 		km2, err := keymanager.NewManager(keymanager.ManagerConfig{
-			KeyDirectory: tmpDir2,
+			KeyStore: ks2,
 		})
 		Expect(err).NotTo(HaveOccurred())
 

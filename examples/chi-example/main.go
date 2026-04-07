@@ -22,9 +22,14 @@ func main() {
 	// Setup logger
 	logger := logging.NewTextLogger(slog.LevelDebug)
 
-	// Create KeyManager
+	// Create KeyStore and KeyManager
+	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, nil)
+	if err != nil {
+		log.Fatal("Failed to create DiskKeyStore:", err)
+	}
+
 	km, err := keymanager.NewManager(keymanager.ManagerConfig{
-		KeyDirectory:        "./keys",
+		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		Logger:              logger,
 	})
