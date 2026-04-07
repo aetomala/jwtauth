@@ -241,12 +241,16 @@ func (m *Manager) Start(ctx context.Context) error {
 			}
 		}
 		m.currentKeyID = mostRecentKeyID
+		keyCount := len(m.keys)
 		m.mu.Unlock()
 
 		if m.config.Logger != nil {
 			m.config.Logger.Info("loaded existing keys from store",
 				"keyID", m.currentKeyID,
 				"keyCount", len(storedKeys))
+		}
+		if m.metrics != nil {
+			m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(keyCount), nil)
 		}
 	} else {
 		// ===== STEP 4b: Generate Initial Key Pair =====
@@ -272,6 +276,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			ExpiresAt:  time.Time{},
 			cachedJWK:  m.getJWK(privateKey, keyID),
 		}
+		keyCount := len(m.keys)
 		m.mu.Unlock()
 
 		meta := KeyMetadata{ID: keyID, CreatedAt: now}
@@ -287,6 +292,9 @@ func (m *Manager) Start(ctx context.Context) error {
 			m.config.Logger.Info("generated new RSA key pair",
 				"keyID", keyID,
 				"keySize", m.config.KeySize)
+		}
+		if m.metrics != nil {
+			m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(keyCount), nil)
 		}
 	}
 
@@ -310,6 +318,9 @@ func (m *Manager) Start(ctx context.Context) error {
 func (m *Manager) GetCurrentSigningKey() (*rsa.PrivateKey, string, error) {
 	// ===== STEP 1: Check Manager is Running =====
 	if !m.IsRunning() {
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error"})
+		}
 		return nil, "", ErrManagerNotRunning
 	}
 
@@ -323,10 +334,16 @@ func (m *Manager) GetCurrentSigningKey() (*rsa.PrivateKey, string, error) {
 	keyPair, found := m.keys[m.currentKeyID]
 
 	if !found {
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error"})
+		}
 		return nil, "", ErrKeyNotFound
 	}
 
 	// ===== STEP 3: Return Key and ID =====
+	if m.metrics != nil {
+		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "success"})
+	}
 	return keyPair.PrivateKey, m.currentKeyID, nil
 }
 
@@ -382,6 +399,13 @@ func (m *Manager) IsRotationSchedulerActive() bool {
 // if keyID is empty or whitespace-only, or ErrKeyNotFound if the key does not
 // exist or has expired. Uses a double-check locking pattern to cache loaded keys.
 func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
+	status := "error"
+	defer func() {
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricKeyValidationOpsTotal, map[string]string{"status": status})
+		}
+	}()
+
 	// ===== STEP 1: Validate Key ID =====
 	keyID = strings.TrimSpace(keyID)
 	if len(keyID) == 0 {
@@ -395,6 +419,7 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 		if m.config.Logger != nil {
 			m.config.Logger.Debug("public key cache hit", "keyID", keyID)
 		}
+		status = "success"
 		return keyPair.PublicKey, nil
 	}
 	m.mu.RUnlock()
@@ -406,6 +431,7 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 	privateKey, meta, err := m.config.KeyStore.LoadKey(context.Background(), keyID)
 	if err != nil {
 		if errors.Is(err, ErrKeyStoreKeyNotFound) {
+			status = "not_found"
 			return nil, ErrKeyNotFound
 		}
 		return nil, err
@@ -413,6 +439,7 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 
 	// ===== STEP 4: Check Expiration =====
 	if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
+		status = "not_found"
 		return nil, ErrKeyNotFound
 	}
 
@@ -421,6 +448,7 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 	defer m.mu.Unlock()
 
 	if keyPair, exists := m.keys[keyID]; exists {
+		status = "success"
 		return keyPair.PublicKey, nil
 	}
 
@@ -431,6 +459,7 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 		ExpiresAt: meta.ExpiresAt,
 	}
 
+	status = "success"
 	return &privateKey.PublicKey, nil
 }
 
@@ -490,17 +519,25 @@ func (m *Manager) GetKeyInfo(keyID string) (*KeyPair, error) {
 // validated during the transition period. Returns ErrManagerNotRunning if the
 // Manager is not running. Returns the context error if the context is cancelled.
 func (m *Manager) RotateKeys(ctx context.Context) error {
+	start := time.Now()
+	status := "error"
+	defer func() {
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricKeyRotationsTotal, map[string]string{"status": status})
+			m.metrics.RecordDuration(metricKeyOpDuration, time.Since(start), map[string]string{"operation": "rotate"})
+		}
+	}()
+
 	// ===== STEP 1: Check Context =====
 	select {
 	case <-ctx.Done():
+		status = "cancelled"
 		if m.config.Logger != nil {
 			m.config.Logger.Warn("key rotation cancelled")
 		}
 		return ctx.Err()
 	default:
 	}
-
-	startTime := time.Now()
 
 	// ===== STEP 2: Acquire Write Lock =====
 	m.mu.Lock()
@@ -570,11 +607,16 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 		cachedJWK:  m.getJWK(privateKey, keyID),
 	}
 
+	status = "success"
+	if m.metrics != nil {
+		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), nil)
+	}
+
 	if m.config.Logger != nil {
 		m.config.Logger.Info("key rotation successful",
 			"newKeyID", keyID,
 			"oldKeyID", oldKeyID,
-			"duration", time.Since(startTime))
+			"duration", time.Since(start))
 	}
 
 	return nil
@@ -678,6 +720,11 @@ func (m *Manager) cleanupExpiredKeys() {
 				m.config.Logger.Info("deleted expired key", "keyID", key)
 			}
 		}
+	}
+
+	// ===== STEP 5: Update Active Keys Gauge (only when keys were removed) =====
+	if count > 0 && m.metrics != nil {
+		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), nil)
 	}
 }
 

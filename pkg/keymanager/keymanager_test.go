@@ -693,4 +693,206 @@ var _ = Describe("Manager", func() {
 			})
 		})
 	})
+
+	// ===== PHASE 9: Metrics Recording =====
+	Describe("Phase 9: Metrics Recording", func() {
+		var (
+			ctrl   *gomock.Controller
+			mockM  *testutil.MockMetrics
+			mockKS *testutil.MockKeyStore
+		)
+
+		BeforeEach(func() {
+			ctrl = gomock.NewController(GinkgoT())
+			mockM = testutil.NewMockMetrics(ctrl)
+			mockKS = testutil.NewMockKeyStore(ctrl)
+		})
+
+		AfterEach(func() {
+			ctrl.Finish()
+		})
+
+		// newMetricManager creates and starts a Manager wired with mockM and mockKS.
+		// It sets up LoadAll to return one pre-built key, which triggers the
+		// SetGauge(metricKeyActiveVersionsCount) call during Start.
+		newMetricManager := func() *keymanager.Manager {
+			existingKey := newTestKey()
+			existingID := "existing-metric-key"
+			storedKeys := []*keymanager.StoredKey{
+				{
+					KeyID:      existingID,
+					PrivateKey: existingKey,
+					Metadata:   keymanager.KeyMetadata{ID: existingID, CreatedAt: time.Now()},
+				},
+			}
+			mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
+			mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", float64(1), gomock.Nil())
+
+			m, err := keymanager.NewManager(keymanager.ManagerConfig{
+				KeyStore:            mockKS,
+				Metrics:             mockM,
+				KeySize:             2048,
+				KeyRotationInterval: 24 * time.Hour,
+				KeyOverlapDuration:  100 * time.Millisecond,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(m.Start(ctx)).To(Succeed())
+			return m
+		}
+
+		// expectRotationMetrics sets up MockMetrics expectations for a RotateKeys call.
+		// For "success", also expects the active-versions gauge to be updated.
+		expectRotationMetrics := func(status string) {
+			mockM.EXPECT().IncrementCounter("jwtauth_key_rotations_total", map[string]string{"status": status})
+			mockM.EXPECT().RecordDuration("jwtauth_key_operation_duration_seconds", gomock.Any(), map[string]string{"operation": "rotate"})
+			if status == "success" {
+				mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", gomock.Any(), gomock.Nil())
+			}
+		}
+
+		Context("RotateKeys", func() {
+			It("should record success counter, duration, and active-versions gauge", func() {
+				m := newMetricManager()
+				defer func() {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = m.Shutdown(shutdownCtx)
+				}()
+
+				expectRotationMetrics("success")
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockKS.EXPECT().UpdateMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+				Expect(m.RotateKeys(ctx)).To(Succeed())
+			})
+
+			It("should record cancelled status when context is already cancelled", func() {
+				m := newMetricManager()
+				defer func() {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = m.Shutdown(shutdownCtx)
+				}()
+
+				expectRotationMetrics("cancelled")
+
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel() // cancel immediately
+				Expect(m.RotateKeys(cancelledCtx)).To(MatchError(context.Canceled))
+			})
+
+			It("should record error status when Save fails", func() {
+				m := newMetricManager()
+				defer func() {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = m.Shutdown(shutdownCtx)
+				}()
+
+				expectRotationMetrics("error")
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(testutil.NewMockError("disk full"))
+
+				Expect(m.RotateKeys(ctx)).To(HaveOccurred())
+			})
+		})
+
+		Context("GetCurrentSigningKey", func() {
+			It("should record success counter when manager is running", func() {
+				m := newMetricManager()
+				defer func() {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = m.Shutdown(shutdownCtx)
+				}()
+
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "success"})
+
+				_, _, err := m.GetCurrentSigningKey()
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should record error counter when manager is not running", func() {
+				m, err := keymanager.NewManager(keymanager.ManagerConfig{
+					KeyStore:            mockKS,
+					Metrics:             mockM,
+					KeySize:             2048,
+					KeyRotationInterval: 24 * time.Hour,
+					KeyOverlapDuration:  100 * time.Millisecond,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "error"})
+
+				_, _, err = m.GetCurrentSigningKey()
+				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+			})
+		})
+
+		Context("GetPublicKey", func() {
+			It("should record success counter on cache hit", func() {
+				m := newMetricManager()
+				defer func() {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = m.Shutdown(shutdownCtx)
+				}()
+
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "success"})
+
+				_, err := m.GetPublicKey("existing-metric-key")
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should record not_found counter when key does not exist in store", func() {
+				m := newMetricManager()
+				defer func() {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = m.Shutdown(shutdownCtx)
+				}()
+
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "not_found"})
+				mockKS.EXPECT().LoadKey(gomock.Any(), "ghost-key").Return(nil, nil, keymanager.ErrKeyStoreKeyNotFound)
+
+				_, err := m.GetPublicKey("ghost-key")
+				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+			})
+		})
+
+		Context("nil metrics", func() {
+			It("should not panic on any operation when metrics is nil", func() {
+				existingKey := newTestKey()
+				existingID := "nil-metrics-key"
+				storedKeys := []*keymanager.StoredKey{
+					{
+						KeyID:      existingID,
+						PrivateKey: existingKey,
+						Metadata:   keymanager.KeyMetadata{ID: existingID, CreatedAt: time.Now()},
+					},
+				}
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
+
+				m, err := keymanager.NewManager(keymanager.ManagerConfig{
+					KeyStore:            mockKS,
+					KeySize:             2048,
+					KeyRotationInterval: 24 * time.Hour,
+					KeyOverlapDuration:  100 * time.Millisecond,
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(m.Start(ctx)).To(Succeed())
+				defer func() {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = m.Shutdown(shutdownCtx)
+				}()
+
+				Expect(func() { _, _, _ = m.GetCurrentSigningKey() }).NotTo(Panic())
+				Expect(func() { _, _ = m.GetPublicKey(existingID) }).NotTo(Panic())
+
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockKS.EXPECT().UpdateMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				Expect(func() { _ = m.RotateKeys(ctx) }).NotTo(Panic())
+			})
+		})
+	})
 })
