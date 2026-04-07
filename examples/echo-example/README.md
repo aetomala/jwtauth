@@ -270,8 +270,10 @@ Enable debug logging:
 ```go
 logger := logging.NewTextLogger(slog.LevelDebug)
 
+ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, logger, nil)
 km, _ := keymanager.NewManager(keymanager.ManagerConfig{
-    Logger: logger,
+    KeyStore: ks,
+    Logger:   logger,
 })
 
 svc, _ := tokens.NewService(tokens.ServiceConfig{

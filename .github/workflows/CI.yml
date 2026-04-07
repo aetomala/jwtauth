@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ '**' ]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   lint:
     name: Lint
@@ -66,7 +69,7 @@ jobs:
             --randomize-all \
             --fail-on-pending \
             --skip-package=integration \
-            pkg/keymanager pkg/tokens pkg/storage pkg/logging
+            pkg/keymanager pkg/tokens pkg/storage pkg/logging pkg/metrics
 
       - name: Generate HTML coverage report
         run: go tool cover -html=coverage.out -o coverage.html
