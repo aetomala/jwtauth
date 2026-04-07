@@ -303,7 +303,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 				_, loadedMeta, err := ds.LoadKey(ctx, "update-key")
 				Expect(err).NotTo(HaveOccurred())
-				Expect(loadedMeta.ExpiresAt.Truncate(time.Second)).To(Equal(expiry.Truncate(time.Second)))
+				Expect(loadedMeta.ExpiresAt.UTC().Truncate(time.Second)).To(Equal(expiry.UTC().Truncate(time.Second)))
 			})
 		})
 
