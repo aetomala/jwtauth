@@ -291,7 +291,7 @@ Every component accepts optional observability:
 ```go
 type ManagerConfig struct {
     // Core configuration
-    KeyDirectory        string
+    KeyStore            KeyStore        // Required: injected key persistence backend
     KeyRotationInterval time.Duration
     
     // Observability (optional)
@@ -383,7 +383,7 @@ Low-Level Module (SlogAdapter, ZapAdapter, etc.)
 - Rotate keys on schedule
 - Maintain overlap period (old + new keys valid simultaneously)
 - Cleanup expired keys
-- Persist keys to disk
+- Delegate key persistence to an injected `KeyStore`
 - Provide JWKS endpoint
 
 **State Machine**:
@@ -409,10 +409,56 @@ Day 30+1h: Key A deleted, Key B (current)
 Day 60:   Rotate → Key B (expires in 1 hour), Key C (current)
 ```
 
-**Persistence**:
-- **PEM files**: `{keyID}.pem` - RSA private keys
-- **Metadata files**: `{keyID}.json` - CreatedAt, ExpiresAt timestamps
-- **Load on restart**: All valid keys loaded, most recent becomes current
+**KeyStore Interface**:
+
+`Manager` delegates all I/O to an injected `KeyStore`, keeping the two concerns separate:
+
+```go
+type KeyStore interface {
+    LoadAll(ctx context.Context) ([]*StoredKey, error)
+    Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta KeyMetadata) error
+    UpdateMetadata(ctx context.Context, keyID string, meta KeyMetadata) error
+    LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *KeyMetadata, error)
+    Delete(ctx context.Context, keyID string) error
+}
+```
+
+This enables:
+- **Single-instance deployments**: `DiskKeyStore` (PEM + JSON files, local filesystem)
+- **Distributed deployments**: `RedisKeyStore` (future — shared backend, horizontal scale)
+- **Testing**: `MockKeyStore` (gomock, no filesystem I/O in Manager unit tests)
+
+**DiskKeyStore**:
+
+```go
+ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, metrics)
+km, err := keymanager.NewManager(keymanager.ManagerConfig{
+    KeyStore: ks,
+    Logger:   logger,
+})
+```
+
+File format (unchanged from pre-refactor behaviour):
+```
+{dir}/{keyID}.pem   — PKCS#1 RSA private key, 0600 permissions
+{dir}/{keyID}.json  — {"id":"…","created_at":"…","expires_at":"…"}
+```
+
+**KeyStore Metrics**:
+
+| Metric | Type | Labels |
+|--------|------|--------|
+| `jwtauth_keystore_operations_total` | Counter | `operation`, `status`, `storage_backend` |
+| `jwtauth_keystore_operation_duration_seconds` | Histogram | `operation`, `storage_backend` |
+| `jwtauth_keystore_keys_count` | Gauge | `storage_backend` |
+
+`operation` values: `"load_all"`, `"save"`, `"update_metadata"`, `"load_key"`, `"delete"`
+
+`status` values: `"success"`, `"not_found"`, `"error"`, `"cancelled"`
+
+`storage_backend` values: `"disk"` (expandable to `"redis"`)
+
+`SetGauge(jwtauth_keystore_keys_count)` is recorded only by `LoadAll` — set to the count of valid keys returned. This is sufficient because `GetCurrentSigningKey` never calls the store after startup and `GetPublicKey` only calls `LoadKey` on rare cache misses, so KeyStore operations are not on the hot path.
 
 ### TokenService (Beta)
 
@@ -708,9 +754,15 @@ Catches:
   - Ensures semantic equivalence across backends
   - Easy to add new implementations
 
-### Phase 5: Metrics Wiring (In Progress)
+### Phase 5: Metrics Wiring and KeyStore Abstraction (In Progress)
 - ✅ Prometheus adapter with `/metrics` endpoint (`PrometheusMetrics`)
-- ⏳ Wire `PrometheusMetrics` into KeyManager, TokenService, and RefreshStore
+- ✅ RefreshStore metrics wiring: `MemoryRefreshStore` + `RedisRefreshStore` fully instrumented
+- ✅ `KeyStore` interface extracted from `Manager` — `DiskKeyStore` implementation with full metrics
+  - `Manager` unit tests are now filesystem-free (use `MockKeyStore`)
+  - 44 Manager specs + 38 DiskKeyStore specs (9 phases), all race-clean
+  - `MockKeyStore` generated via gomock
+- ⏳ Wire `PrometheusMetrics` into TokenService
+- ⏳ `RedisKeyStore` implementation (enables distributed KeyManager deployments)
 - ⏳ StatsD integration (Datadog, Graphite compatible)
 - ⏳ CloudWatch metrics for AWS environments
 
