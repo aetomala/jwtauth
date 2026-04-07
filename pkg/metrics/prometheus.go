@@ -129,6 +129,21 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 		"Number of tokens in storage",
 		[]string{"storage_backend"})
 
+	// ===== KeyStore Metrics =====
+
+	pm.registerCounter(namespace, "keystore_operations_total",
+		"Total number of key store operations",
+		[]string{"operation", "status", "storage_backend"})
+
+	pm.registerHistogram(namespace, "keystore_operation_duration_seconds",
+		"Duration of key store operations in seconds",
+		[]string{"operation", "storage_backend"},
+		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
+
+	pm.registerGauge(namespace, "keystore_keys_count",
+		"Number of keys in the key store",
+		[]string{"storage_backend"})
+
 	// ===== KeyManager Metrics =====
 
 	pm.registerCounter(namespace, "key_rotations_total",
