@@ -8,42 +8,21 @@ import (
 // Generate mock from this interface using mockgen
 //go:generate mockgen -source=interface.go -destination=../../internal/testutil/mock_keymanager.go -package=testutil -mock_names=KeyManager=MockKeyManager
 
-// KeyManager defines the interface for JWT key management operations.
-//
-// This interface ensures:
-//   - Compile-time verification that implementations are complete
-//   - Clear contract for all key management operations
-//   - Easy mocking for testing dependent components
-//   - Automatic mock generation via mockgen
-//
-// Implementations:
-//   - Manager: Production implementation with file persistence and automatic rotation
-//   - MockKeyManager (testutil): Auto-generated testing implementation
+// KeyManager is a thread-safe interface for JWT key management operations,
+// suitable for use in long-running services with automatic key rotation. All
+// methods are safe for concurrent use.
 type KeyManager interface {
-	// GetCurrentSigningKey returns the current private key for signing tokens.
-	// Returns the private key and its unique identifier.
-	//
-	// This is called when issuing new tokens.
-	//
-	// Returns:
-	//   - privateKey: RSA private key for signing
-	//   - keyID: Unique identifier for this key (used in JWT header)
-	//   - error: If key retrieval fails
-	GetCurrentSigningKey() (*rsa.PrivateKey, string, error)
+	// GetCurrentSigningKey returns the current private key and its ID for JWT signing.
+	// Returns ErrManagerNotRunning if the manager has not been started.
+	// Returns the context error if the context is cancelled.
+	GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, string, error)
 
-	// GetPublicKey returns the public key for the given key ID.
-	// This is used to verify tokens that were signed with a specific key.
-	//
-	// During key rotation, multiple keys may be valid (overlap period).
-	// This method must support retrieving both current and recently-expired keys.
-	//
-	// Args:
-	//   - keyID: The key identifier from the JWT header
-	//
-	// Returns:
-	//   - publicKey: RSA public key for verification
-	//   - error: If key not found or retrieval fails
-	GetPublicKey(keyID string) (*rsa.PublicKey, error)
+	// GetPublicKey returns the public key for the given key ID. During key rotation,
+	// multiple keys may be valid concurrently — this method supports retrieving both
+	// current and recently-rotated keys. Returns ErrInvalidKeyID if keyID is empty
+	// or whitespace-only, ErrKeyNotFound if the key does not exist or has expired.
+	// Returns the context error if the context is cancelled.
+	GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKey, error)
 
 	// GetJWKS returns the JSON Web Key Set.
 	// Contains all currently valid public keys for token verification.

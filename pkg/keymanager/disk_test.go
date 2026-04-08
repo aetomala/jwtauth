@@ -506,9 +506,14 @@ var _ = Describe("DiskKeyStore", func() {
 		}
 
 		expectOpsMetrics := func(operation, status string) {
+			errorType := status
+			if status == "success" {
+				errorType = ""
+			}
 			mockM.EXPECT().IncrementCounter("jwtauth_keystore_operations_total", map[string]string{
 				"operation":       operation,
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": "disk",
 			})
 			mockM.EXPECT().RecordDuration("jwtauth_keystore_operation_duration_seconds", gomock.Any(), map[string]string{

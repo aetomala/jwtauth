@@ -192,7 +192,7 @@ func main() {
     defer manager.Shutdown(ctx)
     
     // Get current signing key
-    _, keyID, err := manager.GetCurrentSigningKey()
+    _, keyID, err := manager.GetCurrentSigningKey(ctx)
     if err != nil {
         log.Fatal(err)
     }

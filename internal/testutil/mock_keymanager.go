@@ -43,9 +43,9 @@ func (m *MockKeyManager) EXPECT() *MockKeyManagerMockRecorder {
 }
 
 // GetCurrentSigningKey mocks base method.
-func (m *MockKeyManager) GetCurrentSigningKey() (*rsa.PrivateKey, string, error) {
+func (m *MockKeyManager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetCurrentSigningKey")
+	ret := m.ctrl.Call(m, "GetCurrentSigningKey", ctx)
 	ret0, _ := ret[0].(*rsa.PrivateKey)
 	ret1, _ := ret[1].(string)
 	ret2, _ := ret[2].(error)
@@ -53,9 +53,9 @@ func (m *MockKeyManager) GetCurrentSigningKey() (*rsa.PrivateKey, string, error)
 }
 
 // GetCurrentSigningKey indicates an expected call of GetCurrentSigningKey.
-func (mr *MockKeyManagerMockRecorder) GetCurrentSigningKey() *gomock.Call {
+func (mr *MockKeyManagerMockRecorder) GetCurrentSigningKey(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentSigningKey", reflect.TypeOf((*MockKeyManager)(nil).GetCurrentSigningKey))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentSigningKey", reflect.TypeOf((*MockKeyManager)(nil).GetCurrentSigningKey), ctx)
 }
 
 // GetJWKS mocks base method.
@@ -74,18 +74,18 @@ func (mr *MockKeyManagerMockRecorder) GetJWKS() *gomock.Call {
 }
 
 // GetPublicKey mocks base method.
-func (m *MockKeyManager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
+func (m *MockKeyManager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKey, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetPublicKey", keyID)
+	ret := m.ctrl.Call(m, "GetPublicKey", ctx, keyID)
 	ret0, _ := ret[0].(*rsa.PublicKey)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetPublicKey indicates an expected call of GetPublicKey.
-func (mr *MockKeyManagerMockRecorder) GetPublicKey(keyID any) *gomock.Call {
+func (mr *MockKeyManagerMockRecorder) GetPublicKey(ctx, keyID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPublicKey", reflect.TypeOf((*MockKeyManager)(nil).GetPublicKey), keyID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPublicKey", reflect.TypeOf((*MockKeyManager)(nil).GetPublicKey), ctx, keyID)
 }
 
 // IsRunning mocks base method.
