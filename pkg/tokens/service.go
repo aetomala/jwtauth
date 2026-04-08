@@ -366,7 +366,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	// ===== STEP 4: Get Signing Key =====
 	// Retrieve current private key and its ID from KeyManager
 	// The key ID will be included in the JWT header for verification
-	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey()
+	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey(ctx)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("failed to get signing key",
@@ -528,7 +528,7 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	}
 
 	// ===== STEP 4: Get Signing Key =====
-	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey()
+	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey(ctx)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("failed to get signing key",
@@ -960,7 +960,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	}
 
 	// ===== STEP 4: Get Signing Key =====
-	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey()
+	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey(ctx)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("failed to get signing key",
@@ -1142,7 +1142,7 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 			}
 
 			// ===== STEP 4c: Get Public Key =====
-			publicKey, err := s.keyManager.GetPublicKey(kid)
+			publicKey, err := s.keyManager.GetPublicKey(ctx, kid)
 			if err != nil {
 				if s.logger != nil {
 					s.logger.Error("failed to get public key",

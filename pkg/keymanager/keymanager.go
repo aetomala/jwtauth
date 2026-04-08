@@ -315,16 +315,25 @@ func (m *Manager) Start(ctx context.Context) error {
 // Returns ErrManagerNotRunning if the Manager is not running, or ErrKeyNotFound
 // if the current key is not in the cache (should not happen in practice).
 // The returned key is safe to use for concurrent signing operations.
-func (m *Manager) GetCurrentSigningKey() (*rsa.PrivateKey, string, error) {
+// Returns the context error if the context is cancelled.
+func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, string, error) {
 	// ===== STEP 1: Check Manager is Running =====
 	if !m.IsRunning() {
 		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error"})
+			m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error"})
 		}
 		return nil, "", ErrManagerNotRunning
 	}
 
-	// ===== STEP 2: Acquire Read Lock and Retrieve Key =====
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "cancelled", "error_type": "cancelled"})
+		}
+		return nil, "", err
+	}
+
+	// ===== STEP 3: Acquire Read Lock and Retrieve Key =====
 	if m.config.Logger != nil {
 		m.config.Logger.Debug("getting current signing key")
 	}
@@ -335,14 +344,14 @@ func (m *Manager) GetCurrentSigningKey() (*rsa.PrivateKey, string, error) {
 
 	if !found {
 		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error"})
+			m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error"})
 		}
 		return nil, "", ErrKeyNotFound
 	}
 
-	// ===== STEP 3: Return Key and ID =====
+	// ===== STEP 4: Return Key and ID =====
 	if m.metrics != nil {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "success"})
+		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "success", "error_type": ""})
 	}
 	return keyPair.PrivateKey, m.currentKeyID, nil
 }
@@ -398,11 +407,13 @@ func (m *Manager) IsRotationSchedulerActive() bool {
 // cache first, then loads from the KeyStore if not found. Returns ErrInvalidKeyID
 // if keyID is empty or whitespace-only, or ErrKeyNotFound if the key does not
 // exist or has expired. Uses a double-check locking pattern to cache loaded keys.
-func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
+// Returns the context error if the context is cancelled.
+func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKey, error) {
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricKeyValidationOpsTotal, map[string]string{"status": status})
+			m.metrics.IncrementCounter(metricKeyValidationOpsTotal, map[string]string{"status": status, "error_type": errorType})
 		}
 	}()
 
@@ -412,7 +423,14 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 		return nil, ErrInvalidKeyID
 	}
 
-	// ===== STEP 2: Check Cache First =====
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
+		return nil, err
+	}
+
+	// ===== STEP 3: Check Cache First =====
 	m.mu.RLock()
 	if keyPair, exists := m.keys[keyID]; exists {
 		m.mu.RUnlock()
@@ -420,35 +438,39 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 			m.config.Logger.Debug("public key cache hit", "keyID", keyID)
 		}
 		status = "success"
+		errorType = ""
 		return keyPair.PublicKey, nil
 	}
 	m.mu.RUnlock()
 
-	// ===== STEP 3: Load from KeyStore =====
+	// ===== STEP 4: Load from KeyStore =====
 	if m.config.Logger != nil {
 		m.config.Logger.Debug("public key not in cache, loading from store", "keyID", keyID)
 	}
-	privateKey, meta, err := m.config.KeyStore.LoadKey(context.Background(), keyID)
+	privateKey, meta, err := m.config.KeyStore.LoadKey(ctx, keyID)
 	if err != nil {
 		if errors.Is(err, ErrKeyStoreKeyNotFound) {
 			status = "not_found"
+			errorType = "not_found"
 			return nil, ErrKeyNotFound
 		}
 		return nil, err
 	}
 
-	// ===== STEP 4: Check Expiration =====
+	// ===== STEP 5: Check Expiration =====
 	if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
 		status = "not_found"
+		errorType = "not_found"
 		return nil, ErrKeyNotFound
 	}
 
-	// ===== STEP 5: Cache with Double-Check Pattern =====
+	// ===== STEP 6: Cache with Double-Check Pattern =====
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if keyPair, exists := m.keys[keyID]; exists {
 		status = "success"
+		errorType = ""
 		return keyPair.PublicKey, nil
 	}
 
@@ -460,6 +482,7 @@ func (m *Manager) GetPublicKey(keyID string) (*rsa.PublicKey, error) {
 	}
 
 	status = "success"
+	errorType = ""
 	return &privateKey.PublicKey, nil
 }
 
@@ -521,9 +544,10 @@ func (m *Manager) GetKeyInfo(keyID string) (*KeyPair, error) {
 func (m *Manager) RotateKeys(ctx context.Context) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricKeyRotationsTotal, map[string]string{"status": status})
+			m.metrics.IncrementCounter(metricKeyRotationsTotal, map[string]string{"status": status, "error_type": errorType})
 			m.metrics.RecordDuration(metricKeyOpDuration, time.Since(start), map[string]string{"operation": "rotate"})
 		}
 	}()
@@ -532,6 +556,7 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		status = "cancelled"
+		errorType = "cancelled"
 		if m.config.Logger != nil {
 			m.config.Logger.Warn("key rotation cancelled")
 		}
@@ -608,6 +633,7 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 	}
 
 	status = "success"
+	errorType = ""
 	if m.metrics != nil {
 		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), nil)
 	}

@@ -69,12 +69,14 @@ func NewDiskKeyStore(dir string, keySize int, logger logging.Logger, m metrics.M
 func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	var keyCount int
 	defer func() {
 		if d.metrics != nil {
 			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "load_all",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": d.backend,
 			})
 			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -92,6 +94,7 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return nil, err
 	}
 
@@ -151,6 +154,7 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 
 	// ===== STEP 4: Log and Return =====
 	status = "success"
+	errorType = ""
 	keyCount = len(keys)
 	if d.logger != nil {
 		d.logger.Info("loaded keys from disk", "count", keyCount)
@@ -164,11 +168,13 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta KeyMetadata) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if d.metrics != nil {
 			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "save",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": d.backend,
 			})
 			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -181,6 +187,7 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -227,6 +234,7 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 
 	// ===== STEP 5: Log and Return =====
 	status = "success"
+	errorType = ""
 	if d.logger != nil {
 		d.logger.Info("saved key to disk", "keyID", keyID)
 	}
@@ -240,11 +248,13 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta KeyMetadata) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if d.metrics != nil {
 			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "update_metadata",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": d.backend,
 			})
 			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -257,6 +267,7 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -264,6 +275,7 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 	pemPath := filepath.Join(d.dir, keyID+".pem")
 	if _, err := os.Stat(pemPath); errors.Is(err, os.ErrNotExist) {
 		status = "not_found"
+		errorType = "not_found"
 		return ErrKeyStoreKeyNotFound
 	}
 
@@ -279,6 +291,7 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 
 	// ===== STEP 4: Log and Return =====
 	status = "success"
+	errorType = ""
 	if d.logger != nil {
 		d.logger.Info("updated key metadata", "keyID", keyID)
 	}
@@ -291,11 +304,13 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *KeyMetadata, error) {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if d.metrics != nil {
 			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "load_key",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": d.backend,
 			})
 			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -308,12 +323,14 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return nil, nil, err
 	}
 
 	// ===== STEP 2: Validate Key ID =====
 	if strings.TrimSpace(keyID) == "" {
 		status = "not_found"
+		errorType = "not_found"
 		return nil, nil, ErrKeyStoreInvalidKeyID
 	}
 
@@ -323,6 +340,7 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file") {
 			status = "not_found"
+			errorType = "not_found"
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if d.logger != nil {
@@ -346,6 +364,7 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 
 	// ===== STEP 5: Log and Return =====
 	status = "success"
+	errorType = ""
 	if d.logger != nil {
 		d.logger.Debug("loaded key from disk", "keyID", keyID)
 	}
@@ -358,11 +377,13 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if d.metrics != nil {
 			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "delete",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": d.backend,
 			})
 			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -375,6 +396,7 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -402,6 +424,7 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 
 	// ===== STEP 4: Log and Return =====
 	status = "success"
+	errorType = ""
 	if d.logger != nil {
 		d.logger.Info("deleted key from disk", "keyID", keyID)
 	}

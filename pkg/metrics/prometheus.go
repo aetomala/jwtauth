@@ -133,7 +133,7 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "keystore_operations_total",
 		"Total number of key store operations",
-		[]string{"operation", "status", "storage_backend"})
+		[]string{"operation", "status", "error_type", "storage_backend"})
 
 	pm.registerHistogram(namespace, "keystore_operation_duration_seconds",
 		"Duration of key store operations in seconds",
@@ -148,15 +148,15 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "key_rotations_total",
 		"Total number of key rotations",
-		[]string{"status"})
+		[]string{"status", "error_type"})
 
 	pm.registerCounter(namespace, "key_signing_operations_total",
 		"Total number of key signing operations",
-		[]string{"status"})
+		[]string{"status", "error_type"})
 
 	pm.registerCounter(namespace, "key_validation_operations_total",
 		"Total number of key validation operations",
-		[]string{"status"})
+		[]string{"status", "error_type"})
 
 	pm.registerHistogram(namespace, "key_operation_duration_seconds",
 		"Duration of key operations in seconds",

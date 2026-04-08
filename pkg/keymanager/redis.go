@@ -64,12 +64,14 @@ func NewRedisKeyStore(client *redis.Client, logger logging.Logger, m metrics.Met
 func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	var keyCount int
 	defer func() {
 		if r.metrics != nil {
 			r.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "load_all",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": r.backend,
 			})
 			r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -87,6 +89,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return nil, err
 	}
 
@@ -170,6 +173,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 
 	// ===== STEP 6: Log and Return =====
 	status = "success"
+	errorType = ""
 	keyCount = len(keys)
 	if r.logger != nil {
 		r.logger.Info("loaded keys from redis", "count", keyCount)
@@ -183,11 +187,13 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta KeyMetadata) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if r.metrics != nil {
 			r.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "save",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": r.backend,
 			})
 			r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -200,6 +206,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -233,6 +240,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 
 	// ===== STEP 5: Log and Return =====
 	status = "success"
+	errorType = ""
 	if r.logger != nil {
 		r.logger.Info("saved key to redis", "keyID", keyID)
 	}
@@ -246,11 +254,13 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta KeyMetadata) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if r.metrics != nil {
 			r.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "update_metadata",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": r.backend,
 			})
 			r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -263,6 +273,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -278,6 +289,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	}
 	if exists == 0 {
 		status = "not_found"
+		errorType = "not_found"
 		return ErrKeyStoreKeyNotFound
 	}
 
@@ -303,6 +315,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 
 	// ===== STEP 4: Log and Return =====
 	status = "success"
+	errorType = ""
 	if r.logger != nil {
 		r.logger.Info("updated key metadata", "keyID", keyID)
 	}
@@ -316,11 +329,13 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *KeyMetadata, error) {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if r.metrics != nil {
 			r.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "load_key",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": r.backend,
 			})
 			r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -333,12 +348,14 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return nil, nil, err
 	}
 
 	// ===== STEP 2: Validate Key ID =====
 	if strings.TrimSpace(keyID) == "" {
 		status = "not_found"
+		errorType = "not_found"
 		return nil, nil, ErrKeyStoreInvalidKeyID
 	}
 
@@ -347,6 +364,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			status = "not_found"
+			errorType = "not_found"
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if r.logger != nil {
@@ -372,6 +390,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			status = "not_found"
+			errorType = "not_found"
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if r.logger != nil {
@@ -394,6 +413,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 
 	// ===== STEP 5: Log and Return =====
 	status = "success"
+	errorType = ""
 	if r.logger != nil {
 		r.logger.Debug("loaded key from redis", "keyID", keyID)
 	}
@@ -406,11 +426,13 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if r.metrics != nil {
 			r.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "delete",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": r.backend,
 			})
 			r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -423,6 +445,7 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -438,6 +461,7 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 
 	// ===== STEP 3: Log and Return =====
 	status = "success"
+	errorType = ""
 	if r.logger != nil {
 		r.logger.Info("deleted key from redis", "keyID", keyID)
 	}

@@ -397,7 +397,7 @@ var _ = Describe("TokenService", func() {
 	Describe("Complete Lifecycle", func() {
 		It("should handle start -> use -> shutdown cycle", func() {
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil).AnyTimes()
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil).AnyTimes()
 			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
 
 			service = createService()
