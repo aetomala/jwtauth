@@ -1,4 +1,4 @@
-package tokens
+package tokens_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/aetomala/jwtauth/internal/testutil"
 	"github.com/aetomala/jwtauth/pkg/storage"
+	"github.com/aetomala/jwtauth/pkg/tokens"
 )
 
 var _ = Describe("TokenService Metrics", func() {
@@ -20,7 +21,7 @@ var _ = Describe("TokenService Metrics", func() {
 		mockKM    *testutil.MockKeyManager
 		mockStore *testutil.MockRefreshStore
 		mockM     *testutil.MockMetrics
-		service   *Service
+		service   *tokens.Service
 		ctx       context.Context
 		cancel    context.CancelFunc
 		testKey   *rsa.PrivateKey
@@ -40,7 +41,7 @@ var _ = Describe("TokenService Metrics", func() {
 		mockStore = testutil.NewMockRefreshStore(ctrl)
 		mockM = testutil.NewMockMetrics(ctrl)
 
-		service, err = NewService(ServiceConfig{
+		service, err = tokens.NewService(tokens.ServiceConfig{
 			KeyManager:           mockKM,
 			RefreshStore:         mockStore,
 			Metrics:              mockM,
@@ -66,7 +67,7 @@ var _ = Describe("TokenService Metrics", func() {
 	// startService starts the service and expects the correct Start metrics.
 	startService := func() {
 		mockKM.EXPECT().Start(gomock.Any()).Return(nil)
-		mockM.EXPECT().SetGauge(metricServiceRunning, 1.0, map[string]string{})
+		mockM.EXPECT().SetGauge("jwtauth_service_running", 1.0, map[string]string{})
 		Expect(service.Start(ctx)).To(Succeed())
 	}
 
@@ -77,7 +78,7 @@ var _ = Describe("TokenService Metrics", func() {
 	Describe("Start", func() {
 		It("records service_running=1.0 on successful start", func() {
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
-			mockM.EXPECT().SetGauge(metricServiceRunning, 1.0, map[string]string{})
+			mockM.EXPECT().SetGauge("jwtauth_service_running", 1.0, map[string]string{})
 			Expect(service.Start(ctx)).To(Succeed())
 		})
 	})
@@ -88,7 +89,7 @@ var _ = Describe("TokenService Metrics", func() {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer shutdownCancel()
 			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
-			mockM.EXPECT().SetGauge(metricServiceRunning, 0.0, map[string]string{})
+			mockM.EXPECT().SetGauge("jwtauth_service_running", 0.0, map[string]string{})
 			Expect(service.Shutdown(shutdownCtx)).To(Succeed())
 		})
 	})
@@ -101,11 +102,11 @@ var _ = Describe("TokenService Metrics", func() {
 		It("records success counter and duration on successful issuance", func() {
 			startService()
 			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
-			mockM.EXPECT().IncrementCounter(metricTokensIssuedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", map[string]string{
 				"status":     "success",
 				"error_type": "",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "issue_access_token",
 			})
 			_, err := service.IssueAccessToken(ctx, "user-1")
@@ -113,41 +114,41 @@ var _ = Describe("TokenService Metrics", func() {
 		})
 
 		It("records not_running counter when service is stopped", func() {
-			mockM.EXPECT().IncrementCounter(metricTokensIssuedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", map[string]string{
 				"status":     "not_running",
 				"error_type": "not_running",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "issue_access_token",
 			})
 			_, err := service.IssueAccessToken(ctx, "user-1")
-			Expect(err).To(MatchError(ErrServiceNotRunning))
+			Expect(err).To(MatchError(tokens.ErrServiceNotRunning))
 		})
 
 		It("records invalid_input counter for empty user ID", func() {
 			startService()
-			mockM.EXPECT().IncrementCounter(metricTokensIssuedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", map[string]string{
 				"status":     "invalid_input",
 				"error_type": "invalid_input",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "issue_access_token",
 			})
 			_, err := service.IssueAccessToken(ctx, "")
-			Expect(err).To(MatchError(ErrInvalidUserID))
+			Expect(err).To(MatchError(tokens.ErrInvalidUserID))
 		})
 
 		It("records invalid_input counter for whitespace-only user ID", func() {
 			startService()
-			mockM.EXPECT().IncrementCounter(metricTokensIssuedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", map[string]string{
 				"status":     "invalid_input",
 				"error_type": "invalid_input",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "issue_access_token",
 			})
 			_, err := service.IssueAccessToken(ctx, "   ")
-			Expect(err).To(MatchError(ErrInvalidUserID))
+			Expect(err).To(MatchError(tokens.ErrInvalidUserID))
 		})
 	})
 
@@ -159,11 +160,11 @@ var _ = Describe("TokenService Metrics", func() {
 		It("records success counter and duration on successful issuance", func() {
 			startService()
 			mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), "user-1", gomock.Any(), gomock.Any()).Return(nil)
-			mockM.EXPECT().IncrementCounter(metricTokensIssuedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", map[string]string{
 				"status":     "success",
 				"error_type": "",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "issue_refresh_token",
 			})
 			_, err := service.IssueRefreshToken(ctx, "user-1")
@@ -180,8 +181,8 @@ var _ = Describe("TokenService Metrics", func() {
 			startService()
 			// Issue a real token first so we have a valid string to validate
 			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
-			mockM.EXPECT().IncrementCounter(metricTokensIssuedTotal, gomock.Any())
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", gomock.Any())
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "issue_access_token",
 			})
 			tokenStr, err := service.IssueAccessToken(ctx, "user-1")
@@ -189,11 +190,11 @@ var _ = Describe("TokenService Metrics", func() {
 
 			// Now validate
 			mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
-			mockM.EXPECT().IncrementCounter(metricTokensValidatedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_validated_total", map[string]string{
 				"status":     "success",
 				"error_type": "",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "validate_access_token",
 			})
 			_, err = service.ValidateAccessToken(ctx, tokenStr)
@@ -201,15 +202,15 @@ var _ = Describe("TokenService Metrics", func() {
 		})
 
 		It("records not_running counter when service is stopped", func() {
-			mockM.EXPECT().IncrementCounter(metricTokensValidatedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_validated_total", map[string]string{
 				"status":     "not_running",
 				"error_type": "not_running",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "validate_access_token",
 			})
 			_, err := service.ValidateAccessToken(ctx, "some-token")
-			Expect(err).To(MatchError(ErrServiceNotRunning))
+			Expect(err).To(MatchError(tokens.ErrServiceNotRunning))
 		})
 	})
 
@@ -229,16 +230,16 @@ var _ = Describe("TokenService Metrics", func() {
 			mockStore.EXPECT().Retrieve(gomock.Any(), "rt-1").Return(storedToken, nil)
 			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 			// IssueAccessToken metrics (called internally by RefreshAccessToken)
-			mockM.EXPECT().IncrementCounter(metricTokensIssuedTotal, gomock.Any())
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", gomock.Any())
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "issue_access_token",
 			})
 			// RefreshAccessToken metrics
-			mockM.EXPECT().IncrementCounter(metricTokensRefreshedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_refreshed_total", map[string]string{
 				"status":     "success",
 				"error_type": "",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "refresh_access_token",
 			})
 			_, err := service.RefreshAccessToken(ctx, "rt-1")
@@ -255,15 +256,15 @@ var _ = Describe("TokenService Metrics", func() {
 			}
 			mockStore.EXPECT().Retrieve(gomock.Any(), "rt-expired").Return(storedToken, nil)
 			mockStore.EXPECT().Revoke(gomock.Any(), "rt-expired").Return(nil).AnyTimes()
-			mockM.EXPECT().IncrementCounter(metricTokensRefreshedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_refreshed_total", map[string]string{
 				"status":     "expired",
 				"error_type": "expired",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "refresh_access_token",
 			})
 			_, err := service.RefreshAccessToken(ctx, "rt-expired")
-			Expect(err).To(MatchError(ErrRefreshTokenExpired))
+			Expect(err).To(MatchError(tokens.ErrRefreshTokenExpired))
 		})
 	})
 
@@ -275,11 +276,11 @@ var _ = Describe("TokenService Metrics", func() {
 		It("records success counter with operation=single on successful revocation", func() {
 			startService()
 			mockStore.EXPECT().Revoke(gomock.Any(), "rt-1").Return(nil)
-			mockM.EXPECT().IncrementCounter(metricTokensRevokedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_revoked_total", map[string]string{
 				"operation": "single",
 				"status":    "success",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "revoke_token",
 			})
 			Expect(service.RevokeRefreshToken(ctx, "rt-1")).To(Succeed())
@@ -287,14 +288,14 @@ var _ = Describe("TokenService Metrics", func() {
 
 		It("records invalid_input counter for empty token ID", func() {
 			startService()
-			mockM.EXPECT().IncrementCounter(metricTokensRevokedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_revoked_total", map[string]string{
 				"operation": "single",
 				"status":    "invalid_input",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "revoke_token",
 			})
-			Expect(service.RevokeRefreshToken(ctx, "")).To(MatchError(ErrInvalidRefreshToken))
+			Expect(service.RevokeRefreshToken(ctx, "")).To(MatchError(tokens.ErrInvalidRefreshToken))
 		})
 	})
 
@@ -306,11 +307,11 @@ var _ = Describe("TokenService Metrics", func() {
 		It("records success counter with operation=all_user on successful bulk revocation", func() {
 			startService()
 			mockStore.EXPECT().RevokeAllForUser(gomock.Any(), "user-1").Return(nil)
-			mockM.EXPECT().IncrementCounter(metricTokensRevokedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_revoked_total", map[string]string{
 				"operation": "all_user",
 				"status":    "success",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "revoke_all_user_tokens",
 			})
 			Expect(service.RevokeAllUserTokens(ctx, "user-1")).To(Succeed())
@@ -331,10 +332,10 @@ var _ = Describe("TokenService Metrics", func() {
 				Revoked:   false,
 			}
 			mockStore.EXPECT().Retrieve(gomock.Any(), "rt-1").Return(storedToken, nil)
-			mockM.EXPECT().IncrementCounter(metricTokensIntrospectedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_introspected_total", map[string]string{
 				"status": "success",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "introspect_token",
 			})
 			meta, err := service.IntrospectToken(ctx, "rt-1")
@@ -345,10 +346,10 @@ var _ = Describe("TokenService Metrics", func() {
 		It("records success counter even when token is not found (returns inactive)", func() {
 			startService()
 			mockStore.EXPECT().Retrieve(gomock.Any(), "unknown-rt").Return(nil, storage.ErrTokenNotFound)
-			mockM.EXPECT().IncrementCounter(metricTokensIntrospectedTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_introspected_total", map[string]string{
 				"status": "success",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "introspect_token",
 			})
 			meta, err := service.IntrospectToken(ctx, "unknown-rt")
@@ -365,11 +366,11 @@ var _ = Describe("TokenService Metrics", func() {
 		It("records success counter and duration on successful cleanup", func() {
 			startService()
 			mockStore.EXPECT().Cleanup(gomock.Any()).Return(3, nil)
-			mockM.EXPECT().IncrementCounter(metricOperationsTotal, map[string]string{
+			mockM.EXPECT().IncrementCounter("jwtauth_operations_total", map[string]string{
 				"operation": "cleanup",
 				"status":    "success",
 			})
-			mockM.EXPECT().RecordDuration(metricOperationDuration, gomock.Any(), map[string]string{
+			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "cleanup",
 			})
 			count, err := service.CleanupExpiredTokens(ctx)
@@ -384,7 +385,7 @@ var _ = Describe("TokenService Metrics", func() {
 
 	Describe("nil metrics", func() {
 		It("does not panic when Metrics is nil", func() {
-			nilService, nilMetricsErr := NewService(ServiceConfig{
+			nilService, nilMetricsErr := tokens.NewService(tokens.ServiceConfig{
 				KeyManager:          mockKM,
 				RefreshStore:        mockStore,
 				Metrics:             nil,
