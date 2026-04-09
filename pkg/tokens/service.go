@@ -1231,6 +1231,54 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 	return claims, nil
 }
 
+// ValidateAccessTokenWithClaims validates the token and returns both the registered
+// claims and any custom claims embedded at issuance via IssueAccessTokenWithClaims.
+// Reserved claim keys (sub, exp, nbf, iat, jti, iss, aud) are excluded from the
+// custom claims map so callers receive only the application-defined fields.
+// Returns an empty map when no custom claims were embedded.
+//
+// Returns ErrServiceNotRunning if the service has not been started, ErrTokenExpired
+// if the token has expired beyond the configured ClockSkew, ErrTokenNotYetValid if
+// the nbf claim has not been reached, ErrInvalidIssuer or ErrInvalidAudience if
+// configured values do not match, ErrInvalidToken for malformed tokens or unknown
+// key IDs, or the context error if the context is cancelled.
+func (s *Service) ValidateAccessTokenWithClaims(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, map[string]interface{}, error) {
+	// ===== STEP 1: Validate via Standard Path =====
+	// All error handling (signature, expiry, issuer, audience, metrics, logging)
+	// is handled by ValidateAccessToken — no duplication needed.
+	registered, err := s.ValidateAccessToken(ctx, tokenString)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// ===== STEP 2: Re-Parse for Custom Claims =====
+	// Signature is already verified above; ParseUnverified is safe here and
+	// avoids a second key-manager round-trip.
+	rawToken, _, parseErr := jwt.NewParser().ParseUnverified(tokenString, jwt.MapClaims{})
+	if parseErr != nil {
+		// Token validated above — treat missing custom claims as empty rather than error.
+		return registered, map[string]interface{}{}, nil
+	}
+
+	mapClaims, ok := rawToken.Claims.(jwt.MapClaims)
+	if !ok {
+		return registered, map[string]interface{}{}, nil
+	}
+
+	// ===== STEP 3: Strip Reserved Claims =====
+	reserved := map[string]struct{}{
+		"sub": {}, "exp": {}, "nbf": {}, "iat": {}, "jti": {}, "iss": {}, "aud": {},
+	}
+	custom := make(map[string]interface{}, len(mapClaims))
+	for k, v := range mapClaims {
+		if _, isReserved := reserved[k]; !isReserved {
+			custom[k] = v
+		}
+	}
+
+	return registered, custom, nil
+}
+
 // RefreshAccessToken exchanges a valid refresh token for a new access token.
 // It retrieves the refresh token from storage, checks expiration and revocation
 // status, then calls IssueAccessToken for the token's owner.

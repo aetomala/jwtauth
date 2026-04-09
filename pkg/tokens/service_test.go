@@ -805,6 +805,79 @@ var _ = Describe("TokenService", func() {
 			})
 		})
 
+		// ======================================================================
+		// ValidateAccessTokenWithClaims
+		// ======================================================================
+
+		Describe("ValidateAccessTokenWithClaims", func() {
+			Context("with custom claims embedded at issuance", func() {
+				It("should return custom claims alongside registered claims", func() {
+					mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+					customClaims := map[string]interface{}{
+						"role":   "admin",
+						"tenant": "org-123",
+					}
+					tokenStr, err := service.IssueAccessTokenWithClaims(ctx, testUserID, customClaims)
+					Expect(err).NotTo(HaveOccurred())
+
+					mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+					registered, custom, err := service.ValidateAccessTokenWithClaims(ctx, tokenStr)
+
+					Expect(err).NotTo(HaveOccurred())
+					Expect(registered).NotTo(BeNil())
+					Expect(registered.Subject).To(Equal(testUserID))
+					Expect(custom["role"]).To(Equal("admin"))
+					Expect(custom["tenant"]).To(Equal("org-123"))
+				})
+
+				It("should exclude reserved claim keys from custom claims map", func() {
+					mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+					tokenStr, err := service.IssueAccessToken(ctx, testUserID)
+					Expect(err).NotTo(HaveOccurred())
+
+					mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+					_, custom, err := service.ValidateAccessTokenWithClaims(ctx, tokenStr)
+
+					Expect(err).NotTo(HaveOccurred())
+					for _, reserved := range []string{"sub", "exp", "nbf", "iat", "jti", "iss", "aud"} {
+						Expect(custom).NotTo(HaveKey(reserved))
+					}
+				})
+
+				It("should return empty map when no custom claims were embedded", func() {
+					mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+					tokenStr, err := service.IssueAccessToken(ctx, testUserID)
+					Expect(err).NotTo(HaveOccurred())
+
+					mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+					_, custom, err := service.ValidateAccessTokenWithClaims(ctx, tokenStr)
+
+					Expect(err).NotTo(HaveOccurred())
+					Expect(custom).NotTo(BeNil())
+					Expect(custom).To(BeEmpty())
+				})
+			})
+
+			Context("when validation fails", func() {
+				It("should propagate errors from ValidateAccessToken", func() {
+					_, _, err := service.ValidateAccessTokenWithClaims(ctx, "not-a-jwt")
+
+					Expect(err).To(Equal(tokens.ErrInvalidToken))
+				})
+
+				It("should return nil claims and nil map on error", func() {
+					registered, custom, err := service.ValidateAccessTokenWithClaims(ctx, "malformed")
+
+					Expect(err).To(HaveOccurred())
+					Expect(registered).To(BeNil())
+					Expect(custom).To(BeNil())
+				})
+			})
+		})
+
 		Context("when public key retrieval fails", func() {
 			It("should return error", func() {
 				mockKM.EXPECT().
