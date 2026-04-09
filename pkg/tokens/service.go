@@ -71,7 +71,6 @@ var (
 	ErrInvalidUserID       = errors.New("invalid user ID")
 	ErrServiceNotRunning   = errors.New("service is not running")
 	ErrInvalidToken        = errors.New("invalid token")
-	ErrInvalidSignature    = errors.New("invalid signature")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrRefreshTokenExpired = errors.New("token has expired")
 	ErrTokenRevoked        = errors.New("token revoked")
@@ -321,16 +320,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		}
 	}()
 
-	// ===== STEP 1: Validate user id ====
-	// validate user ID Split into two to optimize in the event of high volume of invalid requests
-	if len(userID) == 0 {
-		status = "invalid_input"
-		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID")
-		}
-		return "", ErrInvalidUserID
-	}
+	// ===== STEP 1: Validate User ID =====
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "invalid_input"
 		errorType = "invalid_input"
@@ -340,7 +330,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		return "", ErrInvalidUserID
 	}
 
-	//===== STEP 2: Service State Check =====
+	// ===== STEP 2: Service State Check =====
 	if !s.IsRunning() {
 		status = "not_running"
 		errorType = "not_running"
@@ -381,12 +371,6 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 			"keyID", keyID)
 	}
 
-	if s.logger != nil {
-		s.logger.Debug("signing key retrieved",
-			"userID", userID,
-			"keyID", keyID)
-	}
-
 	// ===== STEP 5: Create JWT Claims =====
 	now := time.Now()
 	expiresAt := now.Add(s.accessTokenDuration)
@@ -413,13 +397,6 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	}
 	if s.logger != nil {
 		s.logger.Debug("access token claims created",
-			"userID", userID,
-			"tokenID", tokenID,
-			"expiresAt", expiresAt)
-	}
-
-	if s.logger != nil {
-		s.logger.Debug("claims constructed",
 			"userID", userID,
 			"tokenID", tokenID,
 			"expiresAt", expiresAt)
@@ -488,14 +465,6 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	}()
 
 	// ===== STEP 1: Validate User ID =====
-	if len(userID) == 0 {
-		status = "invalid_input"
-		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID")
-		}
-		return "", ErrInvalidUserID
-	}
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "invalid_input"
 		errorType = "invalid_input"
@@ -649,16 +618,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		}
 	}()
 
-	// ===== STEP 1: Validate user id ====
-	// validate user ID Split into two to optimize in the event of high volume of invalid requests
-	if len(userID) == 0 {
-		status = "invalid_input"
-		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID")
-		}
-		return "", ErrInvalidUserID
-	}
+	// ===== STEP 1: Validate User ID =====
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "invalid_input"
 		errorType = "invalid_input"
@@ -668,7 +628,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		return "", ErrInvalidUserID
 	}
 
-	//===== STEP 2: Service State Check =====
+	// ===== STEP 2: Service State Check =====
 
 	if !s.IsRunning() {
 		status = "not_running"
@@ -780,16 +740,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		}
 	}()
 
-	// ===== STEP 1: Validate user id ====
-	// validate user ID Split into two to optimize in the event of high volume of invalid requests
-	if len(userID) == 0 {
-		status = "invalid_input"
-		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID")
-		}
-		return "", ErrInvalidUserID
-	}
+	// ===== STEP 1: Validate User ID =====
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "invalid_input"
 		errorType = "invalid_input"
@@ -799,7 +750,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		return "", ErrInvalidUserID
 	}
 
-	//===== STEP 2: Service State Check =====
+	// ===== STEP 2: Service State Check =====
 	if !s.IsRunning() {
 		status = "not_running"
 		errorType = "not_running"
@@ -912,16 +863,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		}
 	}()
 
-	// ===== STEP 1: Validate user id ====
-	// validate user ID Split into two to optimize in the event of high volume of invalid requests
-	if len(userID) == 0 {
-		status = "invalid_input"
-		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID")
-		}
-		return "", "", ErrInvalidUserID
-	}
+	// ===== STEP 1: Validate User ID =====
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "invalid_input"
 		errorType = "invalid_input"
@@ -931,7 +873,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		return "", "", ErrInvalidUserID
 	}
 
-	//===== STEP 2: Service State Check =====
+	// ===== STEP 2: Service State Check =====
 	if !s.IsRunning() {
 		status = "not_running"
 		errorType = "not_running"
@@ -1070,9 +1012,10 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 // It verifies the RS256 signature using the public key identified by the token's
 // "kid" header, then checks expiration, issuer, and audience claims.
 //
-// Returns the parsed RegisteredClaims on success, or one of: ErrServiceNotRunning,
-// ErrTokenExpired, ErrTokenNotYetValid, ErrInvalidSignature, ErrInvalidIssuer,
-// ErrInvalidAudience, ErrInvalidToken, or the context error.
+/// Returns the parsed RegisteredClaims on success, or one of: ErrServiceNotRunning,
+// ErrTokenExpired, ErrTokenNotYetValid, ErrInvalidIssuer, ErrInvalidAudience,
+// ErrInvalidToken (covers malformed tokens, wrong signing method, and unknown key IDs),
+// or the context error.
 func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, error) {
 	start := time.Now()
 	status := "error"
@@ -1183,8 +1126,11 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		}
 		if errors.Is(err, keymanager.ErrKeyNotFound) {
 			status = "error"
-			errorType = "invalid_signature"
-			return nil, ErrInvalidSignature
+			errorType = "key_not_found"
+			if s.logger != nil {
+				s.logger.Warn("token references unknown key ID")
+			}
+			return nil, ErrInvalidToken
 		}
 
 		return nil, ErrInvalidToken

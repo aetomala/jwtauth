@@ -758,15 +758,14 @@ var _ = Describe("TokenService", func() {
 		})
 
 		Context("with key not found", func() {
-			It("should return error", func() {
+			It("should return ErrInvalidToken", func() {
 				mockKM.EXPECT().
 					GetPublicKey(gomock.Any(), gomock.Any()).
 					Return(nil, keymanager.ErrKeyNotFound)
 
 				_, err := service.ValidateAccessToken(ctx, validToken)
 
-				Expect(err).To(HaveOccurred())
-				Expect(err).To(Equal(tokens.ErrInvalidSignature))
+				Expect(err).To(Equal(tokens.ErrInvalidToken))
 			})
 		})
 
