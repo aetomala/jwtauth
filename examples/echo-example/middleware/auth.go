@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -10,7 +11,7 @@ import (
 )
 
 // AuthMiddleware validates JWT tokens in the Authorization header
-// and attaches claims to the Echo context
+// and attaches claims to the Echo context.
 func AuthMiddleware(svc *tokens.Service) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -18,7 +19,7 @@ func AuthMiddleware(svc *tokens.Service) echo.MiddlewareFunc {
 			authHeader := c.Request().Header.Get("Authorization")
 			if authHeader == "" {
 				return c.JSON(http.StatusUnauthorized, map[string]string{
-					"error": "missing authorization header",
+					"error": "missing_token",
 				})
 			}
 
@@ -26,7 +27,7 @@ func AuthMiddleware(svc *tokens.Service) echo.MiddlewareFunc {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 			if token == authHeader {
 				return c.JSON(http.StatusUnauthorized, map[string]string{
-					"error": "invalid authorization format",
+					"error": "invalid_authorization_format",
 				})
 			}
 
@@ -34,7 +35,7 @@ func AuthMiddleware(svc *tokens.Service) echo.MiddlewareFunc {
 			claims, err := svc.ValidateAccessToken(c.Request().Context(), token)
 			if err != nil {
 				return c.JSON(http.StatusUnauthorized, map[string]string{
-					"error": "invalid token",
+					"error": tokenErrorCode(err),
 				})
 			}
 
@@ -44,5 +45,23 @@ func AuthMiddleware(svc *tokens.Service) echo.MiddlewareFunc {
 
 			return next(c)
 		}
+	}
+}
+
+// tokenErrorCode maps a ValidateAccessToken error to a machine-readable error code.
+func tokenErrorCode(err error) string {
+	switch {
+	case errors.Is(err, tokens.ErrTokenExpired):
+		return "token_expired"
+	case errors.Is(err, tokens.ErrTokenNotYetValid):
+		return "token_not_yet_valid"
+	case errors.Is(err, tokens.ErrTokenRevoked):
+		return "token_revoked"
+	case errors.Is(err, tokens.ErrInvalidIssuer):
+		return "invalid_issuer"
+	case errors.Is(err, tokens.ErrInvalidAudience):
+		return "invalid_audience"
+	default:
+		return "invalid_token"
 	}
 }
