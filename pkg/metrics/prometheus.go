@@ -114,7 +114,7 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "storage_operations_total",
 		"Total number of storage operations",
-		[]string{"operation", "status", "storage_backend"})
+		[]string{"operation", "status", "error_type", "storage_backend"})
 
 	pm.registerCounter(namespace, "storage_cleanup_tokens_removed_total",
 		"Total number of tokens removed during cleanup",

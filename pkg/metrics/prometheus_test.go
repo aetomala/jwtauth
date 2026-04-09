@@ -698,6 +698,7 @@ var _ = Describe("Prometheus", func() {
 				pm.IncrementCounter("jwtauth_storage_operations_total", map[string]string{
 					"operation":       "store",
 					"status":          "success",
+					"error_type":      "",
 					"storage_backend": "redis",
 				})
 				pm.RecordDuration("jwtauth_storage_operation_duration_seconds", 2*time.Millisecond, map[string]string{
@@ -709,6 +710,7 @@ var _ = Describe("Prometheus", func() {
 				pm.IncrementCounter("jwtauth_storage_operations_total", map[string]string{
 					"operation":       "retrieve",
 					"status":          "success",
+					"error_type":      "",
 					"storage_backend": "redis",
 				})
 				pm.RecordDuration("jwtauth_storage_operation_duration_seconds", 1*time.Millisecond, map[string]string{
@@ -726,8 +728,8 @@ var _ = Describe("Prometheus", func() {
 					"storage_backend": "redis",
 				})
 
-				Expect(counterValue(registry, "jwtauth_storage_operations_total", map[string]string{"operation": "store", "status": "success", "storage_backend": "redis"})).To(Equal(1.0))
-				Expect(counterValue(registry, "jwtauth_storage_operations_total", map[string]string{"operation": "retrieve", "status": "success", "storage_backend": "redis"})).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_storage_operations_total", map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": "redis"})).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_storage_operations_total", map[string]string{"operation": "retrieve", "status": "success", "error_type": "", "storage_backend": "redis"})).To(Equal(1.0))
 				Expect(counterValue(registry, "jwtauth_storage_cleanup_tokens_removed_total", map[string]string{"storage_backend": "redis"})).To(Equal(25.0))
 				Expect(histogramSampleCount(registry, "jwtauth_storage_operation_duration_seconds", map[string]string{"operation": "store", "storage_backend": "redis"})).To(Equal(uint64(1)))
 				Expect(histogramSampleCount(registry, "jwtauth_storage_operation_duration_seconds", map[string]string{"operation": "retrieve", "storage_backend": "redis"})).To(Equal(uint64(1)))
