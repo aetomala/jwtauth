@@ -36,6 +36,9 @@ type ServiceConfig struct {
 	RefreshTokenDuration time.Duration // Default: 30 days
 	CleanupInterval      time.Duration // How often expired tokens are purged; default: 1 hour
 
+	// Clock skew tolerance
+	ClockSkew time.Duration // Leeway for exp/nbf validation; zero means strict. Default: 0
+
 	// JWT claims
 	Issuer   string   // Value for the "iss" claim
 	Audience []string // Values for the "aud" claim
@@ -59,6 +62,7 @@ type Service struct {
 	cleanupInterval      time.Duration // e.g., 1 hour
 	issuer               string        // JWT "iss" claim
 	audience             []string      // JWT "aud" claim
+	clockSkew            time.Duration // Leeway applied to exp and nbf validation
 
 	// ===== State Management =====
 	isRunning    atomic.Bool    // Thread-safe running state
@@ -134,6 +138,10 @@ func NewService(config ServiceConfig) (*Service, error) {
 		return nil, ErrInvalidConfig("CleanupInterval must be non-negative")
 	}
 
+	if config.ClockSkew < 0 {
+		return nil, ErrInvalidConfig("ClockSkew must be non-negative")
+	}
+
 	s := &Service{
 		keyManager:           config.KeyManager,
 		refreshStore:         config.RefreshStore,
@@ -142,6 +150,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		accessTokenDuration:  config.AccessTokenDuration,
 		refreshTokenDuration: config.RefreshTokenDuration,
 		cleanupInterval:      config.CleanupInterval,
+		clockSkew:            config.ClockSkew,
 		issuer:               config.Issuer,
 		audience:             config.Audience,
 		shutdownChan:         make(chan struct{}),
@@ -1058,6 +1067,11 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 	}
 
 	// ===== STEP 3: Parse JWT Token =====
+	parseOpts := []jwt.ParserOption{}
+	if s.clockSkew > 0 {
+		parseOpts = append(parseOpts, jwt.WithLeeway(s.clockSkew))
+	}
+
 	token, err := jwt.ParseWithClaims(
 		tokenString,
 		&jwt.RegisteredClaims{},
@@ -1101,6 +1115,7 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 
 			return publicKey, nil
 		},
+		parseOpts...,
 	)
 
 	// ===== STEP 5: Check Parsing Errors =====
