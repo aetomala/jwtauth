@@ -187,6 +187,19 @@ var _ = Describe("TokenService", func() {
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("RefreshTokenDuration"))
 			})
+
+			It("should return error for negative ClockSkew", func() {
+				config := tokens.ServiceConfig{
+					KeyManager: mockKM,
+					RefreshStore: mockStore,
+					ClockSkew:  -1 * time.Second,
+				}
+
+				_, err := tokens.NewService(config)
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("ClockSkew"))
+			})
 		})
 	})
 
@@ -731,6 +744,65 @@ var _ = Describe("TokenService", func() {
 				}).Should(BeTrue())
 			})
 
+		})
+
+		Context("with clock skew leeway configured", func() {
+			var leewayService *tokens.Service
+
+			BeforeEach(func() {
+				config := tokens.ServiceConfig{
+					KeyManager:          mockKM,
+					RefreshStore:        mockStore,
+					Logger:              mockLogger,
+					AccessTokenDuration: 15 * time.Minute,
+					CleanupInterval:     100 * time.Millisecond,
+					Issuer:              "test-issuer",
+					Audience:            []string{"test-audience"},
+					ClockSkew:           30 * time.Second,
+				}
+				var err error
+				leewayService, err = tokens.NewService(config)
+				Expect(err).NotTo(HaveOccurred())
+
+				mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+				mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
+				Expect(leewayService.Start(ctx)).To(Succeed())
+			})
+
+			AfterEach(func() {
+				mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil).AnyTimes()
+				leewayService.Shutdown(context.Background())
+			})
+
+			It("should accept a token expired within the leeway window", func() {
+				// Token expired 10 seconds ago — within the 30s leeway
+				recentToken := createRecentlyExpiredToken(testKey, testKeyID, testUserID, 10*time.Second)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+				_, err := leewayService.ValidateAccessToken(ctx, recentToken)
+
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should reject a token expired beyond the leeway window", func() {
+				// Token expired 60 seconds ago — exceeds the 30s leeway
+				oldToken := createRecentlyExpiredToken(testKey, testKeyID, testUserID, 60*time.Second)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+				_, err := leewayService.ValidateAccessToken(ctx, oldToken)
+
+				Expect(err).To(Equal(tokens.ErrTokenExpired))
+			})
+
+			It("should reject a token with zero clock skew that expired 10 seconds ago", func() {
+				// Same token, but strict service (no leeway) must reject it
+				recentToken := createRecentlyExpiredToken(testKey, testKeyID, testUserID, 10*time.Second)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+				_, err := service.ValidateAccessToken(ctx, recentToken)
+
+				Expect(err).To(Equal(tokens.ErrTokenExpired))
+			})
 		})
 
 		Context("when public key retrieval fails", func() {
@@ -1546,6 +1618,32 @@ func createTokenWithAudience(key *rsa.PrivateKey, keyID string, audience []strin
 	token.Header["kid"] = keyID
 	signed, _ := token.SignedString(key)
 	return signed
+}
+
+// createRecentlyExpiredToken creates a token that expired the given duration ago.
+func createRecentlyExpiredToken(key *rsa.PrivateKey, keyID, userID string, expiredAgo time.Duration) string {
+	now := time.Now()
+	expiresAt := now.Add(-expiredAgo)
+
+	claims := jwt.RegisteredClaims{
+		Subject:   userID,
+		Issuer:    "test-issuer",
+		Audience:  jwt.ClaimStrings{"test-audience"},
+		ExpiresAt: jwt.NewNumericDate(expiresAt),
+		IssuedAt:  jwt.NewNumericDate(now.Add(-expiredAgo - time.Minute)),
+		NotBefore: jwt.NewNumericDate(now.Add(-expiredAgo - time.Minute)),
+		ID:        "test-recently-expired-jti",
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = keyID
+
+	signedToken, err := token.SignedString(key)
+	if err != nil {
+		return ""
+	}
+
+	return signedToken
 }
 
 func createExpiredToken(key *rsa.PrivateKey, keyID, userID string) string {
