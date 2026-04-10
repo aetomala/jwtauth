@@ -292,19 +292,21 @@ type Metrics interface {
 | `jwtauth_operation_duration_seconds` | Histogram | operation |
 | `jwtauth_active_tokens` | Gauge | storage_backend |
 | `jwtauth_service_running` | Gauge | — |
-| `jwtauth_storage_operations_total` | Counter | operation, status, storage_backend |
+| `jwtauth_storage_operations_total` | Counter | operation, status, error_type, storage_backend |
 | `jwtauth_storage_cleanup_tokens_removed_total` | Counter | storage_backend |
 | `jwtauth_storage_operation_duration_seconds` | Histogram | operation, storage_backend |
 | `jwtauth_storage_tokens_count` | Gauge | storage_backend |
-| `jwtauth_keystore_operations_total` | Counter | operation, status, storage_backend |
+| `jwtauth_keystore_operations_total` | Counter | operation, status, error_type, storage_backend |
 | `jwtauth_keystore_operation_duration_seconds` | Histogram | operation, storage_backend |
 | `jwtauth_keystore_keys_count` | Gauge | storage_backend |
-| `jwtauth_key_rotations_total` | Counter | status |
-| `jwtauth_key_signing_operations_total` | Counter | status |
-| `jwtauth_key_validation_operations_total` | Counter | status |
+| `jwtauth_key_rotations_total` | Counter | status, error_type |
+| `jwtauth_key_signing_operations_total` | Counter | status, error_type |
+| `jwtauth_key_validation_operations_total` | Counter | status, error_type |
 | `jwtauth_key_operation_duration_seconds` | Histogram | operation |
 | `jwtauth_key_current_version` | Gauge | — |
 | `jwtauth_key_active_versions_count` | Gauge | — |
+
+> **`error_type` label convention**: `""` (empty string) on success; mirrors the `status` value on failure (e.g., `"cancelled"`, `"not_found"`, `"validation_error"`). Enables two-level dashboarding — success/failure rate at the `status` level, failure breakdown at the `error_type` level. Aligned with the OpenTelemetry `error.type` semantic convention.
 
 ### Integration Pattern
 
@@ -869,10 +871,10 @@ Catches:
 
 ### Phase 2: Metrics ✅
 - ✅ Metrics interface defined
-- ✅ Prometheus implementation (`PrometheusMetrics`) with 19 pre-registered metrics, 100% test coverage
+- ✅ Prometheus implementation (`PrometheusMetrics`) with 22 pre-registered metrics, 100% test coverage
 - ✅ NoOp implementation
 - ✅ gomock `MockMetrics` for dependency injection in tests
-- ⏳ Wire into KeyManager, TokenService, and RefreshStore
+- ✅ Wired into KeyManager, TokenService, and RefreshStore — all components fully instrumented
 
 ### Phase 3: TokenService ✅ (Beta)
 - ✅ JWT creation with RS256 signing and custom claims
@@ -882,7 +884,9 @@ Catches:
 - ✅ Token introspection per RFC 7662
 - ✅ Lifecycle management (Start/Shutdown/IsRunning)
 - ✅ Background cleanup goroutine with configurable interval
-- ✅ Comprehensive test coverage (126 tests, ~87% coverage, race-detection clean)
+- ✅ Clock skew tolerance (`ClockSkew time.Duration` in `ServiceConfig` — `jwt.WithLeeway()` integration)
+- ✅ `ValidateAccessTokenWithClaims` — returns registered claims and custom claims map after validation
+- ✅ Comprehensive test coverage (153 tests, ~87% coverage, race-detection clean)
 - ✅ RefreshStore interface with context propagation
 
 ### Phase 4: RefreshToken Storage Implementations ✅
@@ -913,7 +917,7 @@ Catches:
   - `Manager` unit tests are now filesystem-free (use `MockKeyStore`)
   - 44 Manager specs + 38 DiskKeyStore specs (9 phases), all race-clean
   - `MockKeyStore` generated via gomock
-- ⏳ Wire `PrometheusMetrics` into TokenService
+- ✅ Wire `PrometheusMetrics` into TokenService — deferred closure pattern with `error_type` label, context propagation
 - ✅ `RedisKeyStore` implementation — `ks:pem:<id>` / `ks:meta:<id>` Redis layout, atomic Pipeline writes, SCAN-based `LoadAll`, full metrics with `storage_backend: "redis"`
 - ⏳ StatsD integration (Datadog, Graphite compatible)
 - ⏳ CloudWatch metrics for AWS environments

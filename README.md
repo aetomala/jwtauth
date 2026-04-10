@@ -39,16 +39,17 @@
 **TokenService** (Beta)
 - **Access token issuance** (IssueAccessToken, IssueAccessTokenWithClaims, IssueTokenPair)
 - **Refresh token issuance** (IssueRefreshToken, IssueRefreshTokenWithMetadata)
-- **Access token validation** with claims extraction (ValidateAccessToken)
+- **Access token validation** with registered and custom claims extraction (ValidateAccessToken, ValidateAccessTokenWithClaims)
 - **Token refresh flow** (RefreshAccessToken) with expiration and revocation checks
 - **Token revocation** (RevokeRefreshToken, RevokeAllUserTokens) for logout and security scenarios
 - **Token introspection** (IntrospectToken) per RFC 7662 — returns active/inactive status with metadata
 - **Manual token cleanup** (CleanupExpiredTokens) for on-demand expiration sweeps
 - **RS256 signing** with custom claims support and reserved claim protection
+- **Clock skew tolerance** (`ClockSkew` field) for distributed deployments with NTP drift
 - **Lifecycle management** (Start/Shutdown/IsRunning) with graceful operations
 - **Background cleanup goroutines** with configurable interval and proper synchronization
 - **Service state management** ensuring tokens only issue when service is running
-- **Comprehensive BDD test coverage** (126 tests covering lifecycle, issuance, validation, refresh, revocation, and introspection; ~87% statement coverage)
+- **Comprehensive BDD test coverage** (153 tests covering lifecycle, issuance, validation, clock skew, custom claims, refresh, revocation, and introspection; ~87% statement coverage)
 
 **RefreshTokenStore** ✅
 - **Two implementations**: Memory (in-process) and Redis (distributed)
@@ -74,8 +75,7 @@
 
 ### 🚧 In Development
 
-- **Metrics Wiring**: Wire `PrometheusMetrics` into `TokenService` — KeyManager, DiskKeyStore, and RedisKeyStore are fully instrumented
-- **OpenTelemetry**: Distributed tracing integration
+- **OpenTelemetry**: Distributed tracing integration with span creation and context propagation across token operations
 
 ## Architecture Highlights
 
@@ -273,9 +273,11 @@ func main() {
         KeyManager:           keyManager,      // from KeyManager above
         RefreshStore:         refreshStore,    // RefreshStore implementation
         Logger:               logger,          // Optional
+        Metrics:              pm,              // Optional — wire PrometheusMetrics for observability
         AccessTokenDuration:  15 * time.Minute,
         RefreshTokenDuration: 30 * 24 * time.Hour,
         CleanupInterval:      1 * time.Hour,   // Auto-cleanup of expired tokens
+        ClockSkew:            30 * time.Second, // Optional leeway for NTP drift in distributed deployments
         Issuer:               "my-app",
         Audience:             []string{"my-app-api"},
     }
@@ -301,7 +303,12 @@ func main() {
         log.Fatal(err)
     }
 
-    log.Printf("Access token issued: %s", token)
+    // Validate token and retrieve custom claims
+    registered, custom, err := service.ValidateAccessTokenWithClaims(ctx, token)
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Printf("User: %s, Role: %s", registered.Subject, custom["role"])
 }
 ```
 
@@ -309,8 +316,10 @@ func main() {
 - ✅ Automatic lifecycle management (Start/Shutdown)
 - ✅ Service state checking (IsRunning) ensures tokens only issue when running
 - ✅ Custom claims support with reserved claim protection
+- ✅ Custom claims retrieval after validation (ValidateAccessTokenWithClaims)
+- ✅ Clock skew tolerance (ClockSkew) for distributed deployments with NTP drift
 - ✅ Background cleanup of expired refresh tokens
-- ✅ Structured logging integration
+- ✅ Structured logging and metrics integration
 
 ## Configuration
 
@@ -323,6 +332,21 @@ func main() {
 | `KeyOverlapDuration` | `time.Duration` | Yes | - | Overlap period for zero-downtime rotation |
 | `Logger` | `logging.Logger` | No | `nil` | Optional structured logger |
 | `Metrics` | `metrics.Metrics` | No | `nil` | Optional metrics collector |
+
+### ServiceConfig
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `KeyManager` | `keymanager.KeyManager` | Yes | — | Signs and validates tokens |
+| `RefreshStore` | `storage.RefreshStore` | Yes | — | Persists refresh tokens |
+| `Logger` | `logging.Logger` | No | `nil` | Optional structured logger |
+| `Metrics` | `metrics.Metrics` | No | `nil` | Optional metrics collector |
+| `AccessTokenDuration` | `time.Duration` | No | `15m` | Access token TTL |
+| `RefreshTokenDuration` | `time.Duration` | No | `30d` | Refresh token TTL |
+| `CleanupInterval` | `time.Duration` | No | `1h` | How often expired tokens are purged |
+| `ClockSkew` | `time.Duration` | No | `0` | Leeway applied to `exp`/`nbf` validation — zero means strict |
+| `Issuer` | `string` | No | `""` | Value for the JWT `iss` claim |
+| `Audience` | `[]string` | No | `nil` | Values for the JWT `aud` claim |
 
 ### Recommended Settings
 
@@ -359,6 +383,38 @@ config := keymanager.ManagerConfig{
     Logger:              logging.NewTextLogger(slog.LevelDebug),
 }
 ```
+
+## Error Reference
+
+All `TokenService` errors are exported sentinels compatible with `errors.Is()`. Middleware and API handlers should switch on these to return specific responses.
+
+| Error | Trigger | Client-side action |
+|-------|---------|-------------------|
+| `tokens.ErrTokenExpired` | Token past `exp` (including `ClockSkew` window) | Prompt token refresh or re-authentication |
+| `tokens.ErrTokenNotYetValid` | Current time before `nbf` claim | Retry after a short delay |
+| `tokens.ErrInvalidIssuer` | `iss` claim does not match configured issuer | Do not retry — configuration mismatch |
+| `tokens.ErrInvalidAudience` | `aud` claim does not match configured audience | Do not retry — configuration mismatch |
+| `tokens.ErrInvalidToken` | Malformed, wrong signing algorithm, or unknown `kid` | Do not retry — request a new token |
+| `tokens.ErrTokenRevoked` | Refresh token explicitly revoked | Force re-login |
+| `tokens.ErrInvalidRefreshToken` | Refresh token not found in store | Force re-login |
+| `tokens.ErrRefreshTokenExpired` | Refresh token past its TTL | Force re-login |
+| `tokens.ErrInvalidUserID` | Empty or whitespace-only `userID` passed to issuance method | Fix caller — input validation error |
+| `tokens.ErrServiceNotRunning` | Token operation called before `Start()` or after `Shutdown()` | Fix caller — lifecycle management error |
+
+```go
+// Example: mapping errors to HTTP responses in middleware
+claims, err := svc.ValidateAccessToken(r.Context(), token)
+switch {
+case errors.Is(err, tokens.ErrTokenExpired):
+    writeJSON(w, 401, `{"error":"token_expired"}`)
+case errors.Is(err, tokens.ErrTokenRevoked):
+    writeJSON(w, 401, `{"error":"token_revoked"}`)
+case err != nil:
+    writeJSON(w, 401, `{"error":"invalid_token"}`)
+}
+```
+
+See [examples/](examples/) for complete middleware implementations for Chi, Echo, and Gin.
 
 ## Observability Integration
 
@@ -419,18 +475,70 @@ pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
 // Serve metrics endpoint
 http.Handle("/metrics", pm.Handler())
 
-// Single-instance: DiskKeyStore
-ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, pm)
-
-// Distributed: RedisKeyStore
-// client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
-// ks, _ := keymanager.NewRedisKeyStore(client, nil, pm)
-
-config := keymanager.ManagerConfig{
-    KeyStore: ks,   // same interface — swap backends without changing Manager code
-    Metrics:  pm,
-}
+// Pass pm to every constructor that accepts it
+ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
+km, _ := keymanager.NewManager(keymanager.ManagerConfig{KeyStore: ks, Metrics: pm})
+store := storage.NewMemoryRefreshStore(logger, pm)
+svc, _ := tokens.NewService(tokens.ServiceConfig{
+    KeyManager:   km,
+    RefreshStore: store,
+    Metrics:      pm,
+})
 ```
+
+**Metric reference** (22 metrics, namespace `jwtauth_` by default):
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `tokens_issued_total` | Counter | `status`, `error_type` | Tokens issued (access + refresh) |
+| `tokens_validated_total` | Counter | `status`, `error_type` | Access token validations |
+| `tokens_refreshed_total` | Counter | `status`, `error_type` | Refresh operations |
+| `tokens_revoked_total` | Counter | `operation`, `status` | Revocation calls |
+| `tokens_introspected_total` | Counter | `status` | RFC 7662 introspection calls |
+| `operations_total` | Counter | `operation`, `status` | General service operations |
+| `operation_duration_seconds` | Histogram | `operation` | Service operation latency |
+| `active_tokens` | Gauge | `storage_backend` | Active token count |
+| `service_running` | Gauge | — | `1` when running, `0` when stopped |
+| `storage_operations_total` | Counter | `operation`, `status`, `error_type`, `storage_backend` | RefreshStore operations |
+| `storage_cleanup_tokens_removed_total` | Counter | `storage_backend` | Tokens removed during cleanup |
+| `storage_operation_duration_seconds` | Histogram | `operation`, `storage_backend` | Storage operation latency |
+| `storage_tokens_count` | Gauge | `storage_backend` | Tokens currently in storage |
+| `keystore_operations_total` | Counter | `operation`, `status`, `error_type`, `storage_backend` | KeyStore operations |
+| `keystore_operation_duration_seconds` | Histogram | `operation`, `storage_backend` | KeyStore operation latency |
+| `keystore_keys_count` | Gauge | `storage_backend` | Keys in key store |
+| `key_rotations_total` | Counter | `status`, `error_type` | Key rotation attempts |
+| `key_signing_operations_total` | Counter | `status`, `error_type` | Signing key retrievals |
+| `key_validation_operations_total` | Counter | `status`, `error_type` | Validation key retrievals |
+| `key_operation_duration_seconds` | Histogram | `operation` | Key operation latency |
+| `key_current_version` | Gauge | — | Active key version number |
+| `key_active_versions_count` | Gauge | — | Active key version count |
+
+**Label conventions**:
+- `status` — `"success"` on the happy path, a short error code on failure (e.g. `"token_expired"`, `"key_not_found"`)
+- `error_type` — `""` on success, mirrors the `status` value on failure — follows the OpenTelemetry `error.type` semantic convention
+- `storage_backend` — `"memory"`, `"redis"`, or `"disk"`
+
+**Example PromQL queries**:
+```promql
+# Token issuance error rate
+rate(jwtauth_tokens_issued_total{status!="success"}[5m])
+
+# Token validation failures broken down by error type
+rate(jwtauth_tokens_validated_total{status!="success"}[5m]) by (error_type)
+
+# Storage operation latency p99
+histogram_quantile(0.99, rate(jwtauth_storage_operation_duration_seconds_bucket[5m]))
+
+# Active key version count (alert if this drops to 0)
+jwtauth_key_active_versions_count
+```
+
+**Alerting guidance**:
+- `jwtauth_key_active_versions_count == 0` → critical — no signing key available, all token issuance will fail
+- `rate(jwtauth_key_rotations_total{status!="success"}[1h]) > 0` → warning — key rotation is failing
+- `jwtauth_service_running == 0` → critical — TokenService has stopped
+
+For the full operator reference including Grafana dashboard guidance and label cardinality analysis, see [doc/METRICS.md](doc/METRICS.md).
 
 **Planned implementations**:
 - StatsD (for Datadog, Graphite)
@@ -502,7 +610,7 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 472 comprehensive tests across KeyManager, TokenService, RefreshStore, Metrics, and Logging, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%)
+**Current**: ~547 comprehensive tests across KeyManager, TokenService, RefreshStore, Metrics, and Logging, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%)
 
 **KeyManager** (3 test suites — 125 total specs):
 - **9-phase Manager tests** (52 specs, MockKeyStore — no I/O):
@@ -522,7 +630,7 @@ github.com/aetomala/jwtauth/
   - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
   - Concurrency, metrics recording (storage_backend: "redis")
 
-**TokenService** (7 test suites, 126 total tests):
+**TokenService** (7 test suites, 153 total tests):
 - **Lifecycle Management Tests** (20 tests):
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency
@@ -533,7 +641,7 @@ github.com/aetomala/jwtauth/
   - IssueRefreshToken: successful issuance, storage, metadata handling, guard conditions
   - IssueTokenPair: coordinated access and refresh token issuance, guard conditions
 - **Validation & Refresh Tests**:
-  - ValidateAccessToken: signature verification, claims extraction, expiration, audience/issuer enforcement, wrong signing method, missing kid header, guard conditions
+  - ValidateAccessToken / ValidateAccessTokenWithClaims: signature verification, claims extraction, custom claims round-trip, clock skew leeway, expiration, audience/issuer enforcement, wrong signing method, missing kid header, guard conditions
   - RefreshAccessToken: token rotation, revocation checks, expiration handling, error propagation, guard conditions
 - **Revocation & Introspection Tests**:
   - RevokeRefreshToken / RevokeAllUserTokens: single and bulk revocation flows
@@ -592,30 +700,41 @@ Tests follow **progressive phase-based development**:
 
 ## Why This Library?
 
+### Concrete Differentiators
+
+1. **Algorithm confusion prevented at the library level** — `ValidateAccessToken` performs a `*jwt.SigningMethodRSA` type assertion before any key lookup. HS256, ECDSA, and `none` are rejected unconditionally — not configurably. There is no option to weaken this.
+
+2. **Custom claims round-trip without raw token re-parsing** — `IssueAccessTokenWithClaims` embeds application-defined fields, and `ValidateAccessTokenWithClaims` returns them as `map[string]interface{}` after verifying the signature. Handlers never need to base64-decode the token or type-assert `MapClaims` themselves.
+
+3. **Zero-downtime key rotation** — `KeyManager` keeps the previous key valid for an overlap period (default 1 hour) while signing all new tokens with the rotated key. Tokens issued before rotation continue to validate. No service restart or forced re-login is required.
+
+4. **Clock skew tolerance without inflating TTLs** — the `ClockSkew` field on `ServiceConfig` applies `jwt.WithLeeway()` to `exp` and `nbf` validation. Distributed deployments with NTP drift work correctly without extending access token lifetimes.
+
+5. **10 granular sentinel errors, all `errors.Is()`-compatible** — callers can distinguish `ErrTokenExpired` from `ErrTokenRevoked` from `ErrInvalidAudience` without string matching. Middleware can return specific JSON error codes (`token_expired`, `token_revoked`, `invalid_audience`) that clients can act on.
+
+6. **Stateful refresh layer with instant revocation** — `RefreshStore` tracks every refresh token by ID and user. `RevokeAllUserTokens` invalidates all sessions for a compromised account in a single call — no waiting for expiry.
+
+7. **Observability at every exit path** — a deferred closure pattern records `status` and `error_type` labels at every return, including error paths. No silent failures. The `error_type` label follows the OpenTelemetry `error.type` semantic convention for interoperability with OTEL-based pipelines.
+
+8. **JWKS endpoint ready** — `KeyManager.GetJWKS()` returns an RFC 7517-compliant key set that external verifiers (API gateways, other services) can consume without calling your signing service.
+
 ### vs. golang-jwt/jwt
 
-**golang-jwt/jwt** focuses on token operations (create/validate). **jwtauth** provides:
-- ✅ Complete lifecycle management (key rotation, persistence)
-- ✅ Zero-downtime operations (overlap periods)
-- ✅ Production observability (structured logging, metrics)
-- ✅ Clean architecture (SOLID principles, dependency inversion)
+**golang-jwt/jwt** handles token operations (create/validate) against a key you supply. **jwtauth** adds:
+- Automatic key rotation with overlap periods — no restart required
+- Stateful refresh token lifecycle (issue, rotate, revoke, clean up)
+- `ValidateAccessTokenWithClaims` for custom claims without re-parsing
+- `ClockSkew` for distributed deployment tolerance
+- 22 pre-registered Prometheus metrics across all operations
+- 10 typed sentinel errors for precise error handling in middleware
 
 ### vs. lestrrat-go/jwx
 
-**lestrrat-go/jwx** is comprehensive but complex. **jwtauth** provides:
-- ✅ Simpler API focused on common use cases
-- ✅ Built-in key rotation and management
-- ✅ Observability as a first-class feature
-- ✅ Clear separation of concerns (KeyManager, TokenService, Storage)
-
-### Unique Features
-
-1. **Zero-downtime key rotation** - Most libraries require service restart
-2. **Observability-first design** - Structured logging and metrics built into every operation
-3. **Dependency inversion** - Bring your own logger/metrics, no forced dependencies
-4. **Distributed token storage** - Memory for testing, Redis for production (multi-instance)
-5. **Production patterns** - Graceful shutdown, persistence, error recovery, defensive copying
-6. **SOLID architecture** - Easy to test, extend, and maintain
+**lestrrat-go/jwx** is a comprehensive JOSE implementation — JWS, JWE, JWK, JWT. **jwtauth** is narrower and higher-level:
+- Focused API for the auth token lifecycle (issue → validate → refresh → revoke)
+- Key rotation is built in, not assembled from primitives
+- Observability (structured logging, metrics) is first-class, not an afterthought
+- No JOSE surface area you don't need — less API to reason about
 
 ## Roadmap
 
@@ -635,21 +754,22 @@ Tests follow **progressive phase-based development**:
 - ✅ TokenService: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
 - ✅ TokenService: Token introspection per RFC 7662 (IntrospectToken)
 - ✅ TokenService: Manual cleanup sweep (CleanupExpiredTokens)
-- ✅ TokenService: Comprehensive test coverage (126 tests, ~87% statement coverage, all passing with race detection)
+- ✅ TokenService: Clock skew tolerance (`ClockSkew` field, `jwt.WithLeeway()` integration)
+- ✅ TokenService: `ValidateAccessTokenWithClaims` — registered and custom claims returned after validation
+- ✅ TokenService: Comprehensive test coverage (153 tests, ~87% statement coverage, all passing with race detection)
 - ✅ RefreshStore: Shared test suite pattern (51 tests, eliminates duplication, runs against all implementations)
 - ✅ RefreshStore: MemoryRefreshStore with defensive copying and concurrent safety
 - ✅ RefreshStore: RedisRefreshStore for distributed deployments with go-redis/v9
 - ✅ RefreshStore: Comprehensive test coverage (170 tests across 9 phases, 100% statement coverage, race-detection clean)
-- ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with pre-registered jwtauth metrics, 100% test coverage
+- ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with 22 pre-registered jwtauth metrics, 100% test coverage
 - ✅ KeyStore interface extracted from KeyManager — `DiskKeyStore` for single-instance, `RedisKeyStore` for distributed deployments
 - ✅ `RedisKeyStore` — Redis-backed KeyStore using `ks:pem:<id>` / `ks:meta:<id>` layout, atomic Pipeline writes, SCAN-based LoadAll
-- ✅ Wire metrics into all KeyStore implementations and Manager (`jwtauth_keystore_*` + `jwtauth_key_*`)
-- 🚧 Wire metrics into TokenService
+- ✅ Wire metrics into all components — KeyStore, Manager, TokenService, RefreshStore with `error_type` label and context propagation
+- ✅ Example middleware returns specific JSON error codes (`token_expired`, `token_revoked`, etc.) via sentinel error mapping
 
 ### v0.3.0 (Beta)
-- 🚧 Wire Prometheus metrics into all components
 - 🚧 StatsD and CloudWatch metrics adapters
-- 🚧 Example applications
+- 🚧 OpenTelemetry distributed tracing
 
 ### v1.0.0 (Stable)
 - API stability guarantee

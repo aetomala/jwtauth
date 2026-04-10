@@ -212,12 +212,21 @@ svc, _ := tokens.NewService(tokens.ServiceConfig{
 Check custom claims in middleware:
 
 ```go
-// Gin example
+// Use ValidateAccessTokenWithClaims to get both registered and custom claims:
+registered, custom, err := svc.ValidateAccessTokenWithClaims(ctx, token)
+// registered.Subject == userID
+// custom["role"] == "admin"  (application-defined fields only)
+
+// Store custom claims in context for downstream middleware:
+c.Set("claims", custom) // map[string]interface{}
+
+// Authorization middleware — check custom claims:
 func RequireRole(role string) gin.HandlerFunc {
     return func(c *gin.Context) {
-        claims := c.Get("claims").(*tokens.Claims)
-        if claims.Custom["role"] != role {
-            c.AbortWithStatusJSON(403, gin.H{"error": "insufficient permissions"})
+        custom, _ := c.Get("claims")
+        claimsMap, _ := custom.(map[string]interface{})
+        if claimsMap["role"] != role {
+            c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient_permissions"})
             return
         }
         c.Next()
