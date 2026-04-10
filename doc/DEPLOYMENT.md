@@ -1,275 +1,277 @@
-# Deployment Architecture
+# Deployment Guide
 
-This guide covers deployment patterns for applications built with `jwtauth`, with a focus on where rate limiting belongs and how to configure it at each layer.
-
-## Rate Limiting Is Not in This Library — By Design
-
-`jwtauth` is a focused JWT library. Rate limiting is a deployment concern that varies by environment, scale, and business rules. Building it into the library would:
-
-- Break distributed correctness (per-instance counters diverge across pods)
-- Force an opinionated implementation on users who already have infrastructure
-- Conflate token operations with request policy enforcement
-
-The right layer depends on your deployment topology.
+Operational reference for running applications built with `jwtauth` — covering startup validation, health checks, metrics collection, graceful shutdown, and production tuning.
 
 ---
 
-## Layer 1: API Gateway (Recommended for Distributed Deployments)
+## Pre-flight Checklist
 
-Rate limiting at the API Gateway is the correct default for any multi-instance deployment. It works across all service instances without shared state in your application.
+Before starting in production, verify the following:
 
-### Kong
+### Key Storage
 
-```yaml
-# Apply rate limiting per route
-plugins:
-  - name: rate-limiting
-    config:
-      minute: 10     # login endpoint — strict
-      policy: redis  # shared across instances
-
-routes:
-  - name: token-issue
-    paths: [/auth/login]
-    plugins:
-      - name: rate-limiting
-        config:
-          minute: 10
-
-  - name: token-refresh
-    paths: [/auth/refresh]
-    plugins:
-      - name: rate-limiting
-        config:
-          minute: 100
+**DiskKeyStore** — check directory permissions before startup:
+```bash
+# Directory must be readable and writable by the process user
+ls -la ./keys/
+# Expected: drwx------ (700) or drwxr-x--- (750) for the process user
+chmod 700 ./keys/
 ```
 
-### AWS API Gateway
-
-```yaml
-Resources:
-  LoginMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      ThrottlingBurstLimit: 10
-      ThrottlingRateLimit: 10   # 10 req/s
-
-  RefreshMethod:
-    Type: AWS::ApiGateway::Method
-    Properties:
-      ThrottlingBurstLimit: 100
-      ThrottlingRateLimit: 100
-```
-
-### Kubernetes Ingress (NGINX)
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: auth-ingress
-  annotations:
-    nginx.ingress.kubernetes.io/limit-rps: "100"
-    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
-spec:
-  rules:
-    - host: auth.example.com
-      http:
-        paths:
-          - path: /auth
-            pathType: Prefix
-            backend:
-              service:
-                name: auth-service
-                port:
-                  number: 8080
-```
-
----
-
-## Refresh Token Storage: Memory vs Redis
-
-`jwtauth` provides two RefreshStore implementations for different deployment topologies. Choosing the right one is a deployment decision, not a code decision.
-
-### MemoryRefreshStore (In-Process)
-
-**When to use**:
-- ✅ Single-instance deployments (one app server)
-- ✅ Development and testing environments
-- ✅ High-frequency token operations with low latency requirements
-- ✅ Small-scale deployments with bounded token volume
-
-**Characteristics**:
-- Stores tokens in process memory (Go maps)
-- Dual-index design for O(1) lookups and bulk operations
-- Thread-safe with RWMutex (concurrent reads, exclusive writes)
-- No network I/O (fast)
-- No persistence (tokens lost on restart — acceptable for short-lived refresh tokens)
-- Perfect for dev/test environments
-
-**Configuration**:
+**RedisKeyStore / RedisRefreshStore** — verify connectivity at startup:
 ```go
-refreshStore := storage.NewMemoryRefreshStore(logger)
+// Ping Redis before creating stores — fail fast rather than at first token operation
+if err := redisClient.Ping(ctx).Err(); err != nil {
+    log.Fatalf("Redis unavailable: %v", err)
+}
 
-config := tokens.ServiceConfig{
-    RefreshStore: refreshStore,
-    // ... other config
+ks, _ := keymanager.NewRedisKeyStore(redisClient, logger, pm)
+store := storage.NewRedisRefreshStore(redisClient, logger, pm)
+```
+
+### Service Start Order
+
+Always start `KeyManager` before `TokenService` — `TokenService.Start()` does not call `KeyManager.Start()`:
+```go
+// Correct order
+if err := km.Start(ctx); err != nil {
+    log.Fatal("KeyManager failed to start:", err)
+}
+if err := svc.Start(ctx); err != nil {
+    log.Fatal("TokenService failed to start:", err)
 }
 ```
 
-### RedisRefreshStore (Distributed)
+---
 
-**When to use**:
-- ✅ Multi-instance deployments (Kubernetes, load-balanced)
-- ✅ Need shared state across service instances
-- ✅ Production environments with strict uptime requirements
-- ✅ Large-scale deployments with thousands of concurrent users
-- ✅ Deployments where revocation must be immediate across all instances
+## Health Checks
 
-**Characteristics**:
-- Stores tokens in Redis (external service)
-- Atomic operations via Redis pipelines
-- Millisecond-precision timestamps
-- Thread-safe (go-redis/v9 client handles concurrency)
-- Network I/O required (adds latency, typically < 5ms)
-- Persistent (tokens survive service restarts)
-- TTL-based automatic cleanup (Redis EXPIRE)
-- Works correctly in multi-instance/multi-region setups
+Expose a health endpoint that reflects actual service state — not just HTTP liveness.
 
-**Configuration**:
 ```go
-redisClient := redis.NewClient(&redis.Options{
-    Addr: "redis.default.svc.cluster.local:6379",
+// Health check handler — checks both service and key availability
+func healthHandler(svc *tokens.Service, km keymanager.KeyManager) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        if !svc.IsRunning() {
+            w.WriteHeader(http.StatusServiceUnavailable)
+            json.NewEncoder(w).Encode(map[string]string{
+                "status": "unhealthy",
+                "reason": "token service not running",
+            })
+            return
+        }
+
+        if _, err := km.GetCurrentSigningKey(r.Context()); err != nil {
+            w.WriteHeader(http.StatusServiceUnavailable)
+            json.NewEncoder(w).Encode(map[string]string{
+                "status": "unhealthy",
+                "reason": "no active signing key",
+            })
+            return
+        }
+
+        w.WriteHeader(http.StatusOK)
+        json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+    }
+}
+```
+
+**Kubernetes probe configuration**:
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 2
+  periodSeconds: 5
+```
+
+---
+
+## Metrics Collection
+
+Wire `PrometheusMetrics` into every component — pass the same `pm` instance to all constructors:
+
+```go
+pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
+    Namespace: "myapp",  // prefix for all metric names; defaults to "jwtauth"
 })
 
-refreshStore := storage.NewRedisRefreshStore(redisClient, logger)
+ks, _   := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
+km, _   := keymanager.NewManager(keymanager.ManagerConfig{KeyStore: ks, Metrics: pm})
+store   := storage.NewMemoryRefreshStore(logger, pm)
+svc, _  := tokens.NewService(tokens.ServiceConfig{
+    KeyManager:   km,
+    RefreshStore: store,
+    Metrics:      pm,
+})
 
-config := tokens.ServiceConfig{
-    RefreshStore: refreshStore,
-    // ... other config
+// Serve the /metrics endpoint
+http.Handle("/metrics", pm.Handler())
+```
+
+**Prometheus scrape config**:
+```yaml
+scrape_configs:
+  - job_name: "auth-service"
+    static_configs:
+      - targets: ["auth-service:8080"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+```
+
+**Key alerts**:
+
+```yaml
+groups:
+  - name: jwtauth
+    rules:
+      - alert: NoActiveSigningKey
+        expr: jwtauth_key_active_versions_count == 0
+        for: 1m
+        severity: critical
+        annotations:
+          summary: "No active signing key — token issuance will fail"
+
+      - alert: KeyRotationFailing
+        expr: rate(jwtauth_key_rotations_total{status!="success"}[1h]) > 0
+        for: 5m
+        severity: warning
+        annotations:
+          summary: "Key rotation errors detected"
+
+      - alert: TokenServiceStopped
+        expr: jwtauth_service_running == 0
+        for: 1m
+        severity: critical
+        annotations:
+          summary: "TokenService is not running"
+```
+
+For the complete metric reference — all 22 metrics with label values and PromQL cookbook — see [METRICS.md](METRICS.md).
+
+---
+
+## Graceful Shutdown
+
+Shut down in reverse start order — `TokenService` first, then `KeyManager`. Always use a deadline:
+
+```go
+srv := &http.Server{Addr: ":8080", Handler: r}
+
+// Listen for shutdown signals
+quit := make(chan os.Signal, 1)
+signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+<-quit
+
+// Allow 30 seconds total for shutdown
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+// 1. Stop accepting new HTTP connections
+if err := srv.Shutdown(shutdownCtx); err != nil {
+    log.Println("HTTP server shutdown error:", err)
+}
+
+// 2. Shut down TokenService (drains in-flight operations)
+if err := svc.Shutdown(shutdownCtx); err != nil {
+    log.Println("TokenService shutdown error:", err)
+}
+
+// 3. Shut down KeyManager
+if err := km.Shutdown(shutdownCtx); err != nil {
+    log.Println("KeyManager shutdown error:", err)
 }
 ```
 
-**Kubernetes Example**:
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: auth-config
-data:
-  REDIS_ADDR: "redis-cache.default.svc.cluster.local:6379"
+**Shutdown timeout guidance**:
+- 30 seconds is sufficient for most deployments
+- Reduce to 10 seconds if token operations are short-lived (< 5s timeouts)
+- Increase to 60 seconds if using Redis with high latency (> 20ms round-trip)
+
 ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: auth-service
-spec:
-  replicas: 3  # Multiple instances share Redis backend
-  template:
-    spec:
-      containers:
-      - name: auth
-        env:
-        - name: REDIS_ADDR
-          valueFrom:
-            configMapKeyRef:
-              name: auth-config
-              key: REDIS_ADDR
-```
 
-### Decision Matrix
+## RefreshStore Selection
 
-| Factor | Memory | Redis |
-|--------|--------|-------|
+| Factor | MemoryRefreshStore | RedisRefreshStore |
+|--------|-------------------|-------------------|
 | **Instances** | 1 | 2+ |
-| **Shared state** | ❌ | ✅ |
-| **Revocation sync** | Per-instance | Immediate across all |
-| **Latency** | < 1ms | ~5ms |
-| **Persistence** | ❌ | ✅ |
-| **Auto-cleanup** | Manual (caller) | Automatic (TTL) |
-| **Scale** | Thousands tokens | Millions tokens |
-| **Cost** | Free | Redis service required |
-| **Setup** | Trivial | Add Redis dependency |
+| **Shared revocation** | Per-instance only | Immediate across all |
+| **Latency** | < 1ms | ~1–5ms |
+| **Persistence** | Lost on restart | Survives restarts |
+| **Auto-cleanup** | Background goroutine | Redis TTL |
+| **Scale** | Thousands of tokens | Millions of tokens |
+| **Dependencies** | None | Redis required |
 
-### Practical Guidance
-
-**Development**: Always use MemoryRefreshStore.
-```bash
-# Easy to test, no external dependencies, fast iteration
-go test -race ./...
+**Single-instance** (development, small deployments):
+```go
+store := storage.NewMemoryRefreshStore(logger, pm)
 ```
 
-**Single-instance production** (small deployment):
+**Multi-instance** (Kubernetes, load-balanced):
 ```go
-// MemoryRefreshStore is sufficient
-// Tokens are short-lived (typically 24 hours)
-// Loss on restart is acceptable
-refreshStore := storage.NewMemoryRefreshStore(logger)
-```
-
-**Multi-instance production** (Kubernetes, load-balanced):
-```go
-// Redis is required for consistency
-// Revocation must apply across all instances
-// Shared state ensures "logout" works everywhere
 redisClient := redis.NewClient(&redis.Options{
     Addr: os.Getenv("REDIS_ADDR"),
 })
-refreshStore := storage.NewRedisRefreshStore(redisClient, logger)
+store := storage.NewRedisRefreshStore(redisClient, logger, pm)
 ```
 
-**High-traffic production** (SaaS, consumer app):
+---
+
+## ClockSkew Tuning
+
+In distributed deployments, servers may have slight clock drift. `ClockSkew` adds leeway to `exp` and `nbf` validation without inflating token lifetimes:
+
 ```go
-// Redis with cluster/sentinel for HA
-// Multiple Redis replicas for failover
-// Monitoring and alerting on Redis health
-redisClient := redis.NewClient(&redis.Options{
-    Addr: os.Getenv("REDIS_SENTINEL_ADDR"),
-    // Sentinel configuration for failover...
+svc, _ := tokens.NewService(tokens.ServiceConfig{
+    // ...
+    ClockSkew: 30 * time.Second,  // Accept tokens up to 30s past expiry
 })
-refreshStore := storage.NewRedisRefreshStore(redisClient, logger)
 ```
+
+**Guidance**:
+- `0` (default) — strict validation; use in single-server deployments with NTP
+- `10s–30s` — typical for Kubernetes clusters with NTP drift
+- `60s` — maximum recommended; beyond this, inflate `AccessTokenDuration` instead
 
 ---
 
-## Layered Architecture
+## Key Rotation Monitoring
 
+`KeyManager` rotates keys automatically on `KeyRotationInterval`. Monitor rotation health:
+
+```promql
+# Rotation failures in the past hour
+rate(jwtauth_key_rotations_total{status!="success"}[1h])
+
+# Active key versions — should be ≥ 1 at all times
+jwtauth_key_active_versions_count
+
+# Current key version (monotonically increasing)
+jwtauth_key_current_version
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Infrastructure Layer                                        │
-│  CDN / DDoS Protection → Load Balancer → API Gateway        │
-│  ⭐ Rate limiting lives here for distributed deployments    │
-└─────────────────────────────────────────────────────────────┘
-                           ↓
-┌─────────────────────────────────────────────────────────────┐
-│  Application Layer                                           │
-│  HTTP Handlers → jwtauth.TokenService                        │
-│                                                              │
-│  jwtauth responsibilities:                                   │
-│    ✅ Issue and sign JWT access tokens                       │
-│    ✅ Issue and store refresh tokens                         │
-│    ✅ Validate token signatures, expiration, claims          │
-│    ✅ Rotate tokens via refresh flow                         │
-│    ✅ Revoke tokens (single and bulk)                        │
-│    ✅ Token introspection (RFC 7662)                         │
-│    ✅ Key rotation (via KeyManager)                          │
-│                                                              │
-│  Not jwtauth responsibilities:                               │
-│    ❌ Rate limiting                                          │
-│    ❌ HTTP routing                                           │
-│    ❌ Session management                                     │
-│    ❌ User authentication (passwords, MFA)                   │
-└─────────────────────────────────────────────────────────────┘
-                           ↓
-┌─────────────────────────────────────────────────────────────┐
-│  Storage Layer                                               │
-│  MemoryRefreshStore (dev/single-instance)                   │
-│  RedisRefreshStore (production/multi-instance)              │
-│                                                              │
-│  Choose based on deployment topology, not preference        │
-└─────────────────────────────────────────────────────────────┘
-```
+
+The overlap period (default 1 hour) keeps pre-rotation tokens valid. Tokens signed with the old key continue to validate during the overlap — no re-issuance or service restart is required.
 
 ---
 
-**See also**: [ARCHITECTURE.md](ARCHITECTURE.md) for component design, dependency inversion patterns, and RefreshStore implementation details.
+## Rate Limiting
+
+Rate limiting is a deployment concern, not a library concern. Apply it at the layer appropriate for your topology:
+
+- **API Gateway** (Kong, AWS API Gateway) — correct default for multi-instance; shared counters across pods
+- **Kubernetes Ingress** (NGINX `limit-rps`) — infrastructure-level, no application code required
+- **Application middleware** — only for single-instance deployments or when gateway-level limiting is unavailable
+
+`jwtauth` intentionally does not include rate limiting — building it in would force per-instance counters (incorrect for distributed deployments) and an opinionated policy on users who already have gateway infrastructure.
+
+---
+
+**See also**: [ARCHITECTURE.md](ARCHITECTURE.md) for component design and dependency inversion patterns, [METRICS.md](METRICS.md) for the complete metrics reference.

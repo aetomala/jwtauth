@@ -223,19 +223,28 @@ token, err := svc.IssueAccessTokenWithClaims(ctx, userID, claims)
 
 ### Add Authorization Middleware
 
-Extend `auth/middleware.go` to check custom claims:
+Use `ValidateAccessTokenWithClaims` in your middleware to surface custom claims, then store them in context:
 
 ```go
+// In auth middleware — replace ValidateAccessToken with ValidateAccessTokenWithClaims
+registered, custom, err := svc.ValidateAccessTokenWithClaims(r.Context(), token)
+if err != nil {
+    writeJSONError(w, tokenErrorCode(err), http.StatusUnauthorized)
+    return
+}
+ctx := context.WithValue(r.Context(), "userID", registered.Subject)
+ctx = context.WithValue(ctx, "claims", custom) // map[string]interface{}
+next.ServeHTTP(w, r.WithContext(ctx))
+
+// In downstream middleware — check custom claims
 func RequireRole(role string) func(http.Handler) http.Handler {
     return func(next http.Handler) http.Handler {
         return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            claims := r.Context().Value("claims").(*tokens.Claims)
-
-            if claims.Custom["role"] != role {
-                http.Error(w, "insufficient permissions", http.StatusForbidden)
+            custom, _ := r.Context().Value("claims").(map[string]interface{})
+            if custom["role"] != role {
+                http.Error(w, `{"error":"insufficient_permissions"}`, http.StatusForbidden)
                 return
             }
-
             next.ServeHTTP(w, r)
         })
     }

@@ -12,6 +12,7 @@ import (
 	"github.com/aetomala/jwtauth/examples/echo-example/middleware"
 	"github.com/aetomala/jwtauth/pkg/keymanager"
 	"github.com/aetomala/jwtauth/pkg/logging"
+	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
@@ -20,8 +21,11 @@ func main() {
 	// Setup logger
 	logger := logging.NewTextLogger(slog.LevelDebug)
 
+	// Setup metrics
+	pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{})
+
 	// Create KeyStore and KeyManager
-	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, nil)
+	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
 	if err != nil {
 		log.Fatal("Failed to create DiskKeyStore:", err)
 	}
@@ -30,6 +34,7 @@ func main() {
 		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		Logger:              logger,
+		Metrics:             pm,
 	})
 	if err != nil {
 		log.Fatal("Failed to create KeyManager:", err)
@@ -46,7 +51,7 @@ func main() {
 	}()
 
 	// Create RefreshStore
-	store := storage.NewMemoryRefreshStore(logger, nil)
+	store := storage.NewMemoryRefreshStore(logger, pm)
 
 	// Create TokenService
 	svc, err := tokens.NewService(tokens.ServiceConfig{
@@ -56,6 +61,7 @@ func main() {
 		RefreshTokenDuration: 7 * 24 * time.Hour,
 		CleanupInterval:      1 * time.Hour,
 		Logger:               logger,
+		Metrics:              pm,
 		Issuer:               "echo-example",
 		Audience:             []string{"echo-example-api"},
 	})
@@ -82,6 +88,12 @@ func main() {
 			return next(c)
 		}
 	}))
+
+	// Metrics endpoint
+	e.GET("/metrics", func(c echo.Context) error {
+		pm.Handler().ServeHTTP(c.Response().Writer, c.Request())
+		return nil
+	})
 
 	// Public endpoints
 	e.POST("/login", loginHandler(svc))
@@ -118,7 +130,7 @@ type TokenResponse struct {
 func loginHandler(svc *tokens.Service) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		var req LoginRequest
-		if err := c.BindJSON(&req); err != nil {
+		if err := c.Bind(&req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{
 				"error": "invalid request body",
 			})
@@ -157,7 +169,7 @@ type RefreshRequest struct {
 func refreshHandler(svc *tokens.Service) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		var req RefreshRequest
-		if err := c.BindJSON(&req); err != nil {
+		if err := c.Bind(&req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]string{
 				"error": "invalid request body",
 			})

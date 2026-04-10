@@ -12,6 +12,7 @@ import (
 	"github.com/aetomala/jwtauth/examples/gin-example/middleware"
 	"github.com/aetomala/jwtauth/pkg/keymanager"
 	"github.com/aetomala/jwtauth/pkg/logging"
+	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
@@ -20,8 +21,11 @@ func main() {
 	// Setup logger
 	logger := logging.NewTextLogger(slog.LevelDebug)
 
+	// Setup metrics
+	pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{})
+
 	// Create KeyStore and KeyManager
-	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, nil)
+	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
 	if err != nil {
 		log.Fatal("Failed to create DiskKeyStore:", err)
 	}
@@ -30,6 +34,7 @@ func main() {
 		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		Logger:              logger,
+		Metrics:             pm,
 	})
 	if err != nil {
 		log.Fatal("Failed to create KeyManager:", err)
@@ -46,7 +51,7 @@ func main() {
 	}()
 
 	// Create RefreshStore
-	store := storage.NewMemoryRefreshStore(logger, nil)
+	store := storage.NewMemoryRefreshStore(logger, pm)
 
 	// Create TokenService
 	svc, err := tokens.NewService(tokens.ServiceConfig{
@@ -56,6 +61,7 @@ func main() {
 		RefreshTokenDuration: 7 * 24 * time.Hour,
 		CleanupInterval:      1 * time.Hour,
 		Logger:               logger,
+		Metrics:              pm,
 		Issuer:               "gin-example",
 		Audience:             []string{"gin-example-api"},
 	})
@@ -74,6 +80,9 @@ func main() {
 
 	// Setup Gin router
 	r := gin.Default()
+
+	// Metrics endpoint
+	r.GET("/metrics", gin.WrapH(pm.Handler()))
 
 	// Public endpoints
 	r.POST("/login", loginHandler(svc))
