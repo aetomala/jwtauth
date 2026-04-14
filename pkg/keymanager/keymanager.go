@@ -495,11 +495,16 @@ func (m *Manager) GetJWKS(ctx context.Context) (*JWKS, error) {
 		return nil, ErrManagerNotRunning
 	}
 
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if m.config.Logger != nil {
 		m.config.Logger.Debug("getting JWKS", ctx)
 	}
 
-	// ===== STEP 2: Acquire Read Lock and Collect Keys =====
+	// ===== STEP 3: Acquire Read Lock and Collect Keys =====
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -511,7 +516,7 @@ func (m *Manager) GetJWKS(ctx context.Context) (*JWKS, error) {
 		keys = append(keys, *key.cachedJWK)
 	}
 
-	// ===== STEP 3: Return JWKS =====
+	// ===== STEP 4: Return JWKS =====
 	return &JWKS{Keys: keys}, nil
 }
 
@@ -705,14 +710,25 @@ func (m *Manager) rotationSchedulerLoop(ctx context.Context) {
 func (m *Manager) cleanupExpiredKeys(ctx context.Context) {
 	// ===== STEP 1: Check Manager is Running =====
 	if !m.IsRunning() {
+		if m.config.Logger != nil {
+			m.config.Logger.Warn("cleanup aborted: manager is not running", ctx)
+		}
 		return
 	}
 
-	// ===== STEP 2: Acquire Write Lock =====
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		if m.config.Logger != nil {
+			m.config.Logger.Warn("cleanup aborted: context cancelled", ctx, "reason", err)
+		}
+		return
+	}
+
+	// ===== STEP 3: Acquire Write Lock =====
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// ===== STEP 3: Sweep Expired Keys =====
+	// ===== STEP 4: Sweep Expired Keys =====
 	now := time.Now()
 	count := 0
 	deletedKeys := []string{}
@@ -736,7 +752,7 @@ func (m *Manager) cleanupExpiredKeys(ctx context.Context) {
 		}
 	}
 
-	// ===== STEP 4: Log Results =====
+	// ===== STEP 5: Log Results =====
 	if m.config.Logger != nil {
 		if count == 0 {
 			m.config.Logger.Debug("no expired keys found during cleanup", ctx)

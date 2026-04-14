@@ -498,6 +498,36 @@ var _ = Describe("Manager", func() {
 			})
 		})
 
+		Context("when the context is already cancelled", func() {
+			BeforeEach(func() {
+				ctrl = gomock.NewController(GinkgoT())
+				mockKS = testutil.NewMockKeyStore(ctrl)
+
+				activeKey := newTestKey()
+				storedKeys := []*keymanager.StoredKey{
+					{
+						KeyID:      "active-key",
+						PrivateKey: activeKey,
+						Metadata:   keymanager.KeyMetadata{ID: "active-key", CreatedAt: time.Now()},
+					},
+				}
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
+
+				var err error
+				manager, err = keymanager.NewManager(newTestConfig(mockKS))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(manager.Start(ctx)).To(Succeed())
+			})
+
+			It("should return the context error", func() {
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				_, err := manager.GetJWKS(cancelledCtx)
+				Expect(err).To(MatchError(context.Canceled))
+			})
+		})
+
 		Context("with multiple keys", func() {
 			It("should return all non-expired keys", func() {
 				ctrl = gomock.NewController(GinkgoT())
