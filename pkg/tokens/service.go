@@ -170,14 +170,14 @@ func (s *Service) Start(ctx context.Context) error {
 	if !s.isRunning.CompareAndSwap(false, true) {
 		// Already running — idempotent no-op, no metric recorded
 		if s.logger != nil {
-			s.logger.Warn("start called but service already running")
+			s.logger.Warn("start called but service already running", ctx)
 		}
 		return nil // Already running, not an error
 	}
 
 	// ===== STEP 2: Log Startup =====
 	if s.logger != nil {
-		s.logger.Info("starting token service")
+		s.logger.Info("starting token service", ctx)
 	}
 
 	// ===== STEP 3: Start KeyManager =====
@@ -185,7 +185,7 @@ func (s *Service) Start(ctx context.Context) error {
 		s.isRunning.Store(false) // Revert state
 
 		if s.logger != nil {
-			s.logger.Error("failed to start token service",
+			s.logger.Error("failed to start token service", ctx,
 				"error", err)
 		}
 		return fmt.Errorf("failed to start keymanager: %w", err)
@@ -200,7 +200,7 @@ func (s *Service) Start(ctx context.Context) error {
 		s.metrics.SetGauge(metricServiceRunning, 1.0, map[string]string{})
 	}
 	if s.logger != nil {
-		s.logger.Info("token service started")
+		s.logger.Info("token service started", ctx)
 	}
 
 	return nil
@@ -217,28 +217,28 @@ func (s *Service) cleanupLoop(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			if s.logger != nil {
-				s.logger.Debug("cleanup loop tick started")
+				s.logger.Debug("cleanup loop tick started", ctx)
 			}
 			// Cleanup expired refresh tokens
 			if s.logger != nil {
-				s.logger.Debug("cleanup ticker fired")
+				s.logger.Debug("cleanup ticker fired", ctx)
 			}
 			if count, err := s.refreshStore.Cleanup(ctx); err != nil {
 				if s.logger != nil {
-					s.logger.Error("refresh token cleanup failed",
+					s.logger.Error("refresh token cleanup failed", ctx,
 						"error", err)
 				}
 			} else {
 
 				if s.logger != nil {
-					s.logger.Info("refresh token cleanup completed",
+					s.logger.Info("refresh token cleanup completed", ctx,
 						"tokens", count)
 				}
 			}
 
 		case <-s.shutdownChan:
 			if s.logger != nil {
-				s.logger.Info("cleanup loop stopping")
+				s.logger.Info("cleanup loop stopping", ctx)
 			}
 			return
 		}
@@ -255,14 +255,14 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	// ===== STEP 1: Check If Running (Idempotent) =====
 	if !s.isRunning.CompareAndSwap(true, false) {
 		if s.logger != nil {
-			s.logger.Warn("shutdown called but service not running")
+			s.logger.Warn("shutdown called but service not running", ctx)
 		}
 		return nil // Already stopped, not an error
 	}
 
 	// ===== STEP 2: Log Shutdown =====
 	if s.logger != nil {
-		s.logger.Info("shutting down token service")
+		s.logger.Info("shutting down token service", ctx)
 	}
 
 	// ===== STEP 3: Signal Background Goroutines =====
@@ -281,7 +281,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		// Timeout
 		if s.logger != nil {
-			s.logger.Warn("shutdown timeout waiting for goroutines",
+			s.logger.Warn("shutdown timeout waiting for goroutines", ctx,
 				"error", ctx.Err())
 		}
 		return ctx.Err()
@@ -290,7 +290,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	// ===== STEP 5: Shutdown KeyManager =====
 	if err := s.keyManager.Shutdown(ctx); err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to shutdown keymanager",
+			s.logger.Error("failed to shutdown keymanager", ctx,
 				"error", err)
 		}
 		return fmt.Errorf("failed to shutdown keymanager: %w", err)
@@ -301,7 +301,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		s.metrics.SetGauge(metricServiceRunning, 0.0, map[string]string{})
 	}
 	if s.logger != nil {
-		s.logger.Info("token service stopped")
+		s.logger.Info("token service stopped", ctx)
 	}
 
 	return nil
@@ -334,7 +334,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		status = "invalid_input"
 		errorType = "invalid_input"
 		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID")
+			s.logger.Warn("attempted to get token with empty userID", ctx)
 		}
 		return "", ErrInvalidUserID
 	}
@@ -344,7 +344,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		status = "not_running"
 		errorType = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("service not running")
+			s.logger.Warn("service not running", ctx)
 		}
 		return "", ErrServiceNotRunning
 	}
@@ -355,7 +355,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		status = "cancelled"
 		errorType = "cancelled"
 		if s.logger != nil {
-			s.logger.Warn("context cancelled during token issuance",
+			s.logger.Warn("context cancelled during token issuance", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -368,14 +368,14 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey(ctx)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to get signing key",
+			s.logger.Error("failed to get signing key", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to get signing key: %w", err)
 	}
 	if s.logger != nil {
-		s.logger.Debug("signing key retrieved",
+		s.logger.Debug("signing key retrieved", ctx,
 			"userID", userID,
 			"keyID", keyID)
 	}
@@ -387,7 +387,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	tokenID, err := generateTokenID()
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to generate token ID",
+			s.logger.Error("failed to generate token ID", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -405,7 +405,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		ID:        tokenID,                       // "jti" - unique token identifier
 	}
 	if s.logger != nil {
-		s.logger.Debug("access token claims created",
+		s.logger.Debug("access token claims created", ctx,
 			"userID", userID,
 			"tokenID", tokenID,
 			"expiresAt", expiresAt)
@@ -424,7 +424,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to sign token",
+			s.logger.Error("failed to sign token", ctx,
 				"userID", userID,
 				"keyID", keyID,
 				"error", err)
@@ -432,7 +432,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 		return "", fmt.Errorf("failed to sign token: %w", err)
 	}
 	if s.logger != nil {
-		s.logger.Debug("access token signed",
+		s.logger.Debug("access token signed", ctx,
 			"userID", userID,
 			"tokenID", tokenID)
 	}
@@ -441,7 +441,7 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	status = "success"
 	errorType = ""
 	if s.logger != nil {
-		s.logger.Info("access token issued",
+		s.logger.Info("access token issued", ctx,
 			"userID", userID,
 			"tokenID", tokenID,
 			"keyID", keyID,
@@ -478,7 +478,7 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 		status = "invalid_input"
 		errorType = "invalid_input"
 		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID")
+			s.logger.Warn("attempted to get token with empty userID", ctx)
 		}
 		return "", ErrInvalidUserID
 	}
@@ -488,7 +488,7 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 		status = "not_running"
 		errorType = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("service not running")
+			s.logger.Warn("service not running", ctx)
 		}
 		return "", ErrServiceNotRunning
 	}
@@ -498,7 +498,7 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 		status = "cancelled"
 		errorType = "cancelled"
 		if s.logger != nil {
-			s.logger.Warn("context cancelled during token issuance",
+			s.logger.Warn("context cancelled during token issuance", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -509,14 +509,14 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey(ctx)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to get signing key",
+			s.logger.Error("failed to get signing key", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to get signing key: %w", err)
 	}
 	if s.logger != nil {
-		s.logger.Debug("signing key retrieved",
+		s.logger.Debug("signing key retrieved", ctx,
 			"userID", userID,
 			"keyID", keyID)
 	}
@@ -526,7 +526,7 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	tokenID, err := generateTokenID()
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to generate token ID",
+			s.logger.Error("failed to generate token ID", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -558,14 +558,14 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 			customClaimsCount++
 		} else {
 			if s.logger != nil {
-				s.logger.Warn("attempted to override reserved claim",
+				s.logger.Warn("attempted to override reserved claim", ctx,
 					"userID", userID,
 					"claim", key)
 			}
 		}
 	}
 	if s.logger != nil {
-		s.logger.Debug("access token claims created with custom claims",
+		s.logger.Debug("access token claims created with custom claims", ctx,
 			"userID", userID,
 			"tokenID", tokenID,
 			"customClaimsCount", customClaimsCount,
@@ -579,7 +579,7 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	signedToken, err := token.SignedString(privateKey)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to sign token with custom claims",
+			s.logger.Error("failed to sign token with custom claims", ctx,
 				"userID", userID,
 				"keyID", keyID,
 				"error", err)
@@ -587,7 +587,7 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 		return "", fmt.Errorf("failed to sign token: %w", err)
 	}
 	if s.logger != nil {
-		s.logger.Debug("access token with custom claims signed",
+		s.logger.Debug("access token with custom claims signed", ctx,
 			"userID", userID,
 			"tokenID", tokenID)
 	}
@@ -595,7 +595,7 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	status = "success"
 	errorType = ""
 	if s.logger != nil {
-		s.logger.Info("access token with custom claims issued",
+		s.logger.Info("access token with custom claims issued", ctx,
 			"userID", userID,
 			"tokenID", tokenID,
 			"keyID", keyID,
@@ -632,7 +632,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		status = "invalid_input"
 		errorType = "invalid_input"
 		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID")
+			s.logger.Warn("attempted to get token with empty userID", ctx)
 		}
 		return "", ErrInvalidUserID
 	}
@@ -643,7 +643,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		status = "not_running"
 		errorType = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("service not running")
+			s.logger.Warn("service not running", ctx)
 		}
 		return "", ErrServiceNotRunning
 	}
@@ -655,7 +655,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		status = "cancelled"
 		errorType = "cancelled"
 		if s.logger != nil {
-			s.logger.Warn("context cancelled during token issuance",
+			s.logger.Warn("context cancelled during token issuance", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -663,7 +663,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	}
 
 	if s.logger != nil {
-		s.logger.Debug("issuing refresh token", "userID", userID)
+		s.logger.Debug("issuing refresh token", ctx, "userID", userID)
 	}
 
 	// ===== STEP 4: Generate Refresh Token =====
@@ -672,14 +672,14 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	refreshToken, err := generateRefreshToken()
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to generate refresh token",
+			s.logger.Error("failed to generate refresh token", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 	if s.logger != nil {
-		s.logger.Debug("refresh token generated",
+		s.logger.Debug("refresh token generated", ctx,
 			"userID", userID)
 	}
 
@@ -703,14 +703,14 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to store refresh token",
+			s.logger.Error("failed to store refresh token", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to store refresh token: %w", err)
 	}
 	if s.logger != nil {
-		s.logger.Debug("refresh token stored",
+		s.logger.Debug("refresh token stored", ctx,
 			"userID", userID,
 			"expiresAt", expiresAt)
 	}
@@ -719,7 +719,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	status = "success"
 	errorType = ""
 	if s.logger != nil {
-		s.logger.Info("refresh token issued",
+		s.logger.Info("refresh token issued", ctx,
 			"userID", userID,
 			"tokenID", refreshToken,
 			"expiresAt", expiresAt)
@@ -754,7 +754,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		status = "invalid_input"
 		errorType = "invalid_input"
 		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID")
+			s.logger.Warn("attempted to get token with empty userID", ctx)
 		}
 		return "", ErrInvalidUserID
 	}
@@ -764,7 +764,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		status = "not_running"
 		errorType = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("service not running")
+			s.logger.Warn("service not running", ctx)
 		}
 		return "", ErrServiceNotRunning
 	}
@@ -776,7 +776,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		status = "cancelled"
 		errorType = "cancelled"
 		if s.logger != nil {
-			s.logger.Warn("context cancelled during token issuance",
+			s.logger.Warn("context cancelled during token issuance", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -784,7 +784,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	}
 
 	if s.logger != nil {
-		s.logger.Debug("issuing refresh token with metadata", "userID", userID)
+		s.logger.Debug("issuing refresh token with metadata", ctx, "userID", userID)
 	}
 
 	// ===== STEP 4: Generate Refresh Token =====
@@ -793,14 +793,14 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	refreshToken, err := generateRefreshToken()
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to generate refresh token",
+			s.logger.Error("failed to generate refresh token", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
 	if s.logger != nil {
-		s.logger.Debug("refresh token generated",
+		s.logger.Debug("refresh token generated", ctx,
 			"userID", userID)
 	}
 
@@ -824,14 +824,14 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to store refresh token with metadata",
+			s.logger.Error("failed to store refresh token with metadata", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to store refresh token with metadata: %w", err)
 	}
 	if s.logger != nil {
-		s.logger.Debug("refresh token with metadata stored",
+		s.logger.Debug("refresh token with metadata stored", ctx,
 			"userID", userID,
 			"metadataKeys", len(metadata),
 			"expiresAt", expiresAt)
@@ -841,7 +841,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	status = "success"
 	errorType = ""
 	if s.logger != nil {
-		s.logger.Info("refresh token with metadata issued",
+		s.logger.Info("refresh token with metadata issued", ctx,
 			"userID", userID,
 			"tokenID", refreshToken,
 			"expiresAt", expiresAt,
@@ -877,7 +877,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		status = "invalid_input"
 		errorType = "invalid_input"
 		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID")
+			s.logger.Warn("attempted to get token with empty userID", ctx)
 		}
 		return "", "", ErrInvalidUserID
 	}
@@ -887,7 +887,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		status = "not_running"
 		errorType = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("service not running")
+			s.logger.Warn("service not running", ctx)
 		}
 		return "", "", ErrServiceNotRunning
 	}
@@ -899,7 +899,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		status = "cancelled"
 		errorType = "cancelled"
 		if s.logger != nil {
-			s.logger.Warn("context cancelled during token issuance",
+			s.logger.Warn("context cancelled during token issuance", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -907,14 +907,14 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	}
 
 	if s.logger != nil {
-		s.logger.Debug("issuing token pair", "userID", userID)
+		s.logger.Debug("issuing token pair", ctx, "userID", userID)
 	}
 
 	// ===== STEP 4: Get Signing Key =====
 	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey(ctx)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to get signing key",
+			s.logger.Error("failed to get signing key", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -928,7 +928,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	tokenID, err := generateTokenID()
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to generate token ID",
+			s.logger.Error("failed to generate token ID", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -959,7 +959,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to sign token",
+			s.logger.Error("failed to sign token", ctx,
 				"userID", userID,
 				"keyID", keyID,
 				"error", err)
@@ -971,7 +971,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	refreshToken, err := generateRefreshToken()
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to generate refresh token",
+			s.logger.Error("failed to generate refresh token", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -998,7 +998,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to store refresh token",
+			s.logger.Error("failed to store refresh token", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -1009,7 +1009,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	status = "success"
 	errorType = ""
 	if s.logger != nil {
-		s.logger.Info("token pair issued",
+		s.logger.Info("token pair issued", ctx,
 			"userID", userID,
 			"tokenID", refreshToken,
 			"expiresAt", expiresAt)
@@ -1046,7 +1046,7 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		status = "not_running"
 		errorType = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("attempted token validation while service stopped")
+			s.logger.Warn("attempted token validation while service stopped", ctx)
 		}
 		return nil, ErrServiceNotRunning
 	}
@@ -1056,14 +1056,14 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		status = "cancelled"
 		errorType = "cancelled"
 		if s.logger != nil {
-			s.logger.Info("context cancelled during token validation",
+			s.logger.Info("context cancelled during token validation", ctx,
 				"error", err)
 		}
 		return nil, err
 	}
 
 	if s.logger != nil {
-		s.logger.Debug("validating access token")
+		s.logger.Debug("validating access token", ctx)
 	}
 
 	// ===== STEP 3: Parse JWT Token =====
@@ -1079,7 +1079,7 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 			// ===== STEP 4a: Verify Signing Method =====
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 				if s.logger != nil {
-					s.logger.Warn("token uses unexpected signing method",
+					s.logger.Warn("token uses unexpected signing method", ctx,
 						"method", token.Header["alg"])
 				}
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -1089,12 +1089,12 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 			kid, ok := token.Header["kid"].(string)
 			if !ok {
 				if s.logger != nil {
-					s.logger.Warn("token missing kid in header")
+					s.logger.Warn("token missing kid in header", ctx)
 				}
 				return nil, errors.New("missing kid in token header")
 			}
 			if s.logger != nil {
-				s.logger.Debug("token kid extracted from header",
+				s.logger.Debug("token kid extracted from header", ctx,
 					"kid", kid)
 			}
 
@@ -1102,14 +1102,14 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 			publicKey, err := s.keyManager.GetPublicKey(ctx, kid)
 			if err != nil {
 				if s.logger != nil {
-					s.logger.Error("failed to get public key",
+					s.logger.Error("failed to get public key", ctx,
 						"kid", kid,
 						"error", err)
 				}
 				return nil, fmt.Errorf("failed to get public key: %w", err)
 			}
 			if s.logger != nil {
-				s.logger.Debug("public key retrieved for token validation",
+				s.logger.Debug("public key retrieved for token validation", ctx,
 					"kid", kid)
 			}
 
@@ -1121,7 +1121,7 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 	// ===== STEP 5: Check Parsing Errors =====
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Warn("token parsing failed",
+			s.logger.Warn("token parsing failed", ctx,
 				"error", err)
 		}
 
@@ -1130,7 +1130,7 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 			status = "expired"
 			errorType = "expired"
 			if s.logger != nil {
-				s.logger.Warn("token expired")
+				s.logger.Warn("token expired", ctx)
 			}
 			return nil, ErrTokenExpired
 		}
@@ -1143,7 +1143,7 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 			status = "error"
 			errorType = "key_not_found"
 			if s.logger != nil {
-				s.logger.Warn("token references unknown key ID")
+				s.logger.Warn("token references unknown key ID", ctx)
 			}
 			return nil, ErrInvalidToken
 		}
@@ -1154,24 +1154,24 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 	// ===== STEP 6: Verify Token is Valid =====
 	if !token.Valid {
 		if s.logger != nil {
-			s.logger.Warn("token marked as invalid")
+			s.logger.Warn("token marked as invalid", ctx)
 		}
 		return nil, ErrInvalidToken
 	}
 	if s.logger != nil {
-		s.logger.Debug("token signature and structure validated")
+		s.logger.Debug("token signature and structure validated", ctx)
 	}
 
 	// ===== STEP 7: Extract Claims =====
 	claims, ok := token.Claims.(*jwt.RegisteredClaims)
 	if !ok {
 		if s.logger != nil {
-			s.logger.Error("failed to extract claims from token")
+			s.logger.Error("failed to extract claims from token", ctx)
 		}
 		return nil, ErrInvalidToken
 	}
 	if s.logger != nil {
-		s.logger.Debug("claims extracted from token",
+		s.logger.Debug("claims extracted from token", ctx,
 			"tokenID", claims.ID,
 			"userID", claims.Subject)
 	}
@@ -1179,14 +1179,14 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 	// ===== STEP 8: Validate Issuer =====
 	if s.issuer != "" && claims.Issuer != s.issuer {
 		if s.logger != nil {
-			s.logger.Warn("token issuer mismatch",
+			s.logger.Warn("token issuer mismatch", ctx,
 				"expected", s.issuer,
 				"actual", claims.Issuer)
 		}
 		return nil, ErrInvalidIssuer
 	}
 	if s.logger != nil {
-		s.logger.Debug("token issuer validated",
+		s.logger.Debug("token issuer validated", ctx,
 			"issuer", claims.Issuer)
 	}
 
@@ -1207,14 +1207,14 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 
 		if !validAudience {
 			if s.logger != nil {
-				s.logger.Warn("token audience mismatch",
+				s.logger.Warn("token audience mismatch", ctx,
 					"expected", s.audience,
 					"actual", claims.Audience)
 			}
 			return nil, ErrInvalidAudience
 		}
 		if s.logger != nil {
-			s.logger.Debug("token audience validated",
+			s.logger.Debug("token audience validated", ctx,
 				"audience", claims.Audience)
 		}
 	}
@@ -1223,7 +1223,7 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 	status = "success"
 	errorType = ""
 	if s.logger != nil {
-		s.logger.Info("access token validated",
+		s.logger.Info("access token validated", ctx,
 			"userID", claims.Subject,
 			"tokenID", claims.ID)
 	}
@@ -1306,7 +1306,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		status = "not_running"
 		errorType = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("attempted to refresh while service was stopped")
+			s.logger.Warn("attempted to refresh while service was stopped", ctx)
 		}
 		return "", ErrServiceNotRunning
 	}
@@ -1316,13 +1316,13 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		status = "cancelled"
 		errorType = "cancelled"
 		if s.logger != nil {
-			s.logger.Info("context cancelled during token refresh")
+			s.logger.Info("context cancelled during token refresh", ctx)
 		}
 		return "", err
 	}
 
 	if s.logger != nil {
-		s.logger.Debug("attempting token refresh")
+		s.logger.Debug("attempting token refresh", ctx)
 	}
 
 	// ===== STEP 3: Input Validation =====
@@ -1330,7 +1330,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		status = "invalid_input"
 		errorType = "invalid_input"
 		if s.logger != nil {
-			s.logger.Warn("empty refresh token provided")
+			s.logger.Warn("empty refresh token provided", ctx)
 		}
 		return "", ErrInvalidRefreshToken
 	}
@@ -1339,7 +1339,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	token, err := s.refreshStore.Retrieve(ctx, refreshToken)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Warn("refresh token not found in store",
+			s.logger.Warn("refresh token not found in store", ctx,
 				"error", err)
 		}
 		// Propagate specific errors, default to invalid token for generic errors
@@ -1354,7 +1354,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	}
 
 	if s.logger != nil {
-		s.logger.Debug("refresh token retrieved from store",
+		s.logger.Debug("refresh token retrieved from store", ctx,
 			"userID", token.UserID,
 			"tokenID", token.TokenID)
 	}
@@ -1364,7 +1364,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		status = "expired"
 		errorType = "expired"
 		if s.logger != nil {
-			s.logger.Warn("refresh token has expired",
+			s.logger.Warn("refresh token has expired", ctx,
 				"tokenID", refreshToken,
 				"expiredAt", token.ExpiresAt)
 		}
@@ -1380,7 +1380,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		status = "revoked"
 		errorType = "revoked"
 		if s.logger != nil {
-			s.logger.Warn("refresh token has been revoked",
+			s.logger.Warn("refresh token has been revoked", ctx,
 				"tokenID", refreshToken)
 		}
 		return "", ErrTokenRevoked
@@ -1390,7 +1390,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	newAccessToken, err := s.IssueAccessToken(ctx, token.UserID)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to issue new access token",
+			s.logger.Error("failed to issue new access token", ctx,
 				"userID", token.UserID,
 				"error", err)
 		}
@@ -1401,7 +1401,7 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	status = "success"
 	errorType = ""
 	if s.logger != nil {
-		s.logger.Info("access token refreshed",
+		s.logger.Info("access token refreshed", ctx,
 			"userID", token.UserID,
 			"tokenID", refreshToken)
 	}
@@ -1434,7 +1434,7 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	if !s.isRunning.Load() {
 		status = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("attempted to revoke token while service stopped")
+			s.logger.Warn("attempted to revoke token while service stopped", ctx)
 		}
 		return ErrServiceNotRunning
 	}
@@ -1443,7 +1443,7 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		if s.logger != nil {
-			s.logger.Info("context cancelled during token revocation")
+			s.logger.Info("context cancelled during token revocation", ctx)
 		}
 		return err
 	}
@@ -1452,7 +1452,7 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	if tokenID == "" {
 		status = "invalid_input"
 		if s.logger != nil {
-			s.logger.Warn("empty token ID provided for revocation")
+			s.logger.Warn("empty token ID provided for revocation", ctx)
 		}
 		return ErrInvalidRefreshToken
 	}
@@ -1462,7 +1462,7 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	if err != nil {
 		if s.logger != nil {
 
-			s.logger.Error("failed to revoke refresh token",
+			s.logger.Error("failed to revoke refresh token", ctx,
 				"tokenID", tokenID,
 				"error", err)
 		}
@@ -1472,7 +1472,7 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	// ===== STEP 5: Record Success and Log =====
 	status = "success"
 	if s.logger != nil {
-		s.logger.Info("refresh token revoked",
+		s.logger.Info("refresh token revoked", ctx,
 			"tokenID", tokenID)
 	}
 
@@ -1503,7 +1503,7 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	if !s.isRunning.Load() {
 		status = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("attempted to revoke all user tokens while service stopped")
+			s.logger.Warn("attempted to revoke all user tokens while service stopped", ctx)
 		}
 		return ErrServiceNotRunning
 	}
@@ -1512,7 +1512,7 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		if s.logger != nil {
-			s.logger.Info("context cancelled during bulk token revocation",
+			s.logger.Info("context cancelled during bulk token revocation", ctx,
 				"error", err)
 		}
 		return err
@@ -1522,7 +1522,7 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	if userID == "" {
 		status = "invalid_input"
 		if s.logger != nil {
-			s.logger.Warn("empty user ID provided for bulk revocation")
+			s.logger.Warn("empty user ID provided for bulk revocation", ctx)
 		}
 		return ErrInvalidUserID // Note: Different error than single revoke
 	}
@@ -1531,7 +1531,7 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	err := s.refreshStore.RevokeAllForUser(ctx, userID)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to revoke all user tokens",
+			s.logger.Error("failed to revoke all user tokens", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -1541,7 +1541,7 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	// ===== STEP 5: Record Success and Log =====
 	status = "success"
 	if s.logger != nil {
-		s.logger.Info("all refresh tokens revoked for user",
+		s.logger.Info("all refresh tokens revoked for user", ctx,
 			"userID", userID)
 	}
 
@@ -1575,7 +1575,7 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	if !s.isRunning.Load() {
 		status = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("attempted to introspect token while service is stopped")
+			s.logger.Warn("attempted to introspect token while service is stopped", ctx)
 		}
 		return nil, ErrServiceNotRunning
 	}
@@ -1584,20 +1584,20 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		if s.logger != nil {
-			s.logger.Info("context cancelled during token introspection")
+			s.logger.Info("context cancelled during token introspection", ctx)
 		}
 		return nil, err
 	}
 
 	if s.logger != nil {
-		s.logger.Debug("introspecting token")
+		s.logger.Debug("introspecting token", ctx)
 	}
 
 	// ===== STEP 3: Input Validation =====
 	if token == "" {
 		status = "invalid_input"
 		if s.logger != nil {
-			s.logger.Warn("empty token provided for introspection")
+			s.logger.Warn("empty token provided for introspection", ctx)
 		}
 		return nil, ErrInvalidRefreshToken
 	}
@@ -1608,7 +1608,7 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 		// Return inactive metadata instead of error — introspect never errors on unknown tokens
 		status = "success"
 		if s.logger != nil {
-			s.logger.Info("token not found during introspection",
+			s.logger.Info("token not found during introspection", ctx,
 				"error", err)
 		}
 		return &TokenMetadata{
@@ -1627,7 +1627,7 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	if refreshToken.ExpiresAt.Before(now) {
 		status = "success"
 		if s.logger != nil {
-			s.logger.Info("introspect token is expired",
+			s.logger.Info("introspect token is expired", ctx,
 				"token", token,
 				"expiredAt", refreshToken.ExpiresAt)
 		}
@@ -1644,7 +1644,7 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	if refreshToken.Revoked {
 		status = "success"
 		if s.logger != nil {
-			s.logger.Info("introspected token is revoked",
+			s.logger.Info("introspected token is revoked", ctx,
 				"tokenID", token)
 		}
 
@@ -1660,7 +1660,7 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	// ===== STEP 6: Record Success and Return Active Token Metadata =====
 	status = "success"
 	if s.logger != nil {
-		s.logger.Info("token introspection successfully",
+		s.logger.Info("token introspection successfully", ctx,
 			"tokenID", token,
 			"userID", refreshToken.UserID,
 			"active", true)
@@ -1698,7 +1698,7 @@ func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
 	if !s.isRunning.Load() {
 		status = "not_running"
 		if s.logger != nil {
-			s.logger.Warn("attempted cleanup while service stopped")
+			s.logger.Warn("attempted cleanup while service stopped", ctx)
 		}
 		return 0, ErrServiceNotRunning
 	}
@@ -1707,7 +1707,7 @@ func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		if s.logger != nil {
-			s.logger.Info("context cancelled during cleanup",
+			s.logger.Info("context cancelled during cleanup", ctx,
 				"error", err)
 		}
 		return 0, err
@@ -1717,7 +1717,7 @@ func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
 	count, err := s.refreshStore.Cleanup(ctx)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.Error("failed to cleanup expired tokens",
+			s.logger.Error("failed to cleanup expired tokens", ctx,
 				"error", err)
 		}
 		return 0, fmt.Errorf("cleanup failed: %w", err)
@@ -1726,7 +1726,7 @@ func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
 	// ===== STEP 4: Record Success and Log =====
 	status = "success"
 	if s.logger != nil {
-		s.logger.Info("expired tokens cleaned up",
+		s.logger.Info("expired tokens cleaned up", ctx,
 			"deleted", count)
 	}
 

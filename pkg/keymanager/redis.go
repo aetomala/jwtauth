@@ -105,7 +105,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		pemStr, err := r.client.Get(ctx, redisKey).Result()
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Warn("skipping key: failed to load PEM",
+				r.logger.Warn("skipping key: failed to load PEM", ctx,
 					"keyID", keyID,
 					"error", err)
 			}
@@ -115,7 +115,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		privateKey, err := decodePEM(pemStr)
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Warn("skipping key: failed to parse PEM",
+				r.logger.Warn("skipping key: failed to parse PEM", ctx,
 					"keyID", keyID,
 					"error", err)
 			}
@@ -126,7 +126,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		metaStr, err := r.client.Get(ctx, keyMetaPrefix+keyID).Result()
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Warn("skipping key: failed to load metadata",
+				r.logger.Warn("skipping key: failed to load metadata", ctx,
 					"keyID", keyID,
 					"error", err)
 			}
@@ -136,7 +136,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		var meta KeyMetadata
 		if err := json.Unmarshal([]byte(metaStr), &meta); err != nil {
 			if r.logger != nil {
-				r.logger.Warn("skipping key: failed to parse metadata",
+				r.logger.Warn("skipping key: failed to parse metadata", ctx,
 					"keyID", keyID,
 					"error", err)
 			}
@@ -146,7 +146,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		// ===== STEP 5: Skip Expired Keys =====
 		if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
 			if r.logger != nil {
-				r.logger.Info("skipping expired key",
+				r.logger.Info("skipping expired key", ctx,
 					"keyID", keyID,
 					"expiredAt", meta.ExpiresAt.Format(time.RFC3339))
 			}
@@ -160,13 +160,13 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		})
 
 		if r.logger != nil {
-			r.logger.Debug("loaded key from redis", "keyID", keyID)
+			r.logger.Debug("loaded key from redis", ctx, "keyID", keyID)
 		}
 	}
 
 	if err := iter.Err(); err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to scan redis keys", "error", err)
+			r.logger.Error("failed to scan redis keys", ctx, "error", err)
 		}
 		return nil, fmt.Errorf("scan redis keys: %w", err)
 	}
@@ -176,7 +176,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	errorType = ""
 	keyCount = len(keys)
 	if r.logger != nil {
-		r.logger.Info("loaded keys from redis", "count", keyCount)
+		r.logger.Info("loaded keys from redis", ctx, "count", keyCount)
 	}
 	return keys, nil
 }
@@ -217,7 +217,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 	metaBytes, err := json.Marshal(meta)
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to marshal key metadata",
+			r.logger.Error("failed to marshal key metadata", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -231,7 +231,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to save key to redis",
+			r.logger.Error("failed to save key to redis", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -242,7 +242,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 	status = "success"
 	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("saved key to redis", "keyID", keyID)
+		r.logger.Info("saved key to redis", ctx, "keyID", keyID)
 	}
 	return nil
 }
@@ -281,7 +281,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	exists, err := r.client.Exists(ctx, keyPEMPrefix+keyID).Result()
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to check key existence",
+			r.logger.Error("failed to check key existence", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -297,7 +297,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	metaBytes, err := json.Marshal(meta)
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to marshal key metadata",
+			r.logger.Error("failed to marshal key metadata", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -306,7 +306,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 
 	if err := r.client.Set(ctx, keyMetaPrefix+keyID, string(metaBytes), 0).Err(); err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to update metadata in redis",
+			r.logger.Error("failed to update metadata in redis", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -317,7 +317,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	status = "success"
 	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("updated key metadata", "keyID", keyID)
+		r.logger.Info("updated key metadata", ctx, "keyID", keyID)
 	}
 	return nil
 }
@@ -368,7 +368,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if r.logger != nil {
-			r.logger.Error("failed to load key from redis",
+			r.logger.Error("failed to load key from redis", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -378,7 +378,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	privateKey, err := decodePEM(pemStr)
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to parse PEM for key",
+			r.logger.Error("failed to parse PEM for key", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -394,7 +394,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if r.logger != nil {
-			r.logger.Error("failed to load key metadata from redis",
+			r.logger.Error("failed to load key metadata from redis", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -404,7 +404,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	var meta KeyMetadata
 	if err := json.Unmarshal([]byte(metaStr), &meta); err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to parse key metadata",
+			r.logger.Error("failed to parse key metadata", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -415,7 +415,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	status = "success"
 	errorType = ""
 	if r.logger != nil {
-		r.logger.Debug("loaded key from redis", "keyID", keyID)
+		r.logger.Debug("loaded key from redis", ctx, "keyID", keyID)
 	}
 	return privateKey, &meta, nil
 }
@@ -452,7 +452,7 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 	// ===== STEP 2: Delete Both Keys =====
 	if err := r.client.Del(ctx, keyPEMPrefix+keyID, keyMetaPrefix+keyID).Err(); err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to delete key from redis",
+			r.logger.Error("failed to delete key from redis", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -463,7 +463,7 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 	status = "success"
 	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("deleted key from redis", "keyID", keyID)
+		r.logger.Info("deleted key from redis", ctx, "keyID", keyID)
 	}
 	return nil
 }

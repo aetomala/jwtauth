@@ -80,7 +80,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 		status = "cancelled"
 		errorType = "cancelled"
 		if r.logger != nil {
-			r.logger.Warn("store aborted: context cancelled",
+			r.logger.Warn("store aborted: context cancelled", ctx,
 				"reason", err)
 		}
 		return err
@@ -91,7 +91,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 		status = "validation_error"
 		errorType = "validation_error"
 		if r.logger != nil {
-			r.logger.Warn("store rejected: tokenID is empty or whitespace",
+			r.logger.Warn("store rejected: tokenID is empty or whitespace", ctx,
 				"userID", userID)
 		}
 		return ErrInvalidTokenID
@@ -101,7 +101,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 		status = "validation_error"
 		errorType = "validation_error"
 		if r.logger != nil {
-			r.logger.Warn("store rejected: userID is empty or whitespace",
+			r.logger.Warn("store rejected: userID is empty or whitespace", ctx,
 				"tokenID", tokenID)
 		}
 		return ErrInvalidUserID
@@ -111,7 +111,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 		status = "validation_error"
 		errorType = "validation_error"
 		if r.logger != nil {
-			r.logger.Warn("store rejected: token is already expired",
+			r.logger.Warn("store rejected: token is already expired", ctx,
 				"tokenID", tokenID,
 				"userID", userID,
 				"expiresAt", expiresAt)
@@ -131,7 +131,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 		jsonBytes, err := json.Marshal(metadataCopy)
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Error("store failed: metadata marshal error",
+				r.logger.Error("store failed: metadata marshal error", ctx,
 					"tokenID", tokenID,
 					"error", err)
 			}
@@ -162,7 +162,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 	pipe.Expire(ctx, tokenKey, duration)
 
 	if r.logger != nil {
-		r.logger.Debug("executing redis pipeline for token store",
+		r.logger.Debug("executing redis pipeline for token store", ctx,
 			"tokenID", tokenID,
 			"userID", userID)
 	}
@@ -170,7 +170,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("store failed: redis pipeline error",
+			r.logger.Error("store failed: redis pipeline error", ctx,
 				"tokenID", tokenID,
 				"error", err)
 		}
@@ -181,7 +181,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 	status = "success"
 	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("refresh token stored",
+		r.logger.Info("refresh token stored", ctx,
 			"tokenID", tokenID,
 			"userID", userID,
 			"expiresAt", expiresAt)
@@ -221,7 +221,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		status = "cancelled"
 		errorType = "cancelled"
 		if r.logger != nil {
-			r.logger.Warn("retrieve aborted: context cancelled",
+			r.logger.Warn("retrieve aborted: context cancelled", ctx,
 				"tokenID", tokenID,
 				"reason", err)
 		}
@@ -233,7 +233,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		status = "validation_error"
 		errorType = "validation_error"
 		if r.logger != nil {
-			r.logger.Warn("retrieve rejected: tokenID is empty or whitespace")
+			r.logger.Warn("retrieve rejected: tokenID is empty or whitespace", ctx)
 		}
 		return nil, ErrInvalidTokenID
 	}
@@ -243,7 +243,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	hash, err := r.client.HGetAll(ctx, tokenKey).Result()
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("retrieve failed: redis error",
+			r.logger.Error("retrieve failed: redis error", ctx,
 				"tokenID", tokenID,
 				"error", err)
 		}
@@ -251,7 +251,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	}
 
 	if r.logger != nil {
-		r.logger.Debug("redis hash retrieved",
+		r.logger.Debug("redis hash retrieved", ctx,
 			"tokenID", tokenID,
 			"fieldCount", len(hash))
 	}
@@ -261,7 +261,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		status = "not_found"
 		errorType = "not_found"
 		if r.logger != nil {
-			r.logger.Warn("retrieve: token not found",
+			r.logger.Warn("retrieve: token not found", ctx,
 				"tokenID", tokenID)
 		}
 		return nil, ErrTokenNotFound
@@ -273,7 +273,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		status = "revoked"
 		errorType = "revoked"
 		if r.logger != nil {
-			r.logger.Warn("retrieve: token has been revoked",
+			r.logger.Warn("retrieve: token has been revoked", ctx,
 				"tokenID", tokenID,
 				"userID", hash["userID"])
 		}
@@ -284,7 +284,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	expiresAtMillis, err := strconv.ParseInt(hash["expiresAt"], 10, 64)
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("retrieve failed: invalid expiration timestamp",
+			r.logger.Error("retrieve failed: invalid expiration timestamp", ctx,
 				"tokenID", tokenID,
 				"error", err)
 		}
@@ -296,7 +296,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		status = "expired"
 		errorType = "expired"
 		if r.logger != nil {
-			r.logger.Warn("retrieve: token has expired",
+			r.logger.Warn("retrieve: token has expired", ctx,
 				"tokenID", tokenID,
 				"expiredAt", expiresAt)
 		}
@@ -307,7 +307,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	createdAtMillis, err := strconv.ParseInt(hash["createdAt"], 10, 64)
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("retrieve failed: invalid creation timestamp",
+			r.logger.Error("retrieve failed: invalid creation timestamp", ctx,
 				"tokenID", tokenID,
 				"error", err)
 		}
@@ -330,7 +330,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		var metadata map[string]interface{}
 		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 			if r.logger != nil {
-				r.logger.Error("retrieve failed: metadata unmarshal error",
+				r.logger.Error("retrieve failed: metadata unmarshal error", ctx,
 					"tokenID", tokenID,
 					"error", err)
 			}
@@ -343,7 +343,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	status = "success"
 	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("retrieve: token retrieved successfully",
+		r.logger.Info("retrieve: token retrieved successfully", ctx,
 			"tokenID", tokenID)
 	}
 
@@ -377,7 +377,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 		status = "cancelled"
 		errorType = "cancelled"
 		if r.logger != nil {
-			r.logger.Warn("revoke aborted: context cancelled",
+			r.logger.Warn("revoke aborted: context cancelled", ctx,
 				"tokenID", tokenID)
 		}
 		return ctx.Err()
@@ -388,7 +388,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 		status = "validation_error"
 		errorType = "validation_error"
 		if r.logger != nil {
-			r.logger.Warn("revoke rejected: tokenID is empty or whitespace")
+			r.logger.Warn("revoke rejected: tokenID is empty or whitespace", ctx)
 		}
 		return ErrInvalidTokenID
 	}
@@ -400,7 +400,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	exists, err := r.client.Exists(ctx, tokenKey).Result()
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("revoke failed: redis error",
+			r.logger.Error("revoke failed: redis error", ctx,
 				"tokenID", tokenID,
 				"error", err)
 		}
@@ -412,7 +412,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 		status = "success" // idempotent: not-found is not an error
 		errorType = ""
 		if r.logger != nil {
-			r.logger.Warn("revoke: token not found",
+			r.logger.Warn("revoke: token not found", ctx,
 				"tokenID", tokenID)
 		}
 		return nil
@@ -422,7 +422,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	err = r.client.HSet(ctx, tokenKey, "revoked", "true").Err()
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("revoke failed: redis hset error",
+			r.logger.Error("revoke failed: redis hset error", ctx,
 				"tokenID", tokenID,
 				"error", err)
 		}
@@ -433,7 +433,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	status = "success"
 	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("revoke: successfully revoked",
+		r.logger.Info("revoke: successfully revoked", ctx,
 			"tokenID", tokenID)
 	}
 
@@ -468,7 +468,7 @@ func (r *RedisRefreshStore) RevokeAllForUser(ctx context.Context, userID string)
 		status = "cancelled"
 		errorType = "cancelled"
 		if r.logger != nil {
-			r.logger.Warn("revokeAllForUser aborted: context cancelled",
+			r.logger.Warn("revokeAllForUser aborted: context cancelled", ctx,
 				"userID", userID,
 				"reason", err)
 		}
@@ -480,7 +480,7 @@ func (r *RedisRefreshStore) RevokeAllForUser(ctx context.Context, userID string)
 		status = "validation_error"
 		errorType = "validation_error"
 		if r.logger != nil {
-			r.logger.Warn("revokeAllForUser rejected: userID is empty or whitespace")
+			r.logger.Warn("revokeAllForUser rejected: userID is empty or whitespace", ctx)
 		}
 		return ErrInvalidUserID
 	}
@@ -490,7 +490,7 @@ func (r *RedisRefreshStore) RevokeAllForUser(ctx context.Context, userID string)
 	tokenIDs, err := r.client.SMembers(ctx, userSetKey).Result()
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("revokeAllForUser failed: redis smembers error",
+			r.logger.Error("revokeAllForUser failed: redis smembers error", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -498,7 +498,7 @@ func (r *RedisRefreshStore) RevokeAllForUser(ctx context.Context, userID string)
 	}
 
 	if r.logger != nil {
-		r.logger.Debug("found tokens to revoke for user",
+		r.logger.Debug("found tokens to revoke for user", ctx,
 			"userID", userID,
 			"count", len(tokenIDs))
 	}
@@ -515,7 +515,7 @@ func (r *RedisRefreshStore) RevokeAllForUser(ctx context.Context, userID string)
 		_, err := pipe.Exec(ctx)
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Error("revokeAllForUser failed: redis pipeline error",
+				r.logger.Error("revokeAllForUser failed: redis pipeline error", ctx,
 					"userID", userID,
 					"error", err)
 			}
@@ -527,7 +527,7 @@ func (r *RedisRefreshStore) RevokeAllForUser(ctx context.Context, userID string)
 	status = "success"
 	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("revokeAllForUser: all tokens revoked",
+		r.logger.Info("revokeAllForUser: all tokens revoked", ctx,
 			"userID", userID,
 			"count", len(tokenIDs))
 	}
@@ -573,7 +573,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		status = "cancelled"
 		errorType = "cancelled"
 		if r.logger != nil {
-			r.logger.Warn("cleanup aborted: context cancelled")
+			r.logger.Warn("cleanup aborted: context cancelled", ctx)
 		}
 		return 0, err
 	}
@@ -595,7 +595,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		hash, err := r.client.HGetAll(ctx, key).Result()
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Error("cleanup failed: redis hgetall error",
+				r.logger.Error("cleanup failed: redis hgetall error", ctx,
 					"key", key,
 					"error", err)
 			}
@@ -605,7 +605,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		expiresAtMillis, err := strconv.ParseInt(hash["expiresAt"], 10, 64)
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Error("cleanup failed: invalid expiration timestamp",
+				r.logger.Error("cleanup failed: invalid expiration timestamp", ctx,
 					"key", key,
 					"error", err)
 			}
@@ -627,7 +627,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 
 	if err := iter.Err(); err != nil {
 		if r.logger != nil {
-			r.logger.Error("cleanup failed: redis scan error",
+			r.logger.Error("cleanup failed: redis scan error", ctx,
 				"error", err)
 		}
 		return 0, fmt.Errorf("failed to scan tokens: %w", err)
@@ -636,13 +636,13 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	// ===== STEP 3: Delete Expired Tokens =====
 	if len(expiredKeys) == 0 {
 		if r.logger != nil {
-			r.logger.Debug("cleanup: no expired tokens found")
+			r.logger.Debug("cleanup: no expired tokens found", ctx)
 		}
 	} else {
 		err := r.client.Del(ctx, expiredKeys...).Err()
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Error("cleanup failed: redis delete error",
+				r.logger.Error("cleanup failed: redis delete error", ctx,
 					"count", len(expiredKeys),
 					"error", err)
 			}
@@ -657,7 +657,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	status = "success"
 	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("cleanup: successful",
+		r.logger.Info("cleanup: successful", ctx,
 			"count", count)
 	}
 

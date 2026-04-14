@@ -493,7 +493,7 @@ var _ = Describe("Manager", func() {
 			})
 
 			It("should return ErrManagerNotRunning", func() {
-				_, err := manager.GetJWKS()
+				_, err := manager.GetJWKS(ctx)
 				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
 			})
 		})
@@ -533,7 +533,7 @@ var _ = Describe("Manager", func() {
 				manager.Keys()["active-key"].ExpiresAt = time.Now().Add(-1 * time.Hour)
 				manager.Mu().Unlock()
 
-				jwks, err := manager.GetJWKS()
+				jwks, err := manager.GetJWKS(ctx)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(jwks.Keys).To(HaveLen(1))
 				Expect(jwks.Keys[0].KeyID).To(Equal("current-key"))

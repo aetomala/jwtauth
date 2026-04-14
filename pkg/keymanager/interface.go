@@ -32,7 +32,7 @@ type KeyManager interface {
 	// Returns:
 	//   - jwks: Set of public keys in JWKS format
 	//   - error: If JWKS generation fails
-	GetJWKS() (*JWKS, error)
+	GetJWKS(ctx context.Context) (*JWKS, error)
 
 	// RotateKeys generates a new signing key and marks the old key for expiration.
 	//
