@@ -73,9 +73,9 @@
   - Structured logging for audit trail
   - **122 total storage tests** (61 × 2 implementations)
 
-### 🚧 In Development
+### 🚧 In Development (v0.4.0)
 
-- **OpenTelemetry**: Distributed tracing integration with span creation and context propagation across token operations
+- **OpenTelemetry / Distributed Tracing**: `pkg/tracing` interfaces (`Tracer`, `Span`) and `NoOpTracer` are scaffolded. Full wiring into KeyManager, TokenService, and RefreshStore — with an OpenTelemetry adapter — is planned for v0.4.0.
 
 ## Architecture Highlights
 
@@ -666,7 +666,7 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: ~547 comprehensive tests across KeyManager, TokenService, RefreshStore, Metrics, and Logging, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%)
+**Current**: 605 comprehensive tests across KeyManager, TokenService, RefreshStore, Metrics, Logging, and Tracing, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
 
 **KeyManager** (3 test suites — 125 total specs):
 - **9-phase Manager tests** (52 specs, MockKeyStore — no I/O):
@@ -801,7 +801,7 @@ Tests follow **progressive phase-based development**:
 - ✅ Comprehensive test coverage with race detection
 - ✅ Architecture documentation
 
-### v0.2.0 (Current - Beta)
+### v0.2.0 ✅ Complete
 - ✅ TokenService: JWT creation with RS256 signing
 - ✅ TokenService: Lifecycle management (Start/Shutdown/IsRunning)
 - ✅ TokenService: Claims management with custom claims support and reserved claim protection
@@ -810,28 +810,35 @@ Tests follow **progressive phase-based development**:
 - ✅ TokenService: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
 - ✅ TokenService: Token introspection per RFC 7662 (IntrospectToken)
 - ✅ TokenService: Manual cleanup sweep (CleanupExpiredTokens)
-- ✅ TokenService: Clock skew tolerance (`ClockSkew` field, `jwt.WithLeeway()` integration)
-- ✅ TokenService: `ValidateAccessTokenWithClaims` — registered and custom claims returned after validation
-- ✅ TokenService: Comprehensive test coverage (153 tests, ~87% statement coverage, all passing with race detection)
-- ✅ RefreshStore: Shared test suite pattern (51 tests, eliminates duplication, runs against all implementations)
+- ✅ RefreshStore: Shared test suite pattern (eliminates duplication, runs against all implementations)
 - ✅ RefreshStore: MemoryRefreshStore with defensive copying and concurrent safety
 - ✅ RefreshStore: RedisRefreshStore for distributed deployments with go-redis/v9
-- ✅ RefreshStore: Comprehensive test coverage (170 tests across 9 phases, 100% statement coverage, race-detection clean)
-- ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with 22 pre-registered jwtauth metrics, 100% test coverage
+- ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with 22 pre-registered jwtauth metrics
 - ✅ KeyStore interface extracted from KeyManager — `DiskKeyStore` for single-instance, `RedisKeyStore` for distributed deployments
-- ✅ `RedisKeyStore` — Redis-backed KeyStore using `ks:pem:<id>` / `ks:meta:<id>` layout, atomic Pipeline writes, SCAN-based LoadAll
+
+### v0.3.0 (Current — Beta)
+- ✅ TokenService: Clock skew tolerance (`ClockSkew` field, `jwt.WithLeeway()` integration)
+- ✅ TokenService: `ValidateAccessTokenWithClaims` — registered and custom claims returned after validation
 - ✅ Wire metrics into all components — KeyStore, Manager, TokenService, RefreshStore with `error_type` label and context propagation
 - ✅ Example middleware returns specific JSON error codes (`token_expired`, `token_revoked`, etc.) via sentinel error mapping
+- ✅ `KeyManager` interface extended with context on all read methods (`GetCurrentSigningKey`, `GetPublicKey`, `GetJWKS`)
+- ✅ Correlation ID logging — `CorrelationIDHandler`, `WithCorrelationID`/`GetCorrelationID` helpers, `NewCorrelationJSONLogger`/`NewCorrelationTextLogger`, context-aware `SlogAdapter`
+- ✅ All internal logging call sites forward `ctx` — correlation ID injection works across all component boundaries
+- ✅ Context cancellation guards in `GetJWKS` and `cleanupExpiredKeys`
+- ✅ Redis integration tests via miniredis covering distributed token operations end-to-end
 
-### v0.3.0 (Beta)
-- 🚧 StatsD and CloudWatch metrics adapters
-- 🚧 OpenTelemetry distributed tracing
+### v0.4.0 (Next)
+- ✅ `pkg/tracing` interfaces scaffolded — `Tracer`, `Span`, `SpanOption`, `StatusCode`, `SpanKind`
+- ✅ `NoOpTracer` / `NoOpSpan` implementations (36 tests, race-detection clean)
+- ✅ `MockTracer` / `MockSpan` generated for dependency injection in component tests
+- 🚧 Wire tracing into KeyManager, TokenService, and RefreshStore
+- 🚧 OpenTelemetry adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
 
 ### v1.0.0 (Stable)
 - API stability guarantee
 - Production-ready for all components
 - Comprehensive documentation
-- OpenTelemetry integration
+- OpenTelemetry integration complete
 - Performance benchmarks
 
 ## Architecture
@@ -922,7 +929,7 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 ---
 
 **Status**: Beta (Active Development)
-**Version**: 0.2.0-beta
-**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅
-**Test Coverage**: 525 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%), all passing, race-detection enabled
-**Last Updated**: April 6, 2026
+**Version**: 0.3.0-beta
+**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing (scaffold) 🚧
+**Test Coverage**: 605 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%), all passing, race-detection enabled
+**Last Updated**: April 14, 2026

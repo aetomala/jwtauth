@@ -905,7 +905,7 @@ Catches:
   - Ensures semantic equivalence across backends
   - Easy to add new implementations
 
-### Phase 5: Metrics Wiring and KeyStore Abstraction (In Progress)
+### Phase 5: Metrics Wiring and KeyStore Abstraction ✅ Complete
 - ✅ Prometheus adapter with `/metrics` endpoint (`PrometheusMetrics`)
 - ✅ `MemoryRefreshStore` and `RedisRefreshStore` fully instrumented
   - Counter + duration on every operation exit path
@@ -919,13 +919,18 @@ Catches:
   - `MockKeyStore` generated via gomock
 - ✅ Wire `PrometheusMetrics` into TokenService — deferred closure pattern with `error_type` label, context propagation
 - ✅ `RedisKeyStore` implementation — `ks:pem:<id>` / `ks:meta:<id>` Redis layout, atomic Pipeline writes, SCAN-based `LoadAll`, full metrics with `storage_backend: "redis"`
-- ⏳ StatsD integration (Datadog, Graphite compatible)
-- ⏳ CloudWatch metrics for AWS environments
+- ✅ Correlation ID logging — `CorrelationIDHandler` wraps any `slog.Handler`; `WithCorrelationID`/`GetCorrelationID` context helpers; `SlogAdapter` context-aware routing; `NewCorrelationJSONLogger`/`NewCorrelationTextLogger` convenience constructors
+- ✅ All component logging call sites forward `ctx` — correlation ID propagates through KeyManager, TokenService, and RefreshStore without Logger interface changes
+- ✅ `KeyManager` interface extended with context on all read methods (`GetCurrentSigningKey`, `GetPublicKey`, `GetJWKS`)
+- ✅ Context cancellation guards in `GetJWKS` and `cleanupExpiredKeys` with warning log on early return
+- ✅ Redis integration tests via miniredis (`pkg/tokens/integration`) covering distributed token operations end-to-end
 
-### Phase 6: OpenTelemetry (Future)
-- ⏳ Distributed tracing
-- ⏳ Span creation across token operations
-- ⏳ Context propagation
+### Phase 6: Distributed Tracing (v0.4.0)
+- ✅ `pkg/tracing` — `Tracer` and `Span` interfaces defined; `SpanOption` functional options; `StatusCode` and `SpanKind` enumerations
+- ✅ `NoOpTracer` / `NoOpSpan` — zero-allocation implementations; 36 tests, race-detection clean
+- ✅ `MockTracer` / `MockSpan` generated via gomock for dependency injection in component tests
+- ⏳ Wire tracing into KeyManager, TokenService, and RefreshStore
+- ⏳ OpenTelemetry adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
 
 ---
 
@@ -1022,6 +1027,6 @@ func (c *Component) Operation() error {
 
 ---
 
-**Last Updated**: April 6, 2026
-**Version**: 0.2.0-beta
-**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] stable and fully instrumented; TokenService metrics wiring in progress)
+**Last Updated**: April 14, 2026
+**Version**: 0.3.0-beta
+**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] stable and fully instrumented; Distributed Tracing interfaces scaffolded — full wiring planned for v0.4.0)
