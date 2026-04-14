@@ -449,6 +449,62 @@ func (m *MyZapAdapter) Info(msg string, args ...interface{}) {
 // ... implement Warn, Error
 ```
 
+### Correlation ID
+
+Correlation IDs let you filter all log lines from a single request across every internal component — KeyManager, RefreshStore, and TokenService — with a single `jq` query.
+
+**Quick start**:
+
+```go
+// 1. Build a logger with CorrelationIDHandler pre-wired
+logger := logging.NewCorrelationJSONLogger(slog.LevelInfo)
+
+// 2. HTTP middleware: extract or generate an ID, inject into context
+func correlationMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        id := r.Header.Get("X-Correlation-ID")
+        if id == "" {
+            id = uuid.NewString() // or any unique ID
+        }
+        ctx := logging.WithCorrelationID(r.Context(), id)
+        w.Header().Set("X-Correlation-ID", id)
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+
+// 3. Pass ctx through — all internal logs automatically carry correlation_id
+accessToken, refreshToken, err := svc.IssueTokenPair(ctx, userID)
+```
+
+**Before** (hard to correlate):
+```json
+{"level":"INFO","msg":"refresh token stored","userID":"alice"}
+{"level":"INFO","msg":"access token issued","userID":"bob"}
+{"level":"INFO","msg":"refresh token stored","userID":"alice"}
+```
+
+**After** (trivial to filter):
+```json
+{"level":"INFO","msg":"refresh token stored","userID":"alice","correlation_id":"req-001"}
+{"level":"INFO","msg":"access token issued","userID":"bob","correlation_id":"req-002"}
+{"level":"INFO","msg":"refresh token stored","userID":"alice","correlation_id":"req-001"}
+```
+
+```bash
+# Isolate a single request across all components
+jq 'select(.correlation_id=="req-001")' app.log
+```
+
+**Key design points**:
+- `logging.WithCorrelationID(ctx, id)` — attaches the ID to a context
+- `logging.GetCorrelationID(ctx)` — retrieves it (returns `""` if absent)
+- `logging.NewCorrelationIDHandler(h slog.Handler)` — wraps any `slog.Handler`; use this when building your own `slog.Logger`
+- `logging.NewCorrelationJSONLogger(level)` / `logging.NewCorrelationTextLogger(level)` — convenience constructors with the handler pre-wired
+- Background operations (cleanup goroutines) use `context.Background()` — no ID is emitted, no spurious empty fields
+- Zero breaking changes — the `Logger` interface is unchanged; custom implementations continue to work
+
+See [examples/correlation-example/](examples/correlation-example/) for a complete stdlib HTTP server demonstrating middleware, login, refresh, and validate endpoints with correlated logs.
+
 ### Metrics
 
 **Interface** (`pkg/metrics/Metrics`):

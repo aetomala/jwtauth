@@ -2,6 +2,7 @@ package logging_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -856,6 +857,133 @@ var _ = Describe("Integration", func() {
 			for i := 0; i < 10; i++ {
 				Eventually(done).Should(Receive())
 			}
+		})
+	})
+})
+
+// ============================================================================
+// SlogAdapter — Context Detection Tests
+// ============================================================================
+
+var _ = Describe("SlogAdapter — context detection", func() {
+	var buf *bytes.Buffer
+
+	newAdapter := func(level slog.Level) logging.Logger {
+		inner := slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: level})
+		return logging.NewSlogAdapter(slog.New(logging.NewCorrelationIDHandler(inner)))
+	}
+
+	BeforeEach(func() {
+		buf = &bytes.Buffer{}
+	})
+
+	Describe("Info", func() {
+		It("should inject correlation_id when context is the first arg", func() {
+			ctx := logging.WithCorrelationID(context.Background(), "corr-info-1")
+			newAdapter(slog.LevelInfo).Info("token issued", ctx, "user_id", "u-1")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry["correlation_id"]).To(Equal("corr-info-1"))
+			Expect(entry["user_id"]).To(Equal("u-1"))
+		})
+
+		It("should omit correlation_id when context carries none", func() {
+			newAdapter(slog.LevelInfo).Info("background op", context.Background(), "task", "cleanup")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry).NotTo(HaveKey("correlation_id"))
+		})
+
+		It("should log normally when no context arg is present", func() {
+			newAdapter(slog.LevelInfo).Info("plain log", "key", "value")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry["key"]).To(Equal("value"))
+			Expect(entry).NotTo(HaveKey("correlation_id"))
+		})
+	})
+
+	Describe("Debug", func() {
+		It("should inject correlation_id when context is the first arg", func() {
+			ctx := logging.WithCorrelationID(context.Background(), "corr-debug-1")
+			newAdapter(slog.LevelDebug).Debug("cache hit", ctx, "key_id", "k-1")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry["correlation_id"]).To(Equal("corr-debug-1"))
+			Expect(entry["key_id"]).To(Equal("k-1"))
+		})
+
+		It("should log normally when no context arg is present", func() {
+			newAdapter(slog.LevelDebug).Debug("plain debug", "component", "keymanager")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry["component"]).To(Equal("keymanager"))
+			Expect(entry).NotTo(HaveKey("correlation_id"))
+		})
+	})
+
+	Describe("Warn", func() {
+		It("should inject correlation_id when context is the first arg", func() {
+			ctx := logging.WithCorrelationID(context.Background(), "corr-warn-1")
+			newAdapter(slog.LevelWarn).Warn("store rejected", ctx, "reason", "empty token")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry["correlation_id"]).To(Equal("corr-warn-1"))
+			Expect(entry["reason"]).To(Equal("empty token"))
+		})
+	})
+
+	Describe("Error", func() {
+		It("should inject correlation_id when context is the first arg", func() {
+			ctx := logging.WithCorrelationID(context.Background(), "corr-error-1")
+			newAdapter(slog.LevelError).Error("rotation failed", ctx, "error", "disk full")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry["correlation_id"]).To(Equal("corr-error-1"))
+			Expect(entry["error"]).To(Equal("disk full"))
+		})
+	})
+})
+
+// ============================================================================
+// NewCorrelationJSONLogger / NewCorrelationTextLogger Tests
+// ============================================================================
+
+var _ = Describe("Correlation convenience constructors", func() {
+	Describe("NewCorrelationJSONLogger", func() {
+		It("should return a non-nil adapter", func() {
+			Expect(logging.NewCorrelationJSONLogger(slog.LevelInfo)).NotTo(BeNil())
+		})
+
+		It("should not panic when logging with a correlation context", func() {
+			logger := logging.NewCorrelationJSONLogger(slog.LevelInfo)
+			ctx := logging.WithCorrelationID(context.Background(), "req-test")
+
+			Expect(func() {
+				logger.Info("test", ctx, "key", "value")
+			}).NotTo(Panic())
+		})
+	})
+
+	Describe("NewCorrelationTextLogger", func() {
+		It("should return a non-nil adapter", func() {
+			Expect(logging.NewCorrelationTextLogger(slog.LevelInfo)).NotTo(BeNil())
+		})
+
+		It("should not panic when logging with a correlation context", func() {
+			logger := logging.NewCorrelationTextLogger(slog.LevelInfo)
+			ctx := logging.WithCorrelationID(context.Background(), "req-test")
+
+			Expect(func() {
+				logger.Info("test", ctx, "key", "value")
+			}).NotTo(Panic())
 		})
 	})
 })

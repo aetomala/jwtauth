@@ -59,18 +59,18 @@ func (mr *MockKeyManagerMockRecorder) GetCurrentSigningKey(ctx any) *gomock.Call
 }
 
 // GetJWKS mocks base method.
-func (m *MockKeyManager) GetJWKS() (*keymanager.JWKS, error) {
+func (m *MockKeyManager) GetJWKS(ctx context.Context) (*keymanager.JWKS, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetJWKS")
+	ret := m.ctrl.Call(m, "GetJWKS", ctx)
 	ret0, _ := ret[0].(*keymanager.JWKS)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetJWKS indicates an expected call of GetJWKS.
-func (mr *MockKeyManagerMockRecorder) GetJWKS() *gomock.Call {
+func (mr *MockKeyManagerMockRecorder) GetJWKS(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJWKS", reflect.TypeOf((*MockKeyManager)(nil).GetJWKS))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJWKS", reflect.TypeOf((*MockKeyManager)(nil).GetJWKS), ctx)
 }
 
 // GetPublicKey mocks base method.
