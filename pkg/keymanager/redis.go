@@ -64,12 +64,14 @@ func NewRedisKeyStore(client *redis.Client, logger logging.Logger, m metrics.Met
 func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	var keyCount int
 	defer func() {
 		if r.metrics != nil {
 			r.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "load_all",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": r.backend,
 			})
 			r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -87,6 +89,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return nil, err
 	}
 
@@ -102,7 +105,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		pemStr, err := r.client.Get(ctx, redisKey).Result()
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Warn("skipping key: failed to load PEM",
+				r.logger.Warn("skipping key: failed to load PEM", ctx,
 					"keyID", keyID,
 					"error", err)
 			}
@@ -112,7 +115,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		privateKey, err := decodePEM(pemStr)
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Warn("skipping key: failed to parse PEM",
+				r.logger.Warn("skipping key: failed to parse PEM", ctx,
 					"keyID", keyID,
 					"error", err)
 			}
@@ -123,7 +126,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		metaStr, err := r.client.Get(ctx, keyMetaPrefix+keyID).Result()
 		if err != nil {
 			if r.logger != nil {
-				r.logger.Warn("skipping key: failed to load metadata",
+				r.logger.Warn("skipping key: failed to load metadata", ctx,
 					"keyID", keyID,
 					"error", err)
 			}
@@ -133,7 +136,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		var meta KeyMetadata
 		if err := json.Unmarshal([]byte(metaStr), &meta); err != nil {
 			if r.logger != nil {
-				r.logger.Warn("skipping key: failed to parse metadata",
+				r.logger.Warn("skipping key: failed to parse metadata", ctx,
 					"keyID", keyID,
 					"error", err)
 			}
@@ -143,7 +146,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		// ===== STEP 5: Skip Expired Keys =====
 		if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
 			if r.logger != nil {
-				r.logger.Info("skipping expired key",
+				r.logger.Info("skipping expired key", ctx,
 					"keyID", keyID,
 					"expiredAt", meta.ExpiresAt.Format(time.RFC3339))
 			}
@@ -157,22 +160,23 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		})
 
 		if r.logger != nil {
-			r.logger.Debug("loaded key from redis", "keyID", keyID)
+			r.logger.Debug("loaded key from redis", ctx, "keyID", keyID)
 		}
 	}
 
 	if err := iter.Err(); err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to scan redis keys", "error", err)
+			r.logger.Error("failed to scan redis keys", ctx, "error", err)
 		}
 		return nil, fmt.Errorf("scan redis keys: %w", err)
 	}
 
 	// ===== STEP 6: Log and Return =====
 	status = "success"
+	errorType = ""
 	keyCount = len(keys)
 	if r.logger != nil {
-		r.logger.Info("loaded keys from redis", "count", keyCount)
+		r.logger.Info("loaded keys from redis", ctx, "count", keyCount)
 	}
 	return keys, nil
 }
@@ -183,11 +187,13 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta KeyMetadata) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if r.metrics != nil {
 			r.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "save",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": r.backend,
 			})
 			r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -200,6 +206,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -210,7 +217,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 	metaBytes, err := json.Marshal(meta)
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to marshal key metadata",
+			r.logger.Error("failed to marshal key metadata", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -224,7 +231,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to save key to redis",
+			r.logger.Error("failed to save key to redis", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -233,8 +240,9 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 
 	// ===== STEP 5: Log and Return =====
 	status = "success"
+	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("saved key to redis", "keyID", keyID)
+		r.logger.Info("saved key to redis", ctx, "keyID", keyID)
 	}
 	return nil
 }
@@ -246,11 +254,13 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta KeyMetadata) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if r.metrics != nil {
 			r.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "update_metadata",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": r.backend,
 			})
 			r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -263,6 +273,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -270,7 +281,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	exists, err := r.client.Exists(ctx, keyPEMPrefix+keyID).Result()
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to check key existence",
+			r.logger.Error("failed to check key existence", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -278,6 +289,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	}
 	if exists == 0 {
 		status = "not_found"
+		errorType = "not_found"
 		return ErrKeyStoreKeyNotFound
 	}
 
@@ -285,7 +297,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	metaBytes, err := json.Marshal(meta)
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to marshal key metadata",
+			r.logger.Error("failed to marshal key metadata", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -294,7 +306,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 
 	if err := r.client.Set(ctx, keyMetaPrefix+keyID, string(metaBytes), 0).Err(); err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to update metadata in redis",
+			r.logger.Error("failed to update metadata in redis", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -303,8 +315,9 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 
 	// ===== STEP 4: Log and Return =====
 	status = "success"
+	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("updated key metadata", "keyID", keyID)
+		r.logger.Info("updated key metadata", ctx, "keyID", keyID)
 	}
 	return nil
 }
@@ -316,11 +329,13 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *KeyMetadata, error) {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if r.metrics != nil {
 			r.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "load_key",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": r.backend,
 			})
 			r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -333,12 +348,14 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return nil, nil, err
 	}
 
 	// ===== STEP 2: Validate Key ID =====
 	if strings.TrimSpace(keyID) == "" {
 		status = "not_found"
+		errorType = "not_found"
 		return nil, nil, ErrKeyStoreInvalidKeyID
 	}
 
@@ -347,10 +364,11 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			status = "not_found"
+			errorType = "not_found"
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if r.logger != nil {
-			r.logger.Error("failed to load key from redis",
+			r.logger.Error("failed to load key from redis", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -360,7 +378,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	privateKey, err := decodePEM(pemStr)
 	if err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to parse PEM for key",
+			r.logger.Error("failed to parse PEM for key", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -372,10 +390,11 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			status = "not_found"
+			errorType = "not_found"
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if r.logger != nil {
-			r.logger.Error("failed to load key metadata from redis",
+			r.logger.Error("failed to load key metadata from redis", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -385,7 +404,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	var meta KeyMetadata
 	if err := json.Unmarshal([]byte(metaStr), &meta); err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to parse key metadata",
+			r.logger.Error("failed to parse key metadata", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -394,8 +413,9 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 
 	// ===== STEP 5: Log and Return =====
 	status = "success"
+	errorType = ""
 	if r.logger != nil {
-		r.logger.Debug("loaded key from redis", "keyID", keyID)
+		r.logger.Debug("loaded key from redis", ctx, "keyID", keyID)
 	}
 	return privateKey, &meta, nil
 }
@@ -406,11 +426,13 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if r.metrics != nil {
 			r.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "delete",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": r.backend,
 			})
 			r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -423,13 +445,14 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
 	// ===== STEP 2: Delete Both Keys =====
 	if err := r.client.Del(ctx, keyPEMPrefix+keyID, keyMetaPrefix+keyID).Err(); err != nil {
 		if r.logger != nil {
-			r.logger.Error("failed to delete key from redis",
+			r.logger.Error("failed to delete key from redis", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -438,8 +461,9 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 
 	// ===== STEP 3: Log and Return =====
 	status = "success"
+	errorType = ""
 	if r.logger != nil {
-		r.logger.Info("deleted key from redis", "keyID", keyID)
+		r.logger.Info("deleted key from redis", ctx, "keyID", keyID)
 	}
 	return nil
 }

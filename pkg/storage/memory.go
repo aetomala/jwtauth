@@ -58,12 +58,14 @@ func NewMemoryRefreshStore(logger logging.Logger, m metrics.Metrics) *MemoryRefr
 func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	tokenCount := 0
 	defer func() {
 		if m.metrics != nil {
 			m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
 				"operation":       "store",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": m.backend,
 			})
 			m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
@@ -81,8 +83,9 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		if m.logger != nil {
-			m.logger.Warn("store aborted: context cancelled",
+			m.logger.Warn("store aborted: context cancelled", ctx,
 				"reason", err)
 		}
 		return err
@@ -91,8 +94,9 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(tokenID)) == 0 {
 		status = "validation_error"
+		errorType = "validation_error"
 		if m.logger != nil {
-			m.logger.Warn("store rejected: tokenID is empty or whitespace",
+			m.logger.Warn("store rejected: tokenID is empty or whitespace", ctx,
 				"userID", userID)
 		}
 		return ErrInvalidTokenID
@@ -100,8 +104,9 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "validation_error"
+		errorType = "validation_error"
 		if m.logger != nil {
-			m.logger.Warn("store rejected: userID is empty or whitespace",
+			m.logger.Warn("store rejected: userID is empty or whitespace", ctx,
 				"tokenID", tokenID)
 		}
 		return ErrInvalidUserID
@@ -109,8 +114,9 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 
 	if expiresAt.Before(time.Now()) {
 		status = "validation_error"
+		errorType = "validation_error"
 		if m.logger != nil {
-			m.logger.Warn("store rejected: token is already expired",
+			m.logger.Warn("store rejected: token is already expired", ctx,
 				"tokenID", tokenID,
 				"userID", userID,
 				"expiresAt", expiresAt)
@@ -132,7 +138,7 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	defer m.mu.Unlock()
 
 	if m.logger != nil {
-		m.logger.Debug("storing token in memory",
+		m.logger.Debug("storing token in memory", ctx,
 			"tokenID", tokenID,
 			"userID", userID)
 	}
@@ -152,8 +158,9 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 
 	// ===== STEP 6: Log Success =====
 	status = "success"
+	errorType = ""
 	if m.logger != nil {
-		m.logger.Info("refresh token stored",
+		m.logger.Info("refresh token stored", ctx,
 			"tokenID", tokenID,
 			"userID", userID,
 			"expiresAt", expiresAt)
@@ -171,11 +178,13 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*RefreshToken, error) {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if m.metrics != nil {
 			m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
 				"operation":       "retrieve",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": m.backend,
 			})
 			m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
@@ -188,8 +197,9 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		if m.logger != nil {
-			m.logger.Warn("retrieve aborted: context cancelled",
+			m.logger.Warn("retrieve aborted: context cancelled", ctx,
 				"tokenID", tokenID,
 				"reason", err)
 		}
@@ -199,8 +209,9 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(tokenID)) == 0 {
 		status = "validation_error"
+		errorType = "validation_error"
 		if m.logger != nil {
-			m.logger.Warn("retrieve rejected: tokenID is empty or whitespace")
+			m.logger.Warn("retrieve rejected: tokenID is empty or whitespace", ctx)
 		}
 		return nil, ErrInvalidTokenID
 	}
@@ -210,7 +221,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	defer m.mu.RUnlock()
 
 	if m.logger != nil {
-		m.logger.Debug("looking up token in memory",
+		m.logger.Debug("looking up token in memory", ctx,
 			"tokenID", tokenID)
 	}
 
@@ -218,8 +229,9 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	token, found := m.tokens[tokenID]
 	if !found {
 		status = "not_found"
+		errorType = "not_found"
 		if m.logger != nil {
-			m.logger.Warn("retrieve: token not found",
+			m.logger.Warn("retrieve: token not found", ctx,
 				"tokenID", tokenID)
 		}
 		return nil, ErrTokenNotFound
@@ -228,8 +240,9 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	// ===== STEP 5: Check Revocation =====
 	if token.Revoked {
 		status = "revoked"
+		errorType = "revoked"
 		if m.logger != nil {
-			m.logger.Warn("retrieve: token has been revoked",
+			m.logger.Warn("retrieve: token has been revoked", ctx,
 				"tokenID", tokenID,
 				"userID", token.UserID)
 		}
@@ -239,8 +252,9 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	// ===== STEP 6: Check Expiration =====
 	if token.ExpiresAt.Before(time.Now()) {
 		status = "expired"
+		errorType = "expired"
 		if m.logger != nil {
-			m.logger.Warn("retrieve: token has expired",
+			m.logger.Warn("retrieve: token has expired", ctx,
 				"tokenID", tokenID,
 				"expiredAt", token.ExpiresAt)
 		}
@@ -265,8 +279,9 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 
 	// ===== STEP 8: Log Success =====
 	status = "success"
+	errorType = ""
 	if m.logger != nil {
-		m.logger.Info("retrieve: token retrieved successfully",
+		m.logger.Info("retrieve: token retrieved successfully", ctx,
 			"tokenID", tokenID)
 	}
 
@@ -279,11 +294,13 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if m.metrics != nil {
 			m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
 				"operation":       "revoke",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": m.backend,
 			})
 			m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
@@ -296,8 +313,9 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		if m.logger != nil {
-			m.logger.Warn("revoke aborted: context cancelled",
+			m.logger.Warn("revoke aborted: context cancelled", ctx,
 				"tokenID", tokenID)
 		}
 		return ctx.Err()
@@ -306,8 +324,9 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(tokenID)) == 0 {
 		status = "validation_error"
+		errorType = "validation_error"
 		if m.logger != nil {
-			m.logger.Warn("revoke rejected: tokenID is empty or whitespace")
+			m.logger.Warn("revoke rejected: tokenID is empty or whitespace", ctx)
 		}
 		return ErrInvalidTokenID
 	}
@@ -320,8 +339,9 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	token, found := m.tokens[tokenID]
 	if !found {
 		status = "success" // idempotent: not-found is not an error
+		errorType = ""
 		if m.logger != nil {
-			m.logger.Warn("revoke: token not found",
+			m.logger.Warn("revoke: token not found", ctx,
 				"tokenID", tokenID)
 		}
 		return nil
@@ -332,8 +352,9 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 
 	// ===== STEP 6: Log Success =====
 	status = "success"
+	errorType = ""
 	if m.logger != nil {
-		m.logger.Info("revoke: successfully revoked",
+		m.logger.Info("revoke: successfully revoked", ctx,
 			"tokenID", tokenID)
 	}
 
@@ -347,11 +368,13 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if m.metrics != nil {
 			m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
 				"operation":       "revoke_all",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": m.backend,
 			})
 			m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
@@ -364,8 +387,9 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		if m.logger != nil {
-			m.logger.Warn("revokeAllForUser aborted: context cancelled",
+			m.logger.Warn("revokeAllForUser aborted: context cancelled", ctx,
 				"userID", userID,
 				"reason", err)
 		}
@@ -375,8 +399,9 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "validation_error"
+		errorType = "validation_error"
 		if m.logger != nil {
-			m.logger.Warn("revokeAllForUser rejected: userID is empty or whitespace")
+			m.logger.Warn("revokeAllForUser rejected: userID is empty or whitespace", ctx)
 		}
 		return ErrInvalidUserID
 	}
@@ -390,7 +415,7 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 	for _, tokenID := range tokensIDs {
 		if token, exists := m.tokens[tokenID]; exists {
 			if m.logger != nil {
-				m.logger.Debug("revoking token for user",
+				m.logger.Debug("revoking token for user", ctx,
 					"tokenID", tokenID,
 					"userID", userID)
 			}
@@ -400,8 +425,9 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 
 	// ===== STEP 5: Log Success =====
 	status = "success"
+	errorType = ""
 	if m.logger != nil {
-		m.logger.Info("revokeAllForUser: all tokens revoked",
+		m.logger.Info("revokeAllForUser: all tokens revoked", ctx,
 			"userID", userID,
 			"count", len(tokensIDs))
 	}
@@ -416,6 +442,7 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	removed := 0
 	remaining := 0
 	defer func() {
@@ -423,6 +450,7 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 			m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
 				"operation":       "cleanup",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": m.backend,
 			})
 			m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
@@ -443,8 +471,9 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		if m.logger != nil {
-			m.logger.Warn("cleanup aborted: context cancelled")
+			m.logger.Warn("cleanup aborted: context cancelled", ctx)
 		}
 		return 0, err
 	}
@@ -459,7 +488,7 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	for tokenID, token := range m.tokens {
 		if token.ExpiresAt.Before(now) || token.ExpiresAt.Equal(now) {
 			if m.logger != nil {
-				m.logger.Debug("removing expired token",
+				m.logger.Debug("removing expired token", ctx,
 					"tokenID", token.TokenID,
 					"expiredAt", token.ExpiresAt)
 			}
@@ -473,8 +502,9 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 
 	// ===== STEP 4: Log Success =====
 	status = "success"
+	errorType = ""
 	if m.logger != nil {
-		m.logger.Info("cleanup: successful",
+		m.logger.Info("cleanup: successful", ctx,
 			"count", count)
 	}
 

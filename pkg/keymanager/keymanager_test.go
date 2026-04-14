@@ -289,20 +289,20 @@ var _ = Describe("Manager", func() {
 			})
 
 			It("should return a valid private key and non-empty key ID", func() {
-				key, keyID, err := manager.GetCurrentSigningKey()
+				key, keyID, err := manager.GetCurrentSigningKey(ctx)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(key).NotTo(BeNil())
 				Expect(keyID).NotTo(BeEmpty())
 			})
 
 			It("should return consistent key ID across multiple calls", func() {
-				_, id1, _ := manager.GetCurrentSigningKey()
-				_, id2, _ := manager.GetCurrentSigningKey()
+				_, id1, _ := manager.GetCurrentSigningKey(ctx)
+				_, id2, _ := manager.GetCurrentSigningKey(ctx)
 				Expect(id1).To(Equal(id2))
 			})
 
 			It("should return a key of the configured size", func() {
-				key, _, err := manager.GetCurrentSigningKey()
+				key, _, err := manager.GetCurrentSigningKey(ctx)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(key.N.BitLen()).To(Equal(2048))
 			})
@@ -310,8 +310,24 @@ var _ = Describe("Manager", func() {
 
 		Context("when the manager is not running", func() {
 			It("should return ErrManagerNotRunning", func() {
-				_, _, err := manager.GetCurrentSigningKey()
+				_, _, err := manager.GetCurrentSigningKey(ctx)
 				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+			})
+		})
+
+		Context("context cancellation", func() {
+			BeforeEach(func() {
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				Expect(manager.Start(ctx)).To(Succeed())
+			})
+
+			It("should return context error when context is already cancelled", func() {
+				cancelledCtx, cancelFn := context.WithCancel(context.Background())
+				cancelFn()
+
+				_, _, err := manager.GetCurrentSigningKey(cancelledCtx)
+				Expect(err).To(MatchError(context.Canceled))
 			})
 		})
 	})
@@ -358,7 +374,7 @@ var _ = Describe("Manager", func() {
 
 		Context("cache hit", func() {
 			It("should return the public key for a cached key ID", func() {
-				pub, err := manager.GetPublicKey(testKeyID)
+				pub, err := manager.GetPublicKey(ctx, testKeyID)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(pub).NotTo(BeNil())
 				Expect(pub).To(Equal(&testKey.PublicKey))
@@ -373,7 +389,7 @@ var _ = Describe("Manager", func() {
 
 				mockKS.EXPECT().LoadKey(gomock.Any(), uncachedID).Return(uncachedKey, meta, nil)
 
-				pub, err := manager.GetPublicKey(uncachedID)
+				pub, err := manager.GetPublicKey(ctx, uncachedID)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(pub).To(Equal(&uncachedKey.PublicKey))
 			})
@@ -381,7 +397,7 @@ var _ = Describe("Manager", func() {
 			It("should return ErrKeyNotFound when store returns ErrKeyStoreKeyNotFound", func() {
 				mockKS.EXPECT().LoadKey(gomock.Any(), "missing-id").Return(nil, nil, keymanager.ErrKeyStoreKeyNotFound)
 
-				_, err := manager.GetPublicKey("missing-id")
+				_, err := manager.GetPublicKey(ctx, "missing-id")
 				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
 			})
 
@@ -396,24 +412,24 @@ var _ = Describe("Manager", func() {
 
 				mockKS.EXPECT().LoadKey(gomock.Any(), expiredID).Return(expiredKey, expiredMeta, nil)
 
-				_, err := manager.GetPublicKey(expiredID)
+				_, err := manager.GetPublicKey(ctx, expiredID)
 				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
 			})
 		})
 
 		Context("input validation", func() {
 			It("should return ErrInvalidKeyID for an empty key ID", func() {
-				_, err := manager.GetPublicKey("")
+				_, err := manager.GetPublicKey(ctx, "")
 				Expect(err).To(MatchError(keymanager.ErrInvalidKeyID))
 			})
 
 			It("should return ErrInvalidKeyID for a whitespace-only key ID", func() {
-				_, err := manager.GetPublicKey("   ")
+				_, err := manager.GetPublicKey(ctx, "   ")
 				Expect(err).To(MatchError(keymanager.ErrInvalidKeyID))
 			})
 
 			It("should trim whitespace from keyID and succeed", func() {
-				pub, err := manager.GetPublicKey("  " + testKeyID + "  ")
+				pub, err := manager.GetPublicKey(ctx, "  "+testKeyID+"  ")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(pub).NotTo(BeNil())
 			})
@@ -426,7 +442,7 @@ var _ = Describe("Manager", func() {
 
 				for i := 0; i < numReaders; i++ {
 					go func() {
-						_, err := manager.GetPublicKey(testKeyID)
+						_, err := manager.GetPublicKey(ctx, testKeyID)
 						results <- err
 					}()
 				}
@@ -434,6 +450,16 @@ var _ = Describe("Manager", func() {
 				for i := 0; i < numReaders; i++ {
 					Expect(<-results).NotTo(HaveOccurred())
 				}
+			})
+		})
+
+		Context("context cancellation", func() {
+			It("should return context error when context is already cancelled", func() {
+				cancelledCtx, cancelFn := context.WithCancel(context.Background())
+				cancelFn()
+
+				_, err := manager.GetPublicKey(cancelledCtx, testKeyID)
+				Expect(err).To(MatchError(context.Canceled))
 			})
 		})
 	})
@@ -467,8 +493,38 @@ var _ = Describe("Manager", func() {
 			})
 
 			It("should return ErrManagerNotRunning", func() {
-				_, err := manager.GetJWKS()
+				_, err := manager.GetJWKS(ctx)
 				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+			})
+		})
+
+		Context("when the context is already cancelled", func() {
+			BeforeEach(func() {
+				ctrl = gomock.NewController(GinkgoT())
+				mockKS = testutil.NewMockKeyStore(ctrl)
+
+				activeKey := newTestKey()
+				storedKeys := []*keymanager.StoredKey{
+					{
+						KeyID:      "active-key",
+						PrivateKey: activeKey,
+						Metadata:   keymanager.KeyMetadata{ID: "active-key", CreatedAt: time.Now()},
+					},
+				}
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
+
+				var err error
+				manager, err = keymanager.NewManager(newTestConfig(mockKS))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(manager.Start(ctx)).To(Succeed())
+			})
+
+			It("should return the context error", func() {
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				_, err := manager.GetJWKS(cancelledCtx)
+				Expect(err).To(MatchError(context.Canceled))
 			})
 		})
 
@@ -507,7 +563,7 @@ var _ = Describe("Manager", func() {
 				manager.Keys()["active-key"].ExpiresAt = time.Now().Add(-1 * time.Hour)
 				manager.Mu().Unlock()
 
-				jwks, err := manager.GetJWKS()
+				jwks, err := manager.GetJWKS(ctx)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(jwks.Keys).To(HaveLen(1))
 				Expect(jwks.Keys[0].KeyID).To(Equal("current-key"))
@@ -562,14 +618,14 @@ var _ = Describe("Manager", func() {
 			})
 
 			It("should change the current signing key ID after rotation", func() {
-				_, originalID, _ := manager.GetCurrentSigningKey()
+				_, originalID, _ := manager.GetCurrentSigningKey(ctx)
 
 				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				mockKS.EXPECT().UpdateMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				Expect(manager.RotateKeys(ctx)).To(Succeed())
 
-				_, newID, _ := manager.GetCurrentSigningKey()
+				_, newID, _ := manager.GetCurrentSigningKey(ctx)
 				Expect(newID).NotTo(Equal(originalID))
 			})
 
@@ -743,7 +799,11 @@ var _ = Describe("Manager", func() {
 		// expectRotationMetrics sets up MockMetrics expectations for a RotateKeys call.
 		// For "success", also expects the active-versions gauge to be updated.
 		expectRotationMetrics := func(status string) {
-			mockM.EXPECT().IncrementCounter("jwtauth_key_rotations_total", map[string]string{"status": status})
+			errorType := status
+			if status == "success" {
+				errorType = ""
+			}
+			mockM.EXPECT().IncrementCounter("jwtauth_key_rotations_total", map[string]string{"status": status, "error_type": errorType})
 			mockM.EXPECT().RecordDuration("jwtauth_key_operation_duration_seconds", gomock.Any(), map[string]string{"operation": "rotate"})
 			if status == "success" {
 				mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", gomock.Any(), gomock.Nil())
@@ -805,9 +865,9 @@ var _ = Describe("Manager", func() {
 					_ = m.Shutdown(shutdownCtx)
 				}()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "success"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "success", "error_type": ""})
 
-				_, _, err := m.GetCurrentSigningKey()
+				_, _, err := m.GetCurrentSigningKey(ctx)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
@@ -821,10 +881,27 @@ var _ = Describe("Manager", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "error"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "error", "error_type": "error"})
 
-				_, _, err = m.GetCurrentSigningKey()
+				_, _, err = m.GetCurrentSigningKey(ctx)
 				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+			})
+
+			It("should record cancelled counter when context is already cancelled", func() {
+				m := newMetricManager()
+				defer func() {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = m.Shutdown(shutdownCtx)
+				}()
+
+				cancelledCtx, cancelFn := context.WithCancel(context.Background())
+				cancelFn()
+
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "cancelled", "error_type": "cancelled"})
+
+				_, _, err := m.GetCurrentSigningKey(cancelledCtx)
+				Expect(err).To(MatchError(context.Canceled))
 			})
 		})
 
@@ -837,9 +914,9 @@ var _ = Describe("Manager", func() {
 					_ = m.Shutdown(shutdownCtx)
 				}()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "success"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "success", "error_type": ""})
 
-				_, err := m.GetPublicKey("existing-metric-key")
+				_, err := m.GetPublicKey(ctx, "existing-metric-key")
 				Expect(err).NotTo(HaveOccurred())
 			})
 
@@ -851,11 +928,28 @@ var _ = Describe("Manager", func() {
 					_ = m.Shutdown(shutdownCtx)
 				}()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "not_found"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "not_found", "error_type": "not_found"})
 				mockKS.EXPECT().LoadKey(gomock.Any(), "ghost-key").Return(nil, nil, keymanager.ErrKeyStoreKeyNotFound)
 
-				_, err := m.GetPublicKey("ghost-key")
+				_, err := m.GetPublicKey(ctx, "ghost-key")
 				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+			})
+
+			It("should record cancelled counter when context is already cancelled", func() {
+				m := newMetricManager()
+				defer func() {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = m.Shutdown(shutdownCtx)
+				}()
+
+				cancelledCtx, cancelFn := context.WithCancel(context.Background())
+				cancelFn()
+
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "cancelled", "error_type": "cancelled"})
+
+				_, err := m.GetPublicKey(cancelledCtx, "some-key")
+				Expect(err).To(MatchError(context.Canceled))
 			})
 		})
 
@@ -886,8 +980,8 @@ var _ = Describe("Manager", func() {
 					_ = m.Shutdown(shutdownCtx)
 				}()
 
-				Expect(func() { _, _, _ = m.GetCurrentSigningKey() }).NotTo(Panic())
-				Expect(func() { _, _ = m.GetPublicKey(existingID) }).NotTo(Panic())
+				Expect(func() { _, _, _ = m.GetCurrentSigningKey(ctx) }).NotTo(Panic())
+				Expect(func() { _, _ = m.GetPublicKey(ctx, existingID) }).NotTo(Panic())
 
 				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				mockKS.EXPECT().UpdateMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)

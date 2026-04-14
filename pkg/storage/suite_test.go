@@ -621,7 +621,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should record counter and duration on Store success", func() {
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "store", "storage_backend": backend})
@@ -637,7 +637,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should record validation_error status on Store with empty tokenID", func() {
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "validation_error", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "validation_error", "error_type": "validation_error", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "store", "storage_backend": backend})
@@ -649,7 +649,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should record counter and duration on Retrieve success", func() {
 				// Setup: Store the token (expect those metrics too)
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "store", "storage_backend": backend})
@@ -660,7 +660,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 				// Retrieve expectations
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "retrieve", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "retrieve", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "retrieve", "storage_backend": backend})
@@ -672,7 +672,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should record not_found status on Retrieve for nonexistent token", func() {
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "retrieve", "status": "not_found", "storage_backend": backend})
+					map[string]string{"operation": "retrieve", "status": "not_found", "error_type": "not_found", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "retrieve", "storage_backend": backend})
@@ -684,7 +684,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should record revoked status on Retrieve for revoked token", func() {
 				// Store
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "store", "storage_backend": backend})
@@ -695,7 +695,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 				// Revoke
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "revoke", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "revoke", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "revoke", "storage_backend": backend})
@@ -703,7 +703,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 				// Retrieve
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "retrieve", "status": "revoked", "storage_backend": backend})
+					map[string]string{"operation": "retrieve", "status": "revoked", "error_type": "revoked", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "retrieve", "storage_backend": backend})
@@ -715,7 +715,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should record counter and duration on Revoke success", func() {
 				// Store
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "store", "storage_backend": backend})
@@ -726,7 +726,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 				// Revoke
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "revoke", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "revoke", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "revoke", "storage_backend": backend})
@@ -737,7 +737,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should record counter and duration on RevokeAllForUser success", func() {
 				// Store
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "store", "storage_backend": backend})
@@ -748,7 +748,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 				// RevokeAllForUser
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "revoke_all", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "revoke_all", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "revoke_all", "storage_backend": backend})
@@ -761,7 +761,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 				// Store short-lived token
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "store", "storage_backend": backend})
@@ -778,7 +778,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 				// Cleanup expectations
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "cleanup", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "cleanup", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "cleanup", "storage_backend": backend})
@@ -796,7 +796,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should record zero removed count and gauge on Cleanup with no tokens", func() {
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "cleanup", "status": "success", "storage_backend": backend})
+					map[string]string{"operation": "cleanup", "status": "success", "error_type": "", "storage_backend": backend})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
 					map[string]string{"operation": "cleanup", "storage_backend": backend})

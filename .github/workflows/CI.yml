@@ -83,10 +83,11 @@ jobs:
             coverage.html
           retention-days: 14
 
-      - name: Integration tests (race)
+      - name: Integration tests — disk + memory + Redis distributed (miniredis)
         run: |
           ginkgo -r \
             --race \
-            --timeout=120s \
+            --timeout=180s \
+            --randomize-all \
             --tags=integration \
             ./pkg/tokens/integration/...

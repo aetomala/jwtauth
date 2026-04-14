@@ -224,20 +224,28 @@ token, err := svc.IssueAccessTokenWithClaims(ctx, userID, claims)
 
 ### Add Authorization Middleware
 
-Extend `middleware/auth.go` to check custom claims:
+Use `ValidateAccessTokenWithClaims` in your middleware to surface custom claims, then store them in context:
 
 ```go
+// In auth middleware — replace ValidateAccessToken with ValidateAccessTokenWithClaims
+registered, custom, err := svc.ValidateAccessTokenWithClaims(c.Request().Context(), token)
+if err != nil {
+    return c.JSON(http.StatusUnauthorized, map[string]string{"error": tokenErrorCode(err)})
+}
+c.Set("userID", registered.Subject)
+c.Set("claims", custom) // map[string]interface{}
+return next(c)
+
+// In downstream middleware — check custom claims
 func RequireRole(role string) echo.MiddlewareFunc {
     return func(next echo.HandlerFunc) echo.HandlerFunc {
         return func(c echo.Context) error {
-            claims := c.Get("claims").(*tokens.Claims)
-
-            if claims.Custom[role] != true {
+            custom, _ := c.Get("claims").(map[string]interface{})
+            if custom["role"] != role {
                 return c.JSON(http.StatusForbidden, map[string]string{
-                    "error": "insufficient permissions",
+                    "error": "insufficient_permissions",
                 })
             }
-
             return next(c)
         }
     }

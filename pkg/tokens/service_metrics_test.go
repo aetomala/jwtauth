@@ -101,7 +101,7 @@ var _ = Describe("TokenService Metrics", func() {
 	Describe("IssueAccessToken", func() {
 		It("records success counter and duration on successful issuance", func() {
 			startService()
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", map[string]string{
 				"status":     "success",
 				"error_type": "",
@@ -180,7 +180,7 @@ var _ = Describe("TokenService Metrics", func() {
 		It("records success counter and duration on valid token", func() {
 			startService()
 			// Issue a real token first so we have a valid string to validate
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", gomock.Any())
 			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "issue_access_token",
@@ -189,7 +189,7 @@ var _ = Describe("TokenService Metrics", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Now validate
-			mockKM.EXPECT().GetPublicKey(testKeyID).Return(&testKey.PublicKey, nil)
+			mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
 			mockM.EXPECT().IncrementCounter("jwtauth_tokens_validated_total", map[string]string{
 				"status":     "success",
 				"error_type": "",
@@ -228,7 +228,7 @@ var _ = Describe("TokenService Metrics", func() {
 				Revoked:   false,
 			}
 			mockStore.EXPECT().Retrieve(gomock.Any(), "rt-1").Return(storedToken, nil)
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 			// IssueAccessToken metrics (called internally by RefreshAccessToken)
 			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", gomock.Any())
 			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
@@ -399,7 +399,7 @@ var _ = Describe("TokenService Metrics", func() {
 			Expect(nilService.Start(ctx)).To(Succeed())
 
 			// IssueAccessToken should not panic
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 			_, err := nilService.IssueAccessToken(ctx, "user-1")
 			Expect(err).NotTo(HaveOccurred())
 

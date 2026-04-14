@@ -187,6 +187,19 @@ var _ = Describe("TokenService", func() {
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("RefreshTokenDuration"))
 			})
+
+			It("should return error for negative ClockSkew", func() {
+				config := tokens.ServiceConfig{
+					KeyManager: mockKM,
+					RefreshStore: mockStore,
+					ClockSkew:  -1 * time.Second,
+				}
+
+				_, err := tokens.NewService(config)
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("ClockSkew"))
+			})
 		})
 	})
 
@@ -204,7 +217,7 @@ var _ = Describe("TokenService", func() {
 		})
 		It("should issue access token successfully", func() {
 			// Expect key retrieval
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 			token, err := service.IssueAccessToken(ctx, testUserID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(token).NotTo((BeEmpty()))
@@ -212,13 +225,13 @@ var _ = Describe("TokenService", func() {
 
 		It("should use KeyManager to sign token", func() {
 			// This is what we're verifying
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil).Times(1)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil).Times(1)
 
 			service.IssueAccessToken(ctx, testUserID)
 		})
 
 		It("should log token issuance", func() {
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 
 			service.IssueAccessToken(ctx, testUserID)
 
@@ -228,7 +241,7 @@ var _ = Describe("TokenService", func() {
 		})
 
 		It("should include custom claims issuance if provided", func() {
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 
 			customClaims := map[string]interface{}{
 				"role":   "admin",
@@ -247,14 +260,14 @@ var _ = Describe("TokenService", func() {
 		})
 
 		It("should respect call order", func() {
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 
 			service.IssueAccessToken(ctx, testUserID)
 		})
 
 		Context("when key retrieval fails", func() {
 			It("should return error", func() {
-				mockKM.EXPECT().GetCurrentSigningKey().Return(nil, "", errors.New("key unavailable")).Times(1)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(nil, "", errors.New("key unavailable")).Times(1)
 
 				_, err := service.IssueAccessToken(ctx, testUserID)
 
@@ -264,7 +277,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should log error", func() {
 				mockKM.EXPECT().
-					GetCurrentSigningKey().
+					GetCurrentSigningKey(gomock.Any()).
 					Return(nil, "", errors.New("key error"))
 
 				service.IssueAccessToken(ctx, testUserID)
@@ -278,7 +291,7 @@ var _ = Describe("TokenService", func() {
 		Context("with invalid user ID", func() {
 			It("should return error for empty user ID", func() {
 				// Should not call any dependencies for invalid input
-				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Times(0)
 
 				_, err := service.IssueAccessToken(ctx, "")
 
@@ -287,7 +300,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should return error for whitespace-only user ID", func() {
-				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Times(0)
 
 				_, err := service.IssueAccessToken(ctx, "   ")
 
@@ -302,7 +315,7 @@ var _ = Describe("TokenService", func() {
 				cancelFn() // cancel immediately
 
 				// Might not even get to dependencies
-				mockKM.EXPECT().GetCurrentSigningKey().Times(0)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Times(0)
 
 				_, err := service.IssueAccessToken(cancelledCtx, testUserID)
 				Expect(err).To(Equal(context.Canceled))
@@ -334,7 +347,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should not override reserved claim sub", func() {
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 				customClaims := map[string]interface{}{"sub": "hacker", "role": "admin"}
 				tokenStr, err := service.IssueAccessTokenWithClaims(ctx, testUserID, customClaims)
 				Expect(err).NotTo(HaveOccurred())
@@ -521,7 +534,7 @@ var _ = Describe("TokenService", func() {
 			It("should issue both token successfully", func() {
 				// Expect all dependencies called in order
 				gomock.InOrder(
-					mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil),
+					mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil),
 					mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), gomock.Any()).Return(nil),
 				)
 
@@ -534,7 +547,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should use KeyManager for access token", func() {
 				mockKM.EXPECT().
-					GetCurrentSigningKey().
+					GetCurrentSigningKey(gomock.Any()).
 					Return(testKey, testKeyID, nil).
 					Times(1)
 
@@ -544,7 +557,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should store refresh token", func() {
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 
 				mockStore.EXPECT().
 					Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), gomock.Any()).
@@ -555,7 +568,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should log both issuances", func() {
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				service.IssueTokenPair(ctx, testUserID)
@@ -569,7 +582,7 @@ var _ = Describe("TokenService", func() {
 		Context("when access token issuance fails", func() {
 			It("should not issue refresh token", func() {
 				mockKM.EXPECT().
-					GetCurrentSigningKey().
+					GetCurrentSigningKey(gomock.Any()).
 					Return(nil, "", errors.New("key error"))
 
 				// Store should NOT be called
@@ -583,7 +596,7 @@ var _ = Describe("TokenService", func() {
 
 		Context("when refresh token storage fails", func() {
 			It("should return error", func() {
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 				mockStore.EXPECT().
 					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("storage error"))
@@ -633,14 +646,14 @@ var _ = Describe("TokenService", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Then issue a valid token
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 			validToken, _ = service.IssueAccessToken(ctx, testUserID)
 		})
 
 		Context("with valid token", func() {
 			It("should validate successfully", func() {
 				// Expect public key retrieval
-				mockKM.EXPECT().GetPublicKey(testKeyID).
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).
 					Return(&testKey.PublicKey, nil).
 					Times(1)
 
@@ -653,7 +666,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should use KeyManager to get public key", func() {
 				mockKM.EXPECT().
-					GetPublicKey(gomock.Any()).
+					GetPublicKey(gomock.Any(), gomock.Any()).
 					Return(&testKey.PublicKey, nil).
 					Times(1)
 
@@ -662,14 +675,14 @@ var _ = Describe("TokenService", func() {
 
 			It("should verify correct key ID from header", func() {
 				mockKM.EXPECT().
-					GetPublicKey(testKeyID). // Exact key ID
+					GetPublicKey(gomock.Any(), testKeyID). // Exact key ID
 					Return(&testKey.PublicKey, nil)
 
 				service.ValidateAccessToken(ctx, validToken)
 			})
 
 			It("should log successful validation", func() {
-				mockKM.EXPECT().GetPublicKey(gomock.Any()).Return(&testKey.PublicKey, nil)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), gomock.Any()).Return(&testKey.PublicKey, nil)
 
 				service.ValidateAccessToken(ctx, validToken)
 
@@ -682,7 +695,7 @@ var _ = Describe("TokenService", func() {
 		Context("with invalid token format", func() {
 			It("should return error for malformed token", func() {
 				// Should not call KeyManager for invalid format
-				mockKM.EXPECT().GetPublicKey(gomock.Any()).Times(0)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), gomock.Any()).Times(0)
 
 				_, err := service.ValidateAccessToken(ctx, "not-a-jwt-token")
 
@@ -691,7 +704,7 @@ var _ = Describe("TokenService", func() {
 			})
 
 			It("should return error for empty token", func() {
-				mockKM.EXPECT().GetPublicKey(gomock.Any()).Times(0)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), gomock.Any()).Times(0)
 
 				_, err := service.ValidateAccessToken(ctx, "")
 
@@ -712,7 +725,7 @@ var _ = Describe("TokenService", func() {
 			It("should return error", func() {
 				expiredToken := createExpiredToken(testKey, testKeyID, testUserID)
 
-				mockKM.EXPECT().GetPublicKey(gomock.Any()).Return(&testKey.PublicKey, nil).AnyTimes()
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), gomock.Any()).Return(&testKey.PublicKey, nil).AnyTimes()
 
 				_, err := service.ValidateAccessToken(ctx, expiredToken)
 
@@ -722,7 +735,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should log expiration", func() {
 				expiredToken := createExpiredToken(testKey, testKeyID, testUserID)
-				mockKM.EXPECT().GetPublicKey(gomock.Any()).Return(&testKey.PublicKey, nil).AnyTimes()
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), gomock.Any()).Return(&testKey.PublicKey, nil).AnyTimes()
 
 				service.ValidateAccessToken(ctx, expiredToken)
 
@@ -733,10 +746,142 @@ var _ = Describe("TokenService", func() {
 
 		})
 
+		Context("with clock skew leeway configured", func() {
+			var leewayService *tokens.Service
+
+			BeforeEach(func() {
+				config := tokens.ServiceConfig{
+					KeyManager:          mockKM,
+					RefreshStore:        mockStore,
+					Logger:              mockLogger,
+					AccessTokenDuration: 15 * time.Minute,
+					CleanupInterval:     100 * time.Millisecond,
+					Issuer:              "test-issuer",
+					Audience:            []string{"test-audience"},
+					ClockSkew:           30 * time.Second,
+				}
+				var err error
+				leewayService, err = tokens.NewService(config)
+				Expect(err).NotTo(HaveOccurred())
+
+				mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+				mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
+				Expect(leewayService.Start(ctx)).To(Succeed())
+			})
+
+			AfterEach(func() {
+				mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil).AnyTimes()
+				leewayService.Shutdown(context.Background())
+			})
+
+			It("should accept a token expired within the leeway window", func() {
+				// Token expired 10 seconds ago — within the 30s leeway
+				recentToken := createRecentlyExpiredToken(testKey, testKeyID, testUserID, 10*time.Second)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+				_, err := leewayService.ValidateAccessToken(ctx, recentToken)
+
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should reject a token expired beyond the leeway window", func() {
+				// Token expired 60 seconds ago — exceeds the 30s leeway
+				oldToken := createRecentlyExpiredToken(testKey, testKeyID, testUserID, 60*time.Second)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+				_, err := leewayService.ValidateAccessToken(ctx, oldToken)
+
+				Expect(err).To(Equal(tokens.ErrTokenExpired))
+			})
+
+			It("should reject a token with zero clock skew that expired 10 seconds ago", func() {
+				// Same token, but strict service (no leeway) must reject it
+				recentToken := createRecentlyExpiredToken(testKey, testKeyID, testUserID, 10*time.Second)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+				_, err := service.ValidateAccessToken(ctx, recentToken)
+
+				Expect(err).To(Equal(tokens.ErrTokenExpired))
+			})
+		})
+
+		// ======================================================================
+		// ValidateAccessTokenWithClaims
+		// ======================================================================
+
+		Describe("ValidateAccessTokenWithClaims", func() {
+			Context("with custom claims embedded at issuance", func() {
+				It("should return custom claims alongside registered claims", func() {
+					mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+					customClaims := map[string]interface{}{
+						"role":   "admin",
+						"tenant": "org-123",
+					}
+					tokenStr, err := service.IssueAccessTokenWithClaims(ctx, testUserID, customClaims)
+					Expect(err).NotTo(HaveOccurred())
+
+					mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+					registered, custom, err := service.ValidateAccessTokenWithClaims(ctx, tokenStr)
+
+					Expect(err).NotTo(HaveOccurred())
+					Expect(registered).NotTo(BeNil())
+					Expect(registered.Subject).To(Equal(testUserID))
+					Expect(custom["role"]).To(Equal("admin"))
+					Expect(custom["tenant"]).To(Equal("org-123"))
+				})
+
+				It("should exclude reserved claim keys from custom claims map", func() {
+					mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+					tokenStr, err := service.IssueAccessToken(ctx, testUserID)
+					Expect(err).NotTo(HaveOccurred())
+
+					mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+					_, custom, err := service.ValidateAccessTokenWithClaims(ctx, tokenStr)
+
+					Expect(err).NotTo(HaveOccurred())
+					for _, reserved := range []string{"sub", "exp", "nbf", "iat", "jti", "iss", "aud"} {
+						Expect(custom).NotTo(HaveKey(reserved))
+					}
+				})
+
+				It("should return empty map when no custom claims were embedded", func() {
+					mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+					tokenStr, err := service.IssueAccessToken(ctx, testUserID)
+					Expect(err).NotTo(HaveOccurred())
+
+					mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
+
+					_, custom, err := service.ValidateAccessTokenWithClaims(ctx, tokenStr)
+
+					Expect(err).NotTo(HaveOccurred())
+					Expect(custom).NotTo(BeNil())
+					Expect(custom).To(BeEmpty())
+				})
+			})
+
+			Context("when validation fails", func() {
+				It("should propagate errors from ValidateAccessToken", func() {
+					_, _, err := service.ValidateAccessTokenWithClaims(ctx, "not-a-jwt")
+
+					Expect(err).To(Equal(tokens.ErrInvalidToken))
+				})
+
+				It("should return nil claims and nil map on error", func() {
+					registered, custom, err := service.ValidateAccessTokenWithClaims(ctx, "malformed")
+
+					Expect(err).To(HaveOccurred())
+					Expect(registered).To(BeNil())
+					Expect(custom).To(BeNil())
+				})
+			})
+		})
+
 		Context("when public key retrieval fails", func() {
 			It("should return error", func() {
 				mockKM.EXPECT().
-					GetPublicKey(gomock.Any()).
+					GetPublicKey(gomock.Any(), gomock.Any()).
 					Return(nil, errors.New("key unavailable"))
 
 				_, err := service.ValidateAccessToken(ctx, validToken)
@@ -746,7 +891,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should log error", func() {
 				mockKM.EXPECT().
-					GetPublicKey(gomock.Any()).
+					GetPublicKey(gomock.Any(), gomock.Any()).
 					Return(nil, errors.New("key error"))
 
 				service.ValidateAccessToken(ctx, validToken)
@@ -758,15 +903,14 @@ var _ = Describe("TokenService", func() {
 		})
 
 		Context("with key not found", func() {
-			It("should return error", func() {
+			It("should return ErrInvalidToken", func() {
 				mockKM.EXPECT().
-					GetPublicKey(gomock.Any()).
+					GetPublicKey(gomock.Any(), gomock.Any()).
 					Return(nil, keymanager.ErrKeyNotFound)
 
 				_, err := service.ValidateAccessToken(ctx, validToken)
 
-				Expect(err).To(HaveOccurred())
-				Expect(err).To(Equal(tokens.ErrInvalidSignature))
+				Expect(err).To(Equal(tokens.ErrInvalidToken))
 			})
 		})
 
@@ -812,7 +956,7 @@ var _ = Describe("TokenService", func() {
 		Context("with issuer mismatch", func() {
 			It("should return ErrInvalidIssuer", func() {
 				mismatchToken := createTokenWithIssuer(testKey, testKeyID, "wrong-issuer")
-				mockKM.EXPECT().GetPublicKey(testKeyID).Return(&testKey.PublicKey, nil)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
 				_, err := service.ValidateAccessToken(ctx, mismatchToken)
 				Expect(err).To(Equal(tokens.ErrInvalidIssuer))
 			})
@@ -821,7 +965,7 @@ var _ = Describe("TokenService", func() {
 		Context("with audience mismatch", func() {
 			It("should return ErrInvalidAudience", func() {
 				mismatchToken := createTokenWithAudience(testKey, testKeyID, []string{"wrong-audience"})
-				mockKM.EXPECT().GetPublicKey(testKeyID).Return(&testKey.PublicKey, nil)
+				mockKM.EXPECT().GetPublicKey(gomock.Any(), testKeyID).Return(&testKey.PublicKey, nil)
 				_, err := service.ValidateAccessToken(ctx, mismatchToken)
 				Expect(err).To(Equal(tokens.ErrInvalidAudience))
 			})
@@ -858,7 +1002,7 @@ var _ = Describe("TokenService", func() {
 					}, nil)
 
 				// Expect new access token signed
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 
 				accessToken, err := service.RefreshAccessToken(ctx, validRefreshToken)
 
@@ -872,14 +1016,14 @@ var _ = Describe("TokenService", func() {
 					Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil).
 					Times(1)
 
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 
 				service.RefreshAccessToken(ctx, validRefreshToken)
 			})
 
 			It("should preserve user ID from refresh token", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 
 				accessToken, _ := service.RefreshAccessToken(ctx, validRefreshToken)
 
@@ -889,7 +1033,7 @@ var _ = Describe("TokenService", func() {
 
 			It("should log refresh operation", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
-				mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 
 				service.RefreshAccessToken(ctx, validRefreshToken)
 
@@ -943,7 +1087,7 @@ var _ = Describe("TokenService", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{
 					UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour),
 				}, nil)
-				mockKM.EXPECT().GetCurrentSigningKey().Return(nil, "", errors.New("key unavailable"))
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(nil, "", errors.New("key unavailable"))
 				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("key unavailable"))
@@ -1365,7 +1509,7 @@ var _ = Describe("TokenService", func() {
 
 		It("should handle concurrent token issuance", func() {
 			// Allow many concurrent calls
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil).Times(10)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil).Times(10)
 
 			done := make(chan bool, 10)
 
@@ -1386,12 +1530,12 @@ var _ = Describe("TokenService", func() {
 
 		It("should handle concurrent validation", func() {
 			// Issue token first (service is running from BeforeEach)
-			mockKM.EXPECT().GetCurrentSigningKey().Return(testKey, testKeyID, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 			token, err := service.IssueAccessToken(ctx, testUserID)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Allow many concurrent validations
-			mockKM.EXPECT().GetPublicKey(gomock.Any()).Return(&testKey.PublicKey, nil).Times(10)
+			mockKM.EXPECT().GetPublicKey(gomock.Any(), gomock.Any()).Return(&testKey.PublicKey, nil).Times(10)
 
 			done := make(chan bool, 10)
 
@@ -1547,6 +1691,32 @@ func createTokenWithAudience(key *rsa.PrivateKey, keyID string, audience []strin
 	token.Header["kid"] = keyID
 	signed, _ := token.SignedString(key)
 	return signed
+}
+
+// createRecentlyExpiredToken creates a token that expired the given duration ago.
+func createRecentlyExpiredToken(key *rsa.PrivateKey, keyID, userID string, expiredAgo time.Duration) string {
+	now := time.Now()
+	expiresAt := now.Add(-expiredAgo)
+
+	claims := jwt.RegisteredClaims{
+		Subject:   userID,
+		Issuer:    "test-issuer",
+		Audience:  jwt.ClaimStrings{"test-audience"},
+		ExpiresAt: jwt.NewNumericDate(expiresAt),
+		IssuedAt:  jwt.NewNumericDate(now.Add(-expiredAgo - time.Minute)),
+		NotBefore: jwt.NewNumericDate(now.Add(-expiredAgo - time.Minute)),
+		ID:        "test-recently-expired-jti",
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = keyID
+
+	signedToken, err := token.SignedString(key)
+	if err != nil {
+		return ""
+	}
+
+	return signedToken
 }
 
 func createExpiredToken(key *rsa.PrivateKey, keyID, userID string) string {

@@ -69,12 +69,14 @@ func NewDiskKeyStore(dir string, keySize int, logger logging.Logger, m metrics.M
 func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	var keyCount int
 	defer func() {
 		if d.metrics != nil {
 			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "load_all",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": d.backend,
 			})
 			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -92,6 +94,7 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return nil, err
 	}
 
@@ -100,7 +103,7 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		if d.logger != nil {
-			d.logger.Error("failed to glob key files", "error", err)
+			d.logger.Error("failed to glob key files", ctx, "error", err)
 		}
 		return nil, fmt.Errorf("glob key files: %w", err)
 	}
@@ -111,7 +114,7 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		privateKey, keyID, err := d.readKeyFile(file)
 		if err != nil {
 			if d.logger != nil {
-				d.logger.Warn("skipping key file: failed to load",
+				d.logger.Warn("skipping key file: failed to load", ctx,
 					"file", filepath.Base(file),
 					"error", err)
 			}
@@ -121,7 +124,7 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		meta, err := d.readMetadata(keyID)
 		if err != nil {
 			if d.logger != nil {
-				d.logger.Warn("skipping key: failed to load metadata",
+				d.logger.Warn("skipping key: failed to load metadata", ctx,
 					"keyID", keyID,
 					"error", err)
 			}
@@ -131,7 +134,7 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		// Skip already-expired keys
 		if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
 			if d.logger != nil {
-				d.logger.Info("skipping expired key",
+				d.logger.Info("skipping expired key", ctx,
 					"keyID", keyID,
 					"expiredAt", meta.ExpiresAt.Format(time.RFC3339))
 			}
@@ -145,15 +148,16 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		})
 
 		if d.logger != nil {
-			d.logger.Debug("loaded key from disk", "keyID", keyID)
+			d.logger.Debug("loaded key from disk", ctx, "keyID", keyID)
 		}
 	}
 
 	// ===== STEP 4: Log and Return =====
 	status = "success"
+	errorType = ""
 	keyCount = len(keys)
 	if d.logger != nil {
-		d.logger.Info("loaded keys from disk", "count", keyCount)
+		d.logger.Info("loaded keys from disk", ctx, "count", keyCount)
 	}
 	return keys, nil
 }
@@ -164,11 +168,13 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta KeyMetadata) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if d.metrics != nil {
 			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "save",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": d.backend,
 			})
 			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -181,6 +187,7 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -196,7 +203,7 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 	file, err := os.OpenFile(pemPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		if d.logger != nil {
-			d.logger.Error("failed to create key file",
+			d.logger.Error("failed to create key file", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -206,7 +213,7 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 
 	if err := pem.Encode(file, pemBlock); err != nil {
 		if d.logger != nil {
-			d.logger.Error("failed to write key file",
+			d.logger.Error("failed to write key file", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -218,7 +225,7 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 		// Rollback: remove the PEM file to maintain consistency
 		os.Remove(pemPath)
 		if d.logger != nil {
-			d.logger.Warn("failed to save key metadata — rolling back PEM",
+			d.logger.Warn("failed to save key metadata — rolling back PEM", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -227,8 +234,9 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 
 	// ===== STEP 5: Log and Return =====
 	status = "success"
+	errorType = ""
 	if d.logger != nil {
-		d.logger.Info("saved key to disk", "keyID", keyID)
+		d.logger.Info("saved key to disk", ctx, "keyID", keyID)
 	}
 	return nil
 }
@@ -240,11 +248,13 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta KeyMetadata) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if d.metrics != nil {
 			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "update_metadata",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": d.backend,
 			})
 			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -257,6 +267,7 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -264,13 +275,14 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 	pemPath := filepath.Join(d.dir, keyID+".pem")
 	if _, err := os.Stat(pemPath); errors.Is(err, os.ErrNotExist) {
 		status = "not_found"
+		errorType = "not_found"
 		return ErrKeyStoreKeyNotFound
 	}
 
 	// ===== STEP 3: Write Updated Metadata =====
 	if err := d.writeMetadata(keyID, meta); err != nil {
 		if d.logger != nil {
-			d.logger.Error("failed to update metadata",
+			d.logger.Error("failed to update metadata", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -279,8 +291,9 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 
 	// ===== STEP 4: Log and Return =====
 	status = "success"
+	errorType = ""
 	if d.logger != nil {
-		d.logger.Info("updated key metadata", "keyID", keyID)
+		d.logger.Info("updated key metadata", ctx, "keyID", keyID)
 	}
 	return nil
 }
@@ -291,11 +304,13 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *KeyMetadata, error) {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if d.metrics != nil {
 			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "load_key",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": d.backend,
 			})
 			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -308,12 +323,14 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return nil, nil, err
 	}
 
 	// ===== STEP 2: Validate Key ID =====
 	if strings.TrimSpace(keyID) == "" {
 		status = "not_found"
+		errorType = "not_found"
 		return nil, nil, ErrKeyStoreInvalidKeyID
 	}
 
@@ -323,10 +340,11 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file") {
 			status = "not_found"
+			errorType = "not_found"
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if d.logger != nil {
-			d.logger.Error("failed to load key file",
+			d.logger.Error("failed to load key file", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -337,7 +355,7 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	meta, err := d.readMetadata(keyID)
 	if err != nil {
 		if d.logger != nil {
-			d.logger.Error("failed to load key metadata",
+			d.logger.Error("failed to load key metadata", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -346,8 +364,9 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 
 	// ===== STEP 5: Log and Return =====
 	status = "success"
+	errorType = ""
 	if d.logger != nil {
-		d.logger.Debug("loaded key from disk", "keyID", keyID)
+		d.logger.Debug("loaded key from disk", ctx, "keyID", keyID)
 	}
 	return privateKey, &meta, nil
 }
@@ -358,11 +377,13 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	start := time.Now()
 	status := "error"
+	errorType := "error"
 	defer func() {
 		if d.metrics != nil {
 			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
 				"operation":       "delete",
 				"status":          status,
+				"error_type":      errorType,
 				"storage_backend": d.backend,
 			})
 			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
@@ -375,6 +396,7 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
+		errorType = "cancelled"
 		return err
 	}
 
@@ -382,7 +404,7 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	pemPath := filepath.Join(d.dir, keyID+".pem")
 	if err := os.Remove(pemPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		if d.logger != nil {
-			d.logger.Error("failed to delete key file",
+			d.logger.Error("failed to delete key file", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -393,7 +415,7 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	metaPath := filepath.Join(d.dir, keyID+".json")
 	if err := os.Remove(metaPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		if d.logger != nil {
-			d.logger.Error("failed to delete metadata file",
+			d.logger.Error("failed to delete metadata file", ctx,
 				"keyID", keyID,
 				"error", err)
 		}
@@ -402,8 +424,9 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 
 	// ===== STEP 4: Log and Return =====
 	status = "success"
+	errorType = ""
 	if d.logger != nil {
-		d.logger.Info("deleted key from disk", "keyID", keyID)
+		d.logger.Info("deleted key from disk", ctx, "keyID", keyID)
 	}
 	return nil
 }
