@@ -278,7 +278,7 @@ var _ = Describe("NoOpTracer", func() {
 				ctx, span2 := tracer.Start(ctx, "child1")
 				defer span2.End()
 
-				ctx, span3 := tracer.Start(ctx, "child2")
+				_, span3 := tracer.Start(ctx, "child2")
 				defer span3.End()
 			}).NotTo(Panic())
 		})
