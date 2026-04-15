@@ -176,7 +176,7 @@ var _ = Describe("Prometheus", func() {
 				Expect(descCh).NotTo(BeEmpty())
 			})
 
-			It("should register TokenService counters", func() {
+			It("should register TokenManager counters", func() {
 				descCh := make(chan *prometheus.Desc, 100)
 				registry.Describe(descCh)
 				close(descCh)

@@ -71,7 +71,7 @@ func NewPrometheusMetrics(config PrometheusConfig) *PrometheusMetrics {
 // registerAllMetrics registers every metric this package exposes, grouped by
 // the component that owns each metric.
 func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
-	// ===== TokenService Metrics =====
+	// ===== TokenManager Metrics =====
 
 	pm.registerCounter(namespace, "tokens_issued_total",
 		"Total number of tokens issued",

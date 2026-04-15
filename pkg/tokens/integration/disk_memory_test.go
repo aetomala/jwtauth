@@ -14,13 +14,13 @@ import (
 )
 
 func init() {
-	RunTokenServiceIntegrationTests(
-		"TokenService Integration — DiskKeyStore + MemoryRefreshStore",
+	RunTokenManagerIntegrationTests(
+		"TokenManager Integration — DiskKeyStore + MemoryRefreshStore",
 		diskMemoryFactory,
 	)
 }
 
-func diskMemoryFactory(cfg tokens.ServiceConfig) (*tokens.Service, *keymanager.Manager, func()) {
+func diskMemoryFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keymanager.Manager, func()) {
 	tmpDir, err := os.MkdirTemp("", "integration-disk-*")
 	Expect(err).NotTo(HaveOccurred())
 
@@ -37,12 +37,12 @@ func diskMemoryFactory(cfg tokens.ServiceConfig) (*tokens.Service, *keymanager.M
 	cfg.KeyManager = km
 	cfg.RefreshStore = storage.NewMemoryRefreshStore(nil, nil)
 
-	svc, err := tokens.NewService(cfg)
+	mgr, err := tokens.NewManager(cfg)
 	Expect(err).NotTo(HaveOccurred())
 
 	cleanup := func() {
 		os.RemoveAll(tmpDir)
 	}
 
-	return svc, km, cleanup
+	return mgr, km, cleanup
 }

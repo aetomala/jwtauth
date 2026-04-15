@@ -16,10 +16,10 @@ import (
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
 
-var _ = Describe("TokenService", func() {
+var _ = Describe("TokenManager", func() {
 	var (
 		ctrl       *gomock.Controller
-		service    *tokens.Service
+		service    *tokens.Manager
 		mockKM     *testutil.MockKeyManager
 		mockStore  *testutil.MockRefreshStore
 		mockLogger *testutil.MockLogger
@@ -59,8 +59,8 @@ var _ = Describe("TokenService", func() {
 		ctrl.Finish() // Verify all expectations were met
 	})
 
-	createService := func() *tokens.Service {
-		config := tokens.ServiceConfig{
+	createService := func() *tokens.Manager {
+		config := tokens.ManagerConfig{
 			KeyManager:           mockKM,
 			RefreshStore:         mockStore,
 			Logger:               mockLogger,
@@ -71,9 +71,9 @@ var _ = Describe("TokenService", func() {
 			Audience:             []string{"test-audience"},
 		}
 
-		svc, err := tokens.NewService(config)
+		mgr, err := tokens.NewManager(config)
 		Expect(err).NotTo(HaveOccurred())
-		return svc
+		return mgr
 	}
 
 	// ========================================================================
@@ -329,7 +329,7 @@ var _ = Describe("TokenService", func() {
 
 			// Try to issue token
 			_, err := service.IssueAccessToken(ctx, "user-123")
-			Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 		})
 
 		It("should return error if KeyManager fails to shutdown", func() {
@@ -418,7 +418,7 @@ var _ = Describe("TokenService", func() {
 
 			// Operations should fail after shutdown
 			_, err = service.IssueAccessToken(ctx, "user-456")
-			Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 		})
 	})
 })

@@ -25,10 +25,10 @@ func TestTokens(t *testing.T) {
 	RunSpecs(t, "Tokens Suite")
 }
 
-var _ = Describe("TokenService", func() {
+var _ = Describe("TokenManager", func() {
 	var (
 		ctrl        *gomock.Controller
-		service     *tokens.Service
+		service     *tokens.Manager
 		mockKM      *testutil.MockKeyManager
 		mockStore   *testutil.MockRefreshStore
 		mockLogger  *testutil.MockLogger
@@ -72,8 +72,8 @@ var _ = Describe("TokenService", func() {
 		ctrl.Finish() // Verify all expectations were met
 	})
 
-	createService := func() *tokens.Service {
-		config := tokens.ServiceConfig{
+	createService := func() *tokens.Manager {
+		config := tokens.ManagerConfig{
 			KeyManager:           mockKM,
 			RefreshStore:         mockStore,
 			Logger:               mockLogger,
@@ -84,31 +84,31 @@ var _ = Describe("TokenService", func() {
 			Audience:             []string{"test-audience"},
 		}
 
-		svc, err := tokens.NewService(config)
+		mgr, err := tokens.NewManager(config)
 		Expect(err).NotTo(HaveOccurred())
-		return svc
+		return mgr
 	}
 
 	// ========================================================================
 	// NEWSERVICE TESTS
 	// ========================================================================
-	Describe("NewService", func() {
+	Describe("NewManager", func() {
 		Context("with valid configuration", func() {
 			It("should create service successfully", func() {
-				config := tokens.ServiceConfig{
+				config := tokens.ManagerConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
 							Logger:               mockLogger,
 					AccessTokenDuration:  15 * time.Minute,
 					RefreshTokenDuration: 30 * 24 * time.Hour,
 				}
-				svc, err := tokens.NewService(config)
+				mgr, err := tokens.NewManager(config)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(svc).NotTo(BeNil())
+				Expect(mgr).NotTo(BeNil())
 			})
 
 			It("should work without optional logger", func() {
-				config := tokens.ServiceConfig{
+				config := tokens.ManagerConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
 							Logger:               nil, // Optional
@@ -116,86 +116,86 @@ var _ = Describe("TokenService", func() {
 					RefreshTokenDuration: 30 * 24 * time.Hour,
 				}
 
-				svc, err := tokens.NewService(config)
+				mgr, err := tokens.NewManager(config)
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(svc).NotTo(BeNil())
+				Expect(mgr).NotTo(BeNil())
 			})
 
 			It("should use default durations when not specified", func() {
-				config := tokens.ServiceConfig{
+				config := tokens.ManagerConfig{
 					KeyManager:   mockKM,
 					RefreshStore: mockStore,
 						// Durations not specified
 				}
 
-				svc, err := tokens.NewService(config)
+				mgr, err := tokens.NewManager(config)
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(svc).NotTo(BeNil())
+				Expect(mgr).NotTo(BeNil())
 			})
 		})
 
 		Context("with invalid configuration", func() {
 			It("should return error when KeyManager is nil", func() {
-				config := tokens.ServiceConfig{
+				config := tokens.ManagerConfig{
 					KeyManager:   nil, // Required
 					RefreshStore: mockStore,
 					}
 
-				_, err := tokens.NewService(config)
+				_, err := tokens.NewManager(config)
 
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("KeyManager"))
 			})
 
 			It("should return error when RefreshStore is nil", func() {
-				config := tokens.ServiceConfig{
+				config := tokens.ManagerConfig{
 					KeyManager:   mockKM,
 					RefreshStore: nil, // Required
 					}
-				_, err := tokens.NewService(config)
+				_, err := tokens.NewManager(config)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("RefreshStore"))
 			})
 
 
 			It("should return error for invalid token durations", func() {
-				config := tokens.ServiceConfig{
+				config := tokens.ManagerConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
 							AccessTokenDuration:  -1 * time.Minute, // Invalid
 					RefreshTokenDuration: 30 * 24 * time.Hour,
 				}
 
-				_, err := tokens.NewService(config)
+				_, err := tokens.NewManager(config)
 
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("AccessTokenDuration"))
 			})
 
 			It("should return error for invalid refresh token durations", func() {
-				config := tokens.ServiceConfig{
+				config := tokens.ManagerConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
 							AccessTokenDuration:  5 * time.Minute,
 					RefreshTokenDuration: -1 * 24 * time.Hour, // Invalid
 				}
 
-				_, err := tokens.NewService(config)
+				_, err := tokens.NewManager(config)
 
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("RefreshTokenDuration"))
 			})
 
 			It("should return error for negative ClockSkew", func() {
-				config := tokens.ServiceConfig{
+				config := tokens.ManagerConfig{
 					KeyManager: mockKM,
 					RefreshStore: mockStore,
 					ClockSkew:  -1 * time.Second,
 				}
 
-				_, err := tokens.NewService(config)
+				_, err := tokens.NewManager(config)
 
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("ClockSkew"))
@@ -323,10 +323,10 @@ var _ = Describe("TokenService", func() {
 		})
 
 		Context("IssueAccessTokenWithClaims guard conditions", func() {
-			It("should return ErrServiceNotRunning", func() {
-				svc := createService()
-				_, err := svc.IssueAccessTokenWithClaims(ctx, testUserID, nil)
-				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			It("should return ErrManagerNotRunning", func() {
+				mgr := createService()
+				_, err := mgr.IssueAccessTokenWithClaims(ctx, testUserID, nil)
+				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
 
 			It("should return context error when context is cancelled", func() {
@@ -471,10 +471,10 @@ var _ = Describe("TokenService", func() {
 		})
 
 		Context("guard conditions", func() {
-			It("should return ErrServiceNotRunning", func() {
-				svc := createService()
-				_, err := svc.IssueRefreshToken(ctx, "user-123")
-				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			It("should return ErrManagerNotRunning", func() {
+				mgr := createService()
+				_, err := mgr.IssueRefreshToken(ctx, "user-123")
+				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
 
 			It("should return context error when context is cancelled", func() {
@@ -496,7 +496,7 @@ var _ = Describe("TokenService", func() {
 
 				_, err := stoppedService.IssueRefreshTokenWithMetadata(ctx, testUserID, nil)
 
-				Expect(err).To(MatchError(tokens.ErrServiceNotRunning))
+				Expect(err).To(MatchError(tokens.ErrManagerNotRunning))
 			})
 
 			It("should return error when context is cancelled", func() {
@@ -608,10 +608,10 @@ var _ = Describe("TokenService", func() {
 		})
 
 		Context("guard conditions", func() {
-			It("should return ErrServiceNotRunning", func() {
-				svc := createService()
-				_, _, err := svc.IssueTokenPair(ctx, "user-123")
-				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			It("should return ErrManagerNotRunning", func() {
+				mgr := createService()
+				_, _, err := mgr.IssueTokenPair(ctx, "user-123")
+				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
 
 			It("should return context error when context is cancelled", func() {
@@ -747,10 +747,10 @@ var _ = Describe("TokenService", func() {
 		})
 
 		Context("with clock skew leeway configured", func() {
-			var leewayService *tokens.Service
+			var leewayService *tokens.Manager
 
 			BeforeEach(func() {
-				config := tokens.ServiceConfig{
+				config := tokens.ManagerConfig{
 					KeyManager:          mockKM,
 					RefreshStore:        mockStore,
 					Logger:              mockLogger,
@@ -761,7 +761,7 @@ var _ = Describe("TokenService", func() {
 					ClockSkew:           30 * time.Second,
 				}
 				var err error
-				leewayService, err = tokens.NewService(config)
+				leewayService, err = tokens.NewManager(config)
 				Expect(err).NotTo(HaveOccurred())
 
 				mockKM.EXPECT().Start(gomock.Any()).Return(nil)
@@ -915,10 +915,10 @@ var _ = Describe("TokenService", func() {
 		})
 
 		Context("guard conditions", func() {
-			It("should return ErrServiceNotRunning", func() {
-				svc := createService()
-				_, err := svc.ValidateAccessToken(ctx, validToken)
-				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			It("should return ErrManagerNotRunning", func() {
+				mgr := createService()
+				_, err := mgr.ValidateAccessToken(ctx, validToken)
+				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
 
 			It("should return context error when context is cancelled", func() {
@@ -1107,10 +1107,10 @@ var _ = Describe("TokenService", func() {
 		})
 
 		Context("guard conditions", func() {
-			It("should return ErrServiceNotRunning when service is not running", func() {
-				svc := createService()
-				_, err := svc.RefreshAccessToken(ctx, "any-token")
-				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			It("should return ErrManagerNotRunning when manager is not running", func() {
+				mgr := createService()
+				_, err := mgr.RefreshAccessToken(ctx, "any-token")
+				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
 
 			It("should return context error when context is cancelled", func() {
@@ -1211,10 +1211,10 @@ var _ = Describe("TokenService", func() {
 		})
 
 		Context("guard conditions", func() {
-			It("should return ErrServiceNotRunning when service is not running", func() {
-				svc := createService()
-				err := svc.RevokeRefreshToken(ctx, "any-token")
-				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			It("should return ErrManagerNotRunning when manager is not running", func() {
+				mgr := createService()
+				err := mgr.RevokeRefreshToken(ctx, "any-token")
+				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
 
 			It("should return context error when context is cancelled", func() {
@@ -1271,10 +1271,10 @@ var _ = Describe("TokenService", func() {
 		})
 
 		Context("guard conditions", func() {
-			It("should return ErrServiceNotRunning when service is not running", func() {
-				svc := createService()
-				err := svc.RevokeAllUserTokens(ctx, "user-123")
-				Expect(err).To(Equal(tokens.ErrServiceNotRunning))
+			It("should return ErrManagerNotRunning when manager is not running", func() {
+				mgr := createService()
+				err := mgr.RevokeAllUserTokens(ctx, "user-123")
+				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
 
 			It("should return context error when context is cancelled", func() {
@@ -1400,7 +1400,7 @@ var _ = Describe("TokenService", func() {
 
 				_, err := stoppedService.IntrospectToken(ctx, refreshToken)
 
-				Expect(err).To(MatchError(tokens.ErrServiceNotRunning))
+				Expect(err).To(MatchError(tokens.ErrManagerNotRunning))
 			})
 		})
 
@@ -1477,7 +1477,7 @@ var _ = Describe("TokenService", func() {
 
 				_, err := stoppedService.CleanupExpiredTokens(ctx)
 
-				Expect(err).To(MatchError(tokens.ErrServiceNotRunning))
+				Expect(err).To(MatchError(tokens.ErrManagerNotRunning))
 			})
 		})
 
