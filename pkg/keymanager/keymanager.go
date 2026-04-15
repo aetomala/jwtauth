@@ -1,3 +1,69 @@
+// Package keymanager provides zero-downtime RSA key rotation for JWT signing.
+//
+// KeyManager generates RSA key pairs, rotates them on a configurable schedule, and
+// maintains an overlap period where both old and new keys remain valid. This enables
+// key rotation without service restarts or forced re-authentication — tokens signed
+// with the old key continue to validate during the overlap window.
+//
+// Key rotation timeline example:
+//
+//	Day 0:      Key A (current, signs new tokens)
+//	Day 30:     Rotate → Key A (validates old tokens), Key B (current, signs new tokens)
+//	Day 30+1h:  Overlap ends → Key B (current, only valid key)
+//
+// Manager delegates all key persistence to an injected KeyStore implementation:
+//   - DiskKeyStore:  Single-instance deployments (PEM + JSON files on local filesystem)
+//   - RedisKeyStore: Distributed/multi-instance deployments (shared Redis backend)
+//
+// The Manager handles lifecycle (Start/Shutdown), automatic rotation scheduling, and
+// cleanup of expired keys. It never performs I/O directly — all storage operations
+// go through the KeyStore interface.
+//
+// Example usage:
+//
+//	// Create a KeyStore (choose based on deployment)
+//	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, metrics)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Create KeyManager
+//	config := keymanager.ManagerConfig{
+//	    KeyStore:            ks,
+//	    KeyRotationInterval: 30 * 24 * time.Hour, // 30 days
+//	    KeyOverlapDuration:  1 * time.Hour,        // 1 hour overlap
+//	    Logger:              logger,               // Optional
+//	    Metrics:             metrics,              // Optional
+//	}
+//
+//	mgr, err := keymanager.NewManager(config)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Start background rotation
+//	ctx := context.Background()
+//	if err := mgr.Start(ctx); err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer mgr.Shutdown(ctx)
+//
+//	// Get current signing key (for TokenService to use)
+//	privateKey, keyID, err := mgr.GetCurrentSigningKey(ctx)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Get JWKS for token validation endpoints
+//	jwks, err := mgr.GetJWKS(ctx)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Manual rotation (optional, for testing or emergency rotation)
+//	if err := mgr.RotateKeys(ctx); err != nil {
+//	    log.Fatal(err)
+//	}
 package keymanager
 
 import (
