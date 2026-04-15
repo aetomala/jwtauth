@@ -1,4 +1,4 @@
-# jwtauth — JWT Authorization Token Engine
+# jwtauth — Stateful JWT Authorization Token Engine
 
 This document explains the design decisions, patterns, and principles used in the JWT authorization token engine.
 
@@ -17,7 +17,7 @@ This document explains the design decisions, patterns, and principles used in th
 
 ## Overview
 
-jwtauth is designed as a **production-ready, highly observable, and testable** JWT authorization token engine for Go applications. It manages the stateful machinery that production token systems require — cryptographic key generation and zero-downtime rotation, access token issuance and validation, and refresh token lifecycle with revocation support. Identity verification is intentionally out of scope.
+jwtauth is designed as a production-ready, highly observable, and testable **stateful** JWT authorization token engine for Go applications. It manages the stateful machinery that production token systems require — cryptographic key generation and zero-downtime rotation, access token issuance and validation, and refresh token lifecycle with revocation support. Identity verification is intentionally out of scope.
 
 ### Key Features
 
@@ -112,7 +112,7 @@ github.com/aetomala/jwtauth/
 │   │   ├── disk_test.go           # 9-phase DiskKeyStore tests (38 specs)
 │   │   └── redis_test.go          # 9-phase RedisKeyStore tests (35 specs, miniredis)
 │   ├── tokens/                    # JWT token operations (Beta)
-│   │   ├── manager.go             # TokenManager implementation
+│   │   ├── manager.go             # TokenService implementation
 │   │   ├── claims.go              # Claims management
 │   │   ├── manager_test.go        # Token operations tests
 │   │   ├── manager_lifecycle_test.go  # Lifecycle management tests
@@ -541,7 +541,7 @@ Keys carry no TTL — Manager owns the lifecycle and calls `Delete` explicitly v
 
 `SetGauge(jwtauth_keystore_keys_count)` is recorded only by `LoadAll` — set to the count of valid non-expired keys returned. This is sufficient because `GetCurrentSigningKey` never calls the store after startup and `GetPublicKey` only calls `LoadKey` on rare cache misses, so KeyStore operations are not on the hot path.
 
-### TokenManager (Beta)
+### TokenService (Beta)
 
 **Responsibilities**:
 - Issue access tokens (short-lived, e.g., 15 minutes) with optional custom claims
@@ -566,7 +566,7 @@ Created → Start() → Running → Shutdown() → Stopped
 - **Synchronization**: `atomic.Bool` for running state; cleanup uses channel signaling and `sync.WaitGroup` for graceful shutdown
 
 **Key Design Decisions**:
-- Rate limiting is intentionally **not** in TokenManager — it belongs at the infrastructure layer (API Gateway, Ingress, Load Balancer) where per-route and per-IP policies apply globally
+- Rate limiting is intentionally **not** in TokenService — it belongs at the infrastructure layer (API Gateway, Ingress, Load Balancer) where per-route and per-IP policies apply globally
 - All storage operations accept `context.Context` for cancellation propagation
 - Reserved JWT claims (`sub`, `iss`, `aud`, `exp`, `iat`, `jti`) cannot be overridden by custom claims
 
@@ -910,9 +910,9 @@ Catches:
 - ✅ Prometheus implementation (`PrometheusMetrics`) with 22 pre-registered metrics, 100% test coverage
 - ✅ NoOp implementation
 - ✅ gomock `MockMetrics` for dependency injection in tests
-- ✅ Wired into KeyManager, TokenManager, and RefreshStore — all components fully instrumented
+- ✅ Wired into KeyManager, TokenService, and RefreshStore — all components fully instrumented
 
-### Phase 3: TokenManager ✅ (Beta)
+### Phase 3: TokenService ✅ (Beta)
 - ✅ JWT creation with RS256 signing and custom claims
 - ✅ Access token validation (signature, expiration, issuer, audience)
 - ✅ Refresh token rotation with revocation checks
@@ -953,10 +953,10 @@ Catches:
   - `Manager` unit tests are now filesystem-free (use `MockKeyStore`)
   - 44 Manager specs + 38 DiskKeyStore specs (9 phases), all race-clean
   - `MockKeyStore` generated via gomock
-- ✅ Wire `PrometheusMetrics` into TokenManager — deferred closure pattern with `error_type` label, context propagation
+- ✅ Wire `PrometheusMetrics` into TokenService — deferred closure pattern with `error_type` label, context propagation
 - ✅ `RedisKeyStore` implementation — `ks:pem:<id>` / `ks:meta:<id>` Redis layout, atomic Pipeline writes, SCAN-based `LoadAll`, full metrics with `storage_backend: "redis"`
 - ✅ Correlation ID logging — `CorrelationIDHandler` wraps any `slog.Handler`; `WithCorrelationID`/`GetCorrelationID` context helpers; `SlogAdapter` context-aware routing; `NewCorrelationJSONLogger`/`NewCorrelationTextLogger` convenience constructors
-- ✅ All component logging call sites forward `ctx` — correlation ID propagates through KeyManager, TokenManager, and RefreshStore without Logger interface changes
+- ✅ All component logging call sites forward `ctx` — correlation ID propagates through KeyManager, TokenService, and RefreshStore without Logger interface changes
 - ✅ `KeyManager` interface extended with context on all read methods (`GetCurrentSigningKey`, `GetPublicKey`, `GetJWKS`)
 - ✅ Context cancellation guards in `GetJWKS` and `cleanupExpiredKeys` with warning log on early return
 - ✅ Redis integration tests via miniredis (`pkg/tokens/integration`) covering distributed token operations end-to-end
@@ -965,7 +965,7 @@ Catches:
 - ✅ `pkg/tracing` — `Tracer` and `Span` interfaces defined; `SpanOption` functional options; `StatusCode` and `SpanKind` enumerations
 - ✅ `NoOpTracer` / `NoOpSpan` — zero-allocation implementations; 36 tests, race-detection clean
 - ✅ `MockTracer` / `MockSpan` generated via gomock for dependency injection in component tests
-- ⏳ Wire tracing into KeyManager, TokenManager, and RefreshStore
+- ⏳ Wire tracing into KeyManager, TokenService, and RefreshStore
 - ⏳ OpenTelemetry adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
 
 ---

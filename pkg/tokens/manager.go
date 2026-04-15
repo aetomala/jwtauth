@@ -1,3 +1,71 @@
+// Package tokens provides stateful JWT authorization token management.
+//
+// Manager handles the complete token lifecycle: access token issuance with
+// RS256 signing, refresh token rotation with expiration checks, instant revocation
+// (single token and bulk operations), and coordinated cleanup across distributed
+// deployments.
+//
+// Identity verification is out of scope. Pass a verified subject ID (user ID) to
+// IssueTokenPair or IssueAccessToken after you've authenticated the user.
+//
+// Key capabilities:
+//   - Access token issuance (short-lived, typically 15 minutes)
+//   - Refresh token issuance and rotation (long-lived, typically 30 days)
+//   - Token validation with signature verification and claims enforcement
+//   - Instant revocation (RevokeRefreshToken, RevokeAllUserTokens)
+//   - Token introspection per RFC 7662 (IntrospectToken)
+//   - Background cleanup of expired refresh tokens
+//   - Clock skew tolerance for distributed deployments (ClockSkew field)
+//   - Custom claims support with reserved claim protection
+//
+// Example usage:
+//
+//	config := tokens.ManagerConfig{
+//	    KeyManager:   keyManager,        // Handles RSA keys and rotation
+//	    RefreshStore: refreshStore,      // Persists refresh tokens (Redis, Memory, etc.)
+//	    Logger:       logger,            // Optional structured logging
+//	    Metrics:      metrics,           // Optional Prometheus metrics
+//	    AccessTokenDuration:  15 * time.Minute,
+//	    RefreshTokenDuration: 30 * 24 * time.Hour,
+//	    ClockSkew:    30 * time.Second,  // Optional leeway for NTP drift
+//	    Issuer:       "my-app",
+//	    Audience:     []string{"my-app-api"},
+//	}
+//
+//	mgr, err := tokens.NewManager(config)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Start lifecycle (background cleanup, etc.)
+//	ctx := context.Background()
+//	if err := mgr.Start(ctx); err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer mgr.Shutdown(ctx)
+//
+//	// Issue token pair (access + refresh)
+//	accessToken, refreshToken, err := mgr.IssueTokenPair(ctx, userID)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Later: validate access token
+//	claims, err := mgr.ValidateAccessToken(ctx, accessToken)
+//	if err != nil {
+//	    // Handle error (expired, revoked, invalid, etc.)
+//	}
+//
+//	// Later: refresh access token
+//	newAccessToken, err := mgr.RefreshAccessToken(ctx, refreshToken)
+//	if err != nil {
+//	    // Handle error (refresh token expired, revoked, etc.)
+//	}
+//
+//	// On logout: revoke all user sessions
+//	if err := mgr.RevokeAllUserTokens(ctx, userID); err != nil {
+//	    log.Fatal(err)
+//	}
 package tokens
 
 import (

@@ -4,13 +4,204 @@
 ![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-**Production-grade JWT authorization token engine for distributed Go applications**
+**Stateful JWT authorization token engine for distributed Go applications**
 
-> ⚠️ **Beta Status**: KeyManager and RefreshStore are production-ready and fully tested. TokenManager is in beta — core operations are complete with comprehensive test coverage. API may change before v1.0.0.
+**You verify identity. jwtauth manages everything after:** zero-downtime key rotation, access token issuance, refresh token lifecycle, and instant revocation across horizontal scale.
+
+> ⚠️ **Beta Status**: KeyManager and RefreshStore are production-ready and fully tested. TokenService is in beta — core operations are complete with comprehensive test coverage. API may change before v1.0.0.
 
 ## Overview
 
-`jwtauth` is a JWT authorization token engine for Go, built from the ground up with **observability, testability, and production operations** as first-class concerns. It manages the stateful machinery that production token systems require — cryptographic key generation and zero-downtime rotation, access token issuance and validation, and refresh token lifecycle with revocation support. Identity verification is intentionally out of scope: jwtauth takes a verified subject ID and handles everything after.
+`jwtauth` is a **stateful** JWT authorization token engine for Go, built from the ground up with **observability, testability, and production operations** as first-class concerns. It manages the stateful machinery that production token systems require — cryptographic key generation and zero-downtime rotation, access token issuance and validation, and refresh token lifecycle with revocation support. Identity verification is intentionally out of scope: jwtauth takes a verified subject ID and handles everything after.
+
+## What Problem Does This Solve?
+
+**Most JWT libraries sign tokens. You still build the engine.**
+
+After evaluating golang-jwt, gin-jwt, or jwx, teams realize the library solves 20% of the problem. You still need to build:
+
+- **Key generation and zero-downtime rotation** — Weeks of careful work to ensure old tokens stay valid during rotation periods. Get it wrong and you force every user to re-authenticate.
+
+- **Refresh token storage and lookup** — Days of work designing the schema, choosing the backend (Redis? Postgres?), handling expiration and revocation checks correctly.
+
+- **Instant revocation without waiting for expiry** — Complex state management across distributed instances. Session compromise requires immediate invalidation, not waiting 15 minutes for token expiry.
+
+- **Observability across the token lifecycle** — Usually ignored until production, then bolted on inconsistently. You need metrics on issuance rates, validation failures, rotation success, and revocation patterns.
+
+- **Horizontal scale without state conflicts** — Hard to get right. Multiple instances need shared key storage and coordinated refresh token state. Most teams start with in-memory storage, hit production, then scramble to add Redis.
+
+**jwtauth is the engine you'd build on top of those libraries** after a few months in production. We built it once, correctly, so you don't have to.
+
+### What You Get
+
+Everything after identity verification is handled:
+- You verify identity (password check, OAuth exchange, SAML assertion)
+- jwtauth issues access tokens, manages refresh tokens, rotates keys, and revokes sessions
+- Your application validates tokens and enforces authorization rules
+
+**Your boundary:** Identity verification (who is this user?)  
+**jwtauth's job:** Token lifecycle management (how do I prove it to your API?)
+
+## Why This Library?
+
+If you've already decided you need stateful token management, here's how jwtauth compares to the alternatives you'd be evaluating:
+
+| Feature | golang-jwt | gin-jwt | jwx | jwtauth |
+|---------|-----------|---------|-----|---------|
+| **Sign/Validate JWT** | ✅ | ✅ | ✅ | ✅ |
+| **Custom claims** | ✅ | ✅ | ✅ | ✅ |
+| **Key rotation** | ❌ Manual | ❌ | ❌ | ✅ Zero-downtime |
+| **Refresh tokens** | ❌ | ❌ | ❌ | ✅ Stateful storage |
+| **Instant revocation** | ❌ | ❌ | ❌ | ✅ RevokeAllUserTokens |
+| **Distributed state** | N/A | ❌ | N/A | ✅ Redis backend |
+| **Metrics** | ❌ | ❌ | ❌ | ✅ 22 Prometheus metrics |
+| **Correlation logging** | ❌ | ❌ | ❌ | ✅ Built-in |
+| **Framework lock-in** | ❌ | ✅ Gin only | ❌ | ❌ |
+| **Complexity** | Low | Medium | High (JOSE) | Medium |
+| **Use when** | Stateless | Gin + stateless | JWE, JWS | Stateful + distributed |
+
+---
+
+### vs. `golang-jwt/jwt` — building the engine yourself
+
+`golang-jwt/jwt` signs and validates tokens against a key you supply. It does exactly one thing and does it well. Most teams start here and then spend weeks building the surrounding machinery:
+
+| What you build yourself | What jwtauth provides |
+|---|---|
+| Key generation and storage | `KeyManager` with `DiskKeyStore` / `RedisKeyStore` |
+| Zero-downtime key rotation + overlap | Built in — old key stays valid during overlap period |
+| Refresh token storage and lookup | `MemoryRefreshStore` / `RedisRefreshStore` |
+| Revocation (single token, all user sessions) | `RevokeRefreshToken`, `RevokeAllUserTokens` |
+| Custom claims round-trip without re-parsing | `IssueAccessTokenWithClaims` + `ValidateAccessTokenWithClaims` |
+| Clock skew tolerance for distributed deployments | `ManagerConfig.ClockSkew` |
+| 22 Prometheus metrics across all operations | Pre-registered, zero config |
+| 10 typed sentinel errors for middleware logic | `ErrTokenExpired`, `ErrTokenRevoked`, `ErrInvalidAudience`, … |
+
+**jwtauth is what you'd build on top of golang-jwt after a few months in production.**
+
+---
+
+### vs. framework JWT middleware (`gin-jwt`, `echo-jwt`, similar)
+
+Framework-specific JWT packages bundle signing, validation, and middleware into a single dependency. They're the fastest path to a working login endpoint but carry structural limitations:
+
+- **No key rotation** — one static secret or key pair for the lifetime of the service
+- **No refresh token state** — revocation requires a separate blocklist you build yourself
+- **Framework lock-in** — the middleware only works with your chosen framework; switching means rewriting auth
+- **No metrics** — you don't know how many tokens are being issued, validated, or rejected
+
+`jwtauth` is framework-agnostic. The middleware in the examples is ~20 lines you own; swapping Gin for Chi or Echo is a one-file change.
+
+---
+
+### vs. `lestrrat-go/jwx` / `go-jose/go-jose` — JOSE toolkits
+
+Both are comprehensive JOSE implementations covering JWS, JWE, JWK, JWT, and more. `jwtauth` is narrower and higher-level:
+
+- The token lifecycle API (issue → validate → refresh → revoke) is ready — you're not assembling it from primitives
+- Key rotation is built in, not something you wire together from JWK set operations
+- Structured logging and metrics are first-class, not an afterthought
+- Less surface area to reason about if you only need RS256 JWT tokens
+
+If you need JWE (encrypted tokens), JWS detached payloads, or multi-algorithm JOSE operations, reach for one of those libraries instead.
+
+---
+
+### Concrete security guarantees
+
+1. **Algorithm confusion prevented unconditionally** — `ValidateAccessToken` asserts `*jwt.SigningMethodRSA` before any key lookup. HS256, ECDSA, and `none` are rejected — not configurably, unconditionally.
+
+2. **Reserved claim protection** — `IssueAccessTokenWithClaims` rejects custom claims that would overwrite `sub`, `exp`, `iat`, `nbf`, `jti`, `iss`, or `aud`. Application fields cannot collide with registered claims silently.
+
+3. **10 granular sentinel errors, all `errors.Is()`-compatible** — middleware can distinguish `ErrTokenExpired` from `ErrTokenRevoked` from `ErrInvalidAudience` and return specific JSON error codes (`token_expired`, `token_revoked`, `invalid_audience`) that clients can act on.
+
+4. **Instant revocation, not expiry-based** — `RevokeAllUserTokens` invalidates all sessions for a compromised account immediately. No waiting for short-lived tokens to expire.
+
+---
+
+### Horizontal scale path
+
+The storage backends are designed to move from single-instance to distributed without code changes:
+
+| Deployment | KeyStore | RefreshStore |
+|---|---|---|
+| Single instance (dev, small prod) | `DiskKeyStore` | `MemoryRefreshStore` |
+| Multi-instance (Kubernetes, load-balanced) | `RedisKeyStore` | `RedisRefreshStore` |
+
+Swap the constructor arguments. The `KeyManager` and `TokenService` interfaces are unchanged.
+
+---
+
+**What jwtauth is not:** a full authorization server (no login flows, no OAuth2/OIDC), a session management library, or a rate limiter. For managed auth infrastructure, Keycloak, Dex, or Ory Hydra serve that role. jwtauth is the token engine you'd wire underneath them, or build directly into a service that already verifies identity by other means.
+
+## When NOT to Use This
+
+Good libraries state their boundaries. Here's when jwtauth is the **wrong choice**:
+
+### ❌ You Need a Complete Authentication Server
+
+**Don't use jwtauth if you need:**
+- Login flows (username/password, OAuth callbacks, SAML assertion handling)
+- User registration and account management
+- Password reset flows and email verification
+- Multi-factor authentication (MFA/2FA)
+- Session management with cookies
+- Identity provider integration (Google, GitHub, Auth0)
+
+**Use instead:** [Keycloak](https://www.keycloak.org/), [Ory Hydra](https://www.ory.sh/hydra/), [Auth0](https://auth0.com/), [Dex](https://dexidp.io/)
+
+**Why:** These provide complete authentication infrastructure. jwtauth assumes you've already verified identity and just need token machinery.
+
+### ❌ You Only Need Stateless JWT Signing/Validation
+
+**Don't use jwtauth if:**
+- You don't need refresh tokens (short-lived access tokens are enough)
+- You don't need revocation (expiry-based invalidation is acceptable)
+- You're okay with manual key rotation (or no rotation at all)
+- Single-instance deployment (no horizontal scaling)
+
+**Use instead:** [golang-jwt/jwt](https://github.com/golang-jwt/jwt) — simpler, fewer dependencies, does one thing well
+
+**Why:** Stateless JWT is conceptually simpler. If you don't need the stateful machinery (refresh tokens, revocation, key rotation), you're carrying unnecessary complexity.
+
+### ❌ You Need Encrypted Tokens (JWE) or Multi-Algorithm JOSE
+
+**Don't use jwtauth if you need:**
+- JWE (JSON Web Encryption) for encrypted token payloads
+- JWS detached payloads or nested tokens
+- Multiple signing algorithms (ES256, EdDSA, etc.)
+- Full JOSE (JWS, JWE, JWK, JWA) operations
+
+**Use instead:** [lestrrat-go/jwx](https://github.com/lestrrat-go/jwx), [go-jose/go-jose](https://github.com/go-jose/go-jose)
+
+**Why:** jwtauth supports RS256 only. If you need the full JOSE suite, reach for a comprehensive library.
+
+### ❌ Framework-Specific Convenience is Your Priority
+
+**Don't use jwtauth if:**
+- You're using Gin and want zero configuration
+- You want middleware that "just works" with your framework
+- You're building a prototype and don't care about production operations
+- Single file, copy-paste simplicity is more valuable than flexibility
+
+**Use instead:** [gin-jwt/jwt](https://github.com/appleboy/gin-jwt) (for Gin), [echo-jwt](https://github.com/labstack/echo-jwt) (for Echo)
+
+**Why:** Framework-specific middleware trades flexibility for convenience. If you're not running distributed systems in production, that trade-off might be worth it.
+
+---
+
+### ✅ Use jwtauth When
+
+You've already verified identity and need **production-grade token machinery** for distributed systems:
+- Zero-downtime key rotation (not manual)
+- Instant revocation (not expiry-based)
+- Horizontal scale with refresh token state
+- Observability (metrics, logging, tracing)
+- Stateful refresh token lifecycle
+
+**Good fit:** Microservices, multi-instance deployments, production systems where token operations are critical infrastructure.
+
+**Not a fit:** MVPs, single-instance apps, stateless architectures, or when you need an all-in-one auth server.
 
 ### Design Philosophy
 
@@ -36,7 +227,7 @@
 - **Full metrics instrumentation** — KeyStore and Manager operations via `jwtauth_keystore_*` and `jwtauth_key_*` metrics
 - **Comprehensive test coverage** with race detection
 
-**TokenManager** (Beta)
+**TokenService** (Beta)
 - **Access token issuance** (IssueAccessToken, IssueAccessTokenWithClaims, IssueTokenPair)
 - **Refresh token issuance** (IssueRefreshToken, IssueRefreshTokenWithMetadata)
 - **Access token validation** with registered and custom claims extraction (ValidateAccessToken, ValidateAccessTokenWithClaims)
@@ -75,7 +266,7 @@
 
 ### 🚧 In Development (v0.4.0)
 
-- **OpenTelemetry / Distributed Tracing**: `pkg/tracing` interfaces (`Tracer`, `Span`) and `NoOpTracer` are scaffolded. Full wiring into KeyManager, TokenManager, and RefreshStore — with an OpenTelemetry adapter — is planned for v0.4.0.
+- **OpenTelemetry / Distributed Tracing**: `pkg/tracing` interfaces (`Tracer`, `Span`) and `NoOpTracer` are scaffolded. Full wiring into KeyManager, TokenService, and RefreshStore — with an OpenTelemetry adapter — is planned for v0.4.0.
 
 ## Architecture Highlights
 
@@ -253,7 +444,7 @@ func main() {
 }
 ```
 
-### TokenManager Usage (Beta)
+### TokenService Usage (Beta)
 
 ```go
 package main
@@ -268,7 +459,7 @@ import (
 )
 
 func main() {
-    // Create TokenManager with storage
+    // Create TokenService with storage
     config := tokens.ManagerConfig{
         KeyManager:           keyManager,      // from KeyManager above
         RefreshStore:         refreshStore,    // RefreshStore implementation
@@ -386,11 +577,11 @@ config := keymanager.ManagerConfig{
 
 ## Error Reference
 
-All `TokenManager` errors are exported sentinels compatible with `errors.Is()`. Middleware and API handlers should switch on these to return specific responses.
+All `TokenService` errors are exported sentinels compatible with `errors.Is()`. Middleware and API handlers should switch on these to return specific responses.
 
 | Error | Trigger | Client-side action |
 |-------|---------|-------------------|
-| `tokens.ErrTokenExpired` | Token past `exp` (including `ClockSkew` window) | Prompt token refresh or re-authentication |
+| `tokens.ErrTokenExpired` | Token past `exp` (including `ClockSkew` window) | Prompt token refresh or re-authorization |
 | `tokens.ErrTokenNotYetValid` | Current time before `nbf` claim | Retry after a short delay |
 | `tokens.ErrInvalidIssuer` | `iss` claim does not match configured issuer | Do not retry — configuration mismatch |
 | `tokens.ErrInvalidAudience` | `aud` claim does not match configured audience | Do not retry — configuration mismatch |
@@ -451,7 +642,7 @@ func (m *MyZapAdapter) Info(msg string, args ...interface{}) {
 
 ### Correlation ID
 
-Correlation IDs let you filter all log lines from a single request across every internal component — KeyManager, RefreshStore, and TokenManager — with a single `jq` query.
+Correlation IDs let you filter all log lines from a single request across every internal component — KeyManager, RefreshStore, and TokenService — with a single `jq` query.
 
 **Quick start**:
 
@@ -592,7 +783,7 @@ jwtauth_key_active_versions_count
 **Alerting guidance**:
 - `jwtauth_key_active_versions_count == 0` → critical — no signing key available, all token issuance will fail
 - `rate(jwtauth_key_rotations_total{status!="success"}[1h]) > 0` → warning — key rotation is failing
-- `jwtauth_service_running == 0` → critical — TokenManager has stopped
+- `jwtauth_service_running == 0` → critical — TokenService has stopped
 
 For the full operator reference including Grafana dashboard guidance and label cardinality analysis, see [doc/METRICS.md](doc/METRICS.md).
 
@@ -628,7 +819,7 @@ github.com/aetomala/jwtauth/
 │   │   ├── disk_test.go          # 9-phase DiskKeyStore tests (38 specs)
 │   │   └── redis_test.go         # 9-phase RedisKeyStore tests (35 specs, miniredis)
 │   ├── tokens/                   # JWT operations (Beta) 🟡
-│   │   ├── manager.go            # TokenManager implementation
+│   │   ├── manager.go            # TokenService implementation
 │   │   ├── claims.go             # Claims management
 │   │   ├── manager_test.go       # Token operations tests
 │   │   ├── manager_lifecycle_test.go  # Lifecycle management tests
@@ -666,7 +857,7 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 605 comprehensive tests across KeyManager, TokenManager, RefreshStore, Metrics, Logging, and Tracing, all passing with race detection (KeyManager ~90%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
+**Current**: 605 comprehensive tests across KeyManager, TokenService, RefreshStore, Metrics, Logging, and Tracing, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
 
 **KeyManager** (3 test suites — 125 total specs):
 - **9-phase Manager tests** (52 specs, MockKeyStore — no I/O):
@@ -686,7 +877,7 @@ github.com/aetomala/jwtauth/
   - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
   - Concurrency, metrics recording (storage_backend: "redis")
 
-**TokenManager** (7 test suites, 153 total tests):
+**TokenService** (7 test suites, 153 total tests):
 - **Lifecycle Management Tests** (20 tests):
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency
@@ -754,86 +945,6 @@ Tests follow **progressive phase-based development**:
 3. Shared test utilities in `internal/testutil` (MockLogger, etc.)
 4. Race detection on all tests (catches concurrency bugs)
 
-## Why This Library?
-
-`jwtauth` occupies a specific layer: it takes a verified subject ID and manages everything after — signing, key rotation, refresh token lifecycle, and revocation. Identity verification (password check, OAuth exchange, SAML assertion) is out of scope and belongs in the layer above.
-
-If that's your gap, here's what you'd be comparing against:
-
----
-
-### vs. `golang-jwt/jwt` — building the engine yourself
-
-`golang-jwt/jwt` signs and validates tokens against a key you supply. It does exactly one thing and does it well. Most teams start here and then spend weeks building the surrounding machinery:
-
-| What you build yourself | What jwtauth provides |
-|---|---|
-| Key generation and storage | `KeyManager` with `DiskKeyStore` / `RedisKeyStore` |
-| Zero-downtime key rotation + overlap | Built in — old key stays valid during overlap period |
-| Refresh token storage and lookup | `MemoryRefreshStore` / `RedisRefreshStore` |
-| Revocation (single token, all user sessions) | `RevokeRefreshToken`, `RevokeAllUserTokens` |
-| Custom claims round-trip without re-parsing | `IssueAccessTokenWithClaims` + `ValidateAccessTokenWithClaims` |
-| Clock skew tolerance for distributed deployments | `ManagerConfig.ClockSkew` |
-| 22 Prometheus metrics across all operations | Pre-registered, zero config |
-| 10 typed sentinel errors for middleware logic | `ErrTokenExpired`, `ErrTokenRevoked`, `ErrInvalidAudience`, … |
-
-**jwtauth is what you'd build on top of golang-jwt after a few months in production.**
-
----
-
-### vs. framework JWT middleware (`gin-jwt`, `echo-jwt`, similar)
-
-Framework-specific JWT packages bundle signing, validation, and middleware into a single dependency. They're the fastest path to a working login endpoint but carry structural limitations:
-
-- **No key rotation** — one static secret or key pair for the lifetime of the service
-- **No refresh token state** — revocation requires a separate blocklist you build yourself
-- **Framework lock-in** — the middleware only works with your chosen framework; switching means rewriting auth
-- **No metrics** — you don't know how many tokens are being issued, validated, or rejected
-
-`jwtauth` is framework-agnostic. The middleware in the examples is ~20 lines you own; swapping Gin for Chi or Echo is a one-file change.
-
----
-
-### vs. `lestrrat-go/jwx` / `go-jose/go-jose` — JOSE toolkits
-
-Both are comprehensive JOSE implementations covering JWS, JWE, JWK, JWT, and more. `jwtauth` is narrower and higher-level:
-
-- The token lifecycle API (issue → validate → refresh → revoke) is ready — you're not assembling it from primitives
-- Key rotation is built in, not something you wire together from JWK set operations
-- Structured logging and metrics are first-class, not an afterthought
-- Less surface area to reason about if you only need RS256 JWT tokens
-
-If you need JWE (encrypted tokens), JWS detached payloads, or multi-algorithm JOSE operations, reach for one of those libraries instead.
-
----
-
-### Concrete security guarantees
-
-1. **Algorithm confusion prevented unconditionally** — `ValidateAccessToken` asserts `*jwt.SigningMethodRSA` before any key lookup. HS256, ECDSA, and `none` are rejected — not configurably, unconditionally.
-
-2. **Reserved claim protection** — `IssueAccessTokenWithClaims` rejects custom claims that would overwrite `sub`, `exp`, `iat`, `nbf`, `jti`, `iss`, or `aud`. Application fields cannot collide with registered claims silently.
-
-3. **10 granular sentinel errors, all `errors.Is()`-compatible** — middleware can distinguish `ErrTokenExpired` from `ErrTokenRevoked` from `ErrInvalidAudience` and return specific JSON error codes (`token_expired`, `token_revoked`, `invalid_audience`) that clients can act on.
-
-4. **Instant revocation, not expiry-based** — `RevokeAllUserTokens` invalidates all sessions for a compromised account immediately. No waiting for short-lived tokens to expire.
-
----
-
-### Horizontal scale path
-
-The storage backends are designed to move from single-instance to distributed without code changes:
-
-| Deployment | KeyStore | RefreshStore |
-|---|---|---|
-| Single instance (dev, small prod) | `DiskKeyStore` | `MemoryRefreshStore` |
-| Multi-instance (Kubernetes, load-balanced) | `RedisKeyStore` | `RedisRefreshStore` |
-
-Swap the constructor arguments. The `KeyManager` and `TokenManager` interfaces are unchanged.
-
----
-
-**What jwtauth is not:** a full authentication server (no login flows, no OAuth2/OIDC), a session management library, or a rate limiter. For managed auth infrastructure, Keycloak, Dex, or Ory Hydra serve that role. jwtauth is the token engine you'd wire underneath them, or build directly into a service that already verifies identity by other means.
-
 ## Roadmap
 
 ### v0.1.0 (Current - Pre-Alpha)
@@ -844,14 +955,14 @@ Swap the constructor arguments. The `KeyManager` and `TokenManager` interfaces a
 - ✅ Architecture documentation
 
 ### v0.2.0 ✅ Complete
-- ✅ TokenManager: JWT creation with RS256 signing
-- ✅ TokenManager: Lifecycle management (Start/Shutdown/IsRunning)
-- ✅ TokenManager: Claims management with custom claims support and reserved claim protection
-- ✅ TokenManager: Access token validation with issuer/audience enforcement (ValidateAccessToken)
-- ✅ TokenManager: Refresh token rotation with expiration and revocation checks (RefreshAccessToken)
-- ✅ TokenManager: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
-- ✅ TokenManager: Token introspection per RFC 7662 (IntrospectToken)
-- ✅ TokenManager: Manual cleanup sweep (CleanupExpiredTokens)
+- ✅ TokenService: JWT creation with RS256 signing
+- ✅ TokenService: Lifecycle management (Start/Shutdown/IsRunning)
+- ✅ TokenService: Claims management with custom claims support and reserved claim protection
+- ✅ TokenService: Access token validation with issuer/audience enforcement (ValidateAccessToken)
+- ✅ TokenService: Refresh token rotation with expiration and revocation checks (RefreshAccessToken)
+- ✅ TokenService: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
+- ✅ TokenService: Token introspection per RFC 7662 (IntrospectToken)
+- ✅ TokenService: Manual cleanup sweep (CleanupExpiredTokens)
 - ✅ RefreshStore: Shared test suite pattern (eliminates duplication, runs against all implementations)
 - ✅ RefreshStore: MemoryRefreshStore with defensive copying and concurrent safety
 - ✅ RefreshStore: RedisRefreshStore for distributed deployments with go-redis/v9
@@ -859,9 +970,9 @@ Swap the constructor arguments. The `KeyManager` and `TokenManager` interfaces a
 - ✅ KeyStore interface extracted from KeyManager — `DiskKeyStore` for single-instance, `RedisKeyStore` for distributed deployments
 
 ### v0.3.0 (Current — Beta)
-- ✅ TokenManager: Clock skew tolerance (`ClockSkew` field, `jwt.WithLeeway()` integration)
-- ✅ TokenManager: `ValidateAccessTokenWithClaims` — registered and custom claims returned after validation
-- ✅ Wire metrics into all components — KeyStore, Manager, TokenManager, RefreshStore with `error_type` label and context propagation
+- ✅ TokenService: Clock skew tolerance (`ClockSkew` field, `jwt.WithLeeway()` integration)
+- ✅ TokenService: `ValidateAccessTokenWithClaims` — registered and custom claims returned after validation
+- ✅ Wire metrics into all components — KeyStore, Manager, TokenService, RefreshStore with `error_type` label and context propagation
 - ✅ Example middleware returns specific JSON error codes (`token_expired`, `token_revoked`, etc.) via sentinel error mapping
 - ✅ `KeyManager` interface extended with context on all read methods (`GetCurrentSigningKey`, `GetPublicKey`, `GetJWKS`)
 - ✅ Correlation ID logging — `CorrelationIDHandler`, `WithCorrelationID`/`GetCorrelationID` helpers, `NewCorrelationJSONLogger`/`NewCorrelationTextLogger`, context-aware `SlogAdapter`
@@ -873,7 +984,7 @@ Swap the constructor arguments. The `KeyManager` and `TokenManager` interfaces a
 - ✅ `pkg/tracing` interfaces scaffolded — `Tracer`, `Span`, `SpanOption`, `StatusCode`, `SpanKind`
 - ✅ `NoOpTracer` / `NoOpSpan` implementations (36 tests, race-detection clean)
 - ✅ `MockTracer` / `MockSpan` generated for dependency injection in component tests
-- 🚧 Wire tracing into KeyManager, TokenManager, and RefreshStore
+- 🚧 Wire tracing into KeyManager, TokenService, and RefreshStore
 - 🚧 OpenTelemetry adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
 
 ### v1.0.0 (Stable)
@@ -972,6 +1083,6 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 
 **Status**: Beta (Active Development)
 **Version**: 0.3.0-beta
-**Components**: KeyManager ✅ | TokenManager (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing (scaffold) 🚧
-**Test Coverage**: 605 tests (KeyManager ~90%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%), all passing, race-detection enabled
+**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing (scaffold) 🚧
+**Test Coverage**: 605 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%), all passing, race-detection enabled
 **Last Updated**: April 14, 2026
