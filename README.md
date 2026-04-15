@@ -50,7 +50,7 @@ If you've already decided you need stateful token management, here's how jwtauth
 |---------|-----------|---------|-----|---------|
 | **Sign/Validate JWT** | ✅ | ✅ | ✅ | ✅ |
 | **Custom claims** | ✅ | ✅ | ✅ | ✅ |
-| **Key rotation** | ❌ Manual | ❌ | ❌ | ✅ Zero-downtime |
+| **Key rotation** | ❌ Manual | ❌ | ❌ | ✅ Zero-downtime - Automatic|
 | **Refresh tokens** | ❌ | ❌ | ❌ | ✅ Stateful storage |
 | **Instant revocation** | ❌ | ❌ | ❌ | ✅ RevokeAllUserTokens |
 | **Distributed state** | N/A | ❌ | N/A | ✅ Redis backend |
@@ -60,6 +60,44 @@ If you've already decided you need stateful token management, here's how jwtauth
 | **Complexity** | Low | Medium | High (JOSE) | Medium |
 | **Use when** | Stateless | Gin + stateless | JWE, JWS | Stateful + distributed |
 
+**Zero-downtime key rotation** means you can rotate signing keys in production 
+without invalidating any tokens currently in flight. Here's how it works:
+
+```mermaid
+gantt
+    title Zero-Downtime Key Rotation (30-day cycle with 1-hour overlap)
+    dateFormat  YYYY-MM-DD
+    axisFormat  Day %d
+
+    section Key A (Old)
+    Key A signs tokens           :active, keyA_sign, 2024-01-01, 30d
+    Key A validates tokens       :active, keyA_val, 2024-01-01, 31d
+    Key A overlap period         :crit, keyA_overlap, 2024-01-30, 1d
+    Key A retired                :done, keyA_done, 2024-01-31, 1d
+
+    section Key B (New)
+    Key B generated              :milestone, keyB_gen, 2024-01-30, 0d
+    Key B overlap period         :crit, keyB_overlap, 2024-01-30, 1d
+    Key B signs tokens           :active, keyB_sign, 2024-01-30, 30d
+    Key B validates tokens       :active, keyB_val, 2024-01-30, 31d
+
+    section Tokens in Flight
+    Tokens signed with Key A     :active, tokens_a, 2024-01-01, 31d
+    Tokens signed with Key B     :active, tokens_b, 2024-01-30, 30d
+```
+
+During the **overlap period** (configurable, default 1 hour):
+- New tokens are signed with Key B
+- Old tokens signed with Key A remain valid
+- After overlap expires, Key A is retired
+
+Configuration:
+```go
+km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+    KeyRotationInterval: 30 * 24 * time.Hour,  // Rotate every 30 days
+    KeyOverlapDuration:  1 * time.Hour,        // Keep old key valid for 1 hour
+})
+```
 ---
 
 ### vs. `golang-jwt/jwt` — building the engine yourself
@@ -511,6 +549,132 @@ func main() {
 - ✅ Clock skew tolerance (ClockSkew) for distributed deployments with NTP drift
 - ✅ Background cleanup of expired refresh tokens
 - ✅ Structured logging and metrics integration
+
+## Production Architecture
+
+jwtauth is designed for horizontal scale from day one:
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        C1[Mobile App]
+        C2[Web App]
+        C3[Desktop App]
+    end
+
+    subgraph "Load Balancer"
+        LB[nginx / AWS ALB / Kong]
+    end
+
+    subgraph "Application Layer (Stateless)"
+        API1[API Instance 1<br/>tokens.Manager<br/>keymanager.Manager]
+        API2[API Instance 2<br/>tokens.Manager<br/>keymanager.Manager]
+        API3[API Instance 3<br/>tokens.Manager<br/>keymanager.Manager]
+    end
+
+    subgraph "Shared Storage Layer"
+        RedisRefresh[(Redis<br/>RefreshStore<br/>refresh tokens)]
+        RedisKeys[(Redis<br/>KeyStore<br/>RSA keys)]
+    end
+
+    C1 --> LB
+    C2 --> LB
+    C3 --> LB
+    
+    LB --> API1
+    LB --> API2
+    LB --> API3
+
+    API1 --> RedisRefresh
+    API2 --> RedisRefresh
+    API3 --> RedisRefresh
+
+    API1 --> RedisKeys
+    API2 --> RedisKeys
+    API3 --> RedisKeys
+
+    style API1 fill:#e1f5e1
+    style API2 fill:#e1f5e1
+    style API3 fill:#e1f5e1
+    style RedisRefresh fill:#ffe1e1
+    style RedisKeys fill:#ffe1e1
+    style LB fill:#e1e5ff
+
+    classDef stateless fill:#e1f5e1,stroke:#2d5016,stroke-width:2px
+    classDef storage fill:#ffe1e1,stroke:#8b0000,stroke-width:2px
+    classDef infra fill:#e1e5ff,stroke:#000080,stroke-width:2px
+```
+
+**Key characteristics:**
+- **Stateless API layer** - Add/remove instances freely
+- **Shared Redis** - Consistent state across all instances
+- **Zero-downtime key rotation** - Coordinated via KeyStore
+- **Instant revocation** - RefreshStore backed by Redis
+
+See [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) for complete deployment guide.
+
+## How It Works
+
+Here's the complete token lifecycle from login to refresh to revocation:
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Manager as tokens.Manager
+    participant KeyMgr as keymanager.Manager
+    participant Redis as RefreshStore (Redis)
+
+    Note over Client,Redis: Login & Token Issuance
+    
+    Client->>API: POST /login (credentials)
+    API->>API: Verify credentials
+    API->>Manager: IssueTokenPair(ctx, userID)
+    Manager->>KeyMgr: GetCurrentSigningKey()
+    KeyMgr-->>Manager: RSA private key
+    Manager->>Manager: Sign JWT access token
+    Manager->>Manager: Generate refresh token (UUID)
+    Manager->>Redis: Store(refreshToken, userID, expiry)
+    Redis-->>Manager: OK
+    Manager-->>API: accessToken, refreshToken
+    API-->>Client: 200 OK {access, refresh}
+
+    Note over Client,Redis: API Request with Access Token
+    
+    Client->>API: GET /protected (Bearer accessToken)
+    API->>Manager: ValidateAccessToken(ctx, accessToken)
+    Manager->>KeyMgr: GetPublicKeys()
+    KeyMgr-->>Manager: RSA public keys
+    Manager->>Manager: Verify signature + claims
+    Manager-->>API: claims (userID, exp, iss, aud)
+    API->>API: Process request
+    API-->>Client: 200 OK {data}
+
+    Note over Client,Redis: Token Refresh (15 min later)
+    
+    Client->>API: POST /refresh (refreshToken)
+    API->>Manager: RefreshAccessToken(ctx, refreshToken)
+    Manager->>Redis: Get(refreshToken)
+    Redis-->>Manager: {userID, expiry}
+    Manager->>Manager: Check expiry
+    Manager->>KeyMgr: GetCurrentSigningKey()
+    KeyMgr-->>Manager: RSA private key
+    Manager->>Manager: Sign new JWT access token
+    Manager-->>API: newAccessToken
+    API-->>Client: 200 OK {access}
+
+    Note over Client,Redis: Logout & Revocation
+    
+    Client->>API: POST /logout (refreshToken)
+    API->>Manager: RevokeRefreshToken(ctx, refreshToken)
+    Manager->>Redis: Delete(refreshToken)
+    Redis-->>Manager: OK
+    Manager-->>API: OK
+    API-->>Client: 200 OK
+```
+
+The sequence shows how `tokens.Manager` coordinates with `keymanager.Manager` 
+and your `RefreshStore` to handle the complete authentication flow.
 
 ## Configuration
 
