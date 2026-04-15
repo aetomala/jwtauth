@@ -1,6 +1,6 @@
-# jwtauth Framework Examples
+# jwtauth — Integration Examples
 
-This directory contains complete, runnable examples of using `jwtauth` with different HTTP frameworks. Each example demonstrates:
+This directory contains complete, runnable examples showing how to integrate the `jwtauth` authorization token engine with different HTTP frameworks. Each example demonstrates:
 
 - Setting up a `KeyManager` for zero-downtime key rotation
 - Creating a `TokenManager` for token operations
@@ -64,9 +64,27 @@ cd echo-example
 go run main.go
 ```
 
+### [Correlation ID Example](correlation-example/)
+
+End-to-end correlation ID tracing using only the standard library (`net/http`). Best for:
+- Understanding how `correlation_id` flows through all jwtauth internal logs
+- Adding per-request log tracing to any framework (the pattern is framework-agnostic)
+
+**Features**:
+- `NewCorrelationJSONLogger` with `CorrelationIDHandler` pre-wired
+- `X-Correlation-ID` header extraction with auto-generation when absent
+- `correlation_id` appears on every jwtauth log line for the request automatically
+- No external framework dependencies — pure stdlib
+
+**Run**:
+```bash
+cd correlation-example
+go run main.go
+```
+
 ## Common Pattern Across Examples
 
-All examples follow the same pattern:
+All examples follow the same pattern. The `correlation-example` extends this pattern with per-request log tracing — see it for a complete demonstration of wiring `CorrelationIDHandler` and `logging.WithCorrelationID` into the request lifecycle.
 
 ### 1. Setup Service Dependencies
 
@@ -183,7 +201,7 @@ claims := map[string]interface{}{
     "tenant": "org-123",
 }
 
-token, err := svc.IssueAccessTokenWithClaims(ctx, userID, claims)
+token, err := mgr.IssueAccessTokenWithClaims(ctx, userID, claims)
 ```
 
 ### Add Database Integration
@@ -282,16 +300,17 @@ The examples show how simple it is to write middleware for any framework that ca
 
 ## Framework Comparison
 
-| Feature | Gin | Chi | Echo |
-|---------|-----|-----|------|
-| **Speed** | Very fast | Fast | Very fast |
-| **Middleware** | `gin.HandlerFunc` | `func(Handler)Handler` | `MiddlewareFunc` |
-| **Complexity** | Simple | Minimal | Rich features |
-| **Learning curve** | Easy | Very easy | Medium |
-| **Ecosystem** | Large | Small | Large |
-| **Best for** | Microservices | Simplicity | Feature-rich apps |
+| Feature | Gin | Chi | Echo | Correlation |
+|---------|-----|-----|------|-------------|
+| **Framework** | Gin | Chi | Echo | stdlib |
+| **Middleware** | `gin.HandlerFunc` | `func(Handler)Handler` | `MiddlewareFunc` | `func(HandlerFunc)HandlerFunc` |
+| **Complexity** | Simple | Minimal | Rich features | Minimal |
+| **Learning curve** | Easy | Very easy | Medium | Very easy |
+| **Ecosystem** | Large | Small | Large | None (stdlib only) |
+| **Best for** | Microservices | Simplicity | Feature-rich apps | Log tracing demo |
+| **Correlation ID** | Not shown | Not shown | Not shown | Full demo |
 
-All examples achieve the same authentication goals — choose based on your framework preference!
+All examples achieve the same token lifecycle goals. The correlation-example additionally demonstrates per-request log tracing — the pattern applies equally to Gin, Chi, and Echo.
 
 ## Next Steps
 

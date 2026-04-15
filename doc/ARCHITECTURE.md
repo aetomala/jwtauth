@@ -142,7 +142,8 @@ github.com/aetomala/jwtauth/
 ├── examples/                      # Framework usage examples
 │   ├── gin-example/               # Gin HTTP framework
 │   ├── echo-example/              # Echo HTTP framework
-│   └── chi-example/               # Chi HTTP router
+│   ├── chi-example/               # Chi HTTP router
+│   └── correlation-example/       # End-to-end correlation ID with stdlib net/http
 └── jwtauth_suite_test.go          # Root Ginkgo suite bootstrap
 ```
 
@@ -254,6 +255,39 @@ KeyManager → logging.Logger interface → SlogAdapter → os.Stdout → K8s lo
 - ✅ Testable (MockLogger)
 - ✅ Debug level disableable in production (disable at handler, not in code)
 
+**Correlation ID**:
+
+All jwtauth components accept `context.Context` on every operation and pass it as the first element of `keysAndValues` when logging. `SlogAdapter` detects this and routes the call through `slog.*Context()`, which lets `CorrelationIDHandler` extract a correlation ID from the context and append it to every record automatically.
+
+```go
+// Internal component logging — ctx as the first kwarg:
+m.config.Logger.Info("key rotation successful",
+    ctx,
+    "keyID", newKeyID,
+    "duration", time.Since(start))
+
+// SlogAdapter calls InfoContext(ctx, ...), CorrelationIDHandler injects the field:
+// → {"msg":"key rotation successful","keyID":"abc","correlation_id":"req-001"}
+```
+
+Wire it at application startup:
+
+```go
+// NewCorrelationJSONLogger wraps slog.NewJSONHandler with CorrelationIDHandler.
+logger := logging.NewCorrelationJSONLogger(slog.LevelInfo)
+
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{Logger: logger, ...})
+```
+
+Inject the ID once at the HTTP request boundary — it propagates to all jwtauth calls for that request:
+
+```go
+ctx := logging.WithCorrelationID(r.Context(), r.Header.Get("X-Correlation-ID"))
+accessToken, _, err := mgr.IssueTokenPair(ctx, userID)
+```
+
+See `examples/correlation-example/` for a complete working demonstration.
+
 ### Metrics
 
 **Interface**: `pkg/metrics/Metrics`
@@ -329,9 +363,11 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
     
     // Rotate logic...
     
-    // Optional logging
+    // Optional logging — ctx is the first kwarg so SlogAdapter routes through
+    // InfoContext, which lets CorrelationIDHandler inject correlation_id.
     if m.config.Logger != nil {
         m.config.Logger.Info("key rotation successful",
+            ctx,
             "keyID", newKeyID,
             "duration", time.Since(start))
     }
