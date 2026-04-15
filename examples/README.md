@@ -3,8 +3,8 @@
 This directory contains complete, runnable examples of using `jwtauth` with different HTTP frameworks. Each example demonstrates:
 
 - Setting up a `KeyManager` for zero-downtime key rotation
-- Creating a `TokenService` for token operations
-- Writing framework-specific authentication middleware
+- Creating a `TokenManager` for token operations
+- Writing framework-specific bearer token middleware
 - Implementing login, refresh, logout flows
 - Protecting endpoints with token validation
 
@@ -78,24 +78,24 @@ km.Start(ctx)
 // Create RefreshStore for token persistence
 store := storage.NewMemoryRefreshStore(logger)
 
-// Create TokenService for token operations
-svc, _ := tokens.NewService(config)
-svc.Start(ctx)
+// Create TokenManager for token operations
+mgr, _ := tokens.NewManager(config)
+mgr.Start(ctx)
 ```
 
 ### 2. Write Framework Middleware
 
 Each framework has a different middleware pattern, but they all:
 - Extract token from `Authorization: Bearer <token>` header
-- Validate with `svc.ValidateAccessToken(ctx, token)`
+- Validate with `mgr.ValidateAccessToken(ctx, token)`
 - Attach user ID and claims to request context
 - Proceed to the route handler
 
 **Gin**:
 ```go
-func AuthMiddleware(svc *tokens.Service) gin.HandlerFunc {
+func BearerMiddleware(mgr *tokens.Manager) gin.HandlerFunc {
     return func(c *gin.Context) {
-        claims, err := svc.ValidateAccessToken(c, token)
+        claims, err := mgr.ValidateAccessToken(c, token)
         c.Set("userID", claims.Subject)
         c.Next()
     }
@@ -104,10 +104,10 @@ func AuthMiddleware(svc *tokens.Service) gin.HandlerFunc {
 
 **Chi**:
 ```go
-func AuthMiddleware(svc *tokens.Service) func(http.Handler) http.Handler {
+func BearerMiddleware(mgr *tokens.Manager) func(http.Handler) http.Handler {
     return func(next http.Handler) http.Handler {
         return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-            claims, err := svc.ValidateAccessToken(r.Context(), token)
+            claims, err := mgr.ValidateAccessToken(r.Context(), token)
             ctx := context.WithValue(r.Context(), "userID", claims.Subject)
             next.ServeHTTP(w, r.WithContext(ctx))
         })
@@ -117,10 +117,10 @@ func AuthMiddleware(svc *tokens.Service) func(http.Handler) http.Handler {
 
 **Echo**:
 ```go
-func AuthMiddleware(svc *tokens.Service) echo.MiddlewareFunc {
+func BearerMiddleware(mgr *tokens.Manager) echo.MiddlewareFunc {
     return func(next echo.HandlerFunc) echo.HandlerFunc {
         return func(c echo.Context) error {
-            claims, err := svc.ValidateAccessToken(c.Request().Context(), token)
+            claims, err := mgr.ValidateAccessToken(c.Request().Context(), token)
             c.Set("userID", claims.Subject)
             return next(c)
         }
@@ -131,7 +131,7 @@ func AuthMiddleware(svc *tokens.Service) echo.MiddlewareFunc {
 ### 3. Define Endpoints
 
 Each example includes:
-- `POST /login` - Issue access + refresh token pair
+- `POST /login` - Issue access + refresh token pair (calls `issueTokensHandler`)
 - `POST /refresh` - Issue new access token
 - `GET /api/profile` - Protected endpoint
 - `POST /api/logout` - Revoke all user tokens
@@ -200,9 +200,9 @@ func (s *PostgresRefreshStore) Store(ctx context.Context, tokenID, userID string
     // Store in database
 }
 
-// Use it in the service
+// Use it in the manager
 store := &PostgresRefreshStore{db: db}
-svc, _ := tokens.NewService(tokens.ServiceConfig{
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{
     RefreshStore: store,
 })
 ```
@@ -213,7 +213,7 @@ Check custom claims in middleware:
 
 ```go
 // Use ValidateAccessTokenWithClaims to get both registered and custom claims:
-registered, custom, err := svc.ValidateAccessTokenWithClaims(ctx, token)
+registered, custom, err := mgr.ValidateAccessTokenWithClaims(ctx, token)
 // registered.Subject == userID
 // custom["role"] == "admin"  (application-defined fields only)
 
@@ -248,7 +248,7 @@ The `jwtauth` library itself is **framework-agnostic** — it only provides core
 ✅ **Easy to integrate with your chosen framework**
 ✅ **Small library size and focused API**
 
-The examples show how simple it is to write middleware for any framework that can use your `TokenService`.
+The examples show how simple it is to write middleware for any framework that can use your `TokenManager`.
 
 ## Key Concepts
 

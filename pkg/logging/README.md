@@ -1,6 +1,6 @@
 # Logging Package
 
-Shared logging interface for the JWT authentication system.
+Shared logging interface for the JWT authorization token engine.
 
 ## Overview
 
