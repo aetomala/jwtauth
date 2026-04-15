@@ -14,11 +14,51 @@
 
 `jwtauth` is a **stateful** JWT authorization token engine for Go, built from the ground up with **observability, testability, and production operations** as first-class concerns. It manages the stateful machinery that production token systems require — cryptographic key generation and zero-downtime rotation, access token issuance and validation, and refresh token lifecycle with revocation support. Identity verification is intentionally out of scope: jwtauth takes a verified subject ID and handles everything after.
 
+## What Problem Does This Solve?
+
+**Most JWT libraries sign tokens. You still build the engine.**
+
+After evaluating golang-jwt, gin-jwt, or jwx, teams realize the library solves 20% of the problem. You still need to build:
+
+- **Key generation and zero-downtime rotation** — Weeks of careful work to ensure old tokens stay valid during rotation periods. Get it wrong and you force every user to re-authenticate.
+
+- **Refresh token storage and lookup** — Days of work designing the schema, choosing the backend (Redis? Postgres?), handling expiration and revocation checks correctly.
+
+- **Instant revocation without waiting for expiry** — Complex state management across distributed instances. Session compromise requires immediate invalidation, not waiting 15 minutes for token expiry.
+
+- **Observability across the token lifecycle** — Usually ignored until production, then bolted on inconsistently. You need metrics on issuance rates, validation failures, rotation success, and revocation patterns.
+
+- **Horizontal scale without state conflicts** — Hard to get right. Multiple instances need shared key storage and coordinated refresh token state. Most teams start with in-memory storage, hit production, then scramble to add Redis.
+
+**jwtauth is the engine you'd build on top of those libraries** after a few months in production. We built it once, correctly, so you don't have to.
+
+### What You Get
+
+Everything after identity verification is handled:
+- You verify identity (password check, OAuth exchange, SAML assertion)
+- jwtauth issues access tokens, manages refresh tokens, rotates keys, and revokes sessions
+- Your application validates tokens and enforces authorization rules
+
+**Your boundary:** Identity verification (who is this user?)  
+**jwtauth's job:** Token lifecycle management (how do I prove it to your API?)
+
 ## Why This Library?
 
-`jwtauth` occupies a specific layer: it takes a verified subject ID and manages everything after — signing, key rotation, **stateful** refresh token lifecycle, and revocation. Identity verification (password check, OAuth exchange, SAML assertion) is out of scope and belongs in the layer above.
+If you've already decided you need stateful token management, here's how jwtauth compares to the alternatives you'd be evaluating:
 
-If that's your gap, here's what you'd be comparing against:
+| Feature | golang-jwt | gin-jwt | jwx | jwtauth |
+|---------|-----------|---------|-----|---------|
+| **Sign/Validate JWT** | ✅ | ✅ | ✅ | ✅ |
+| **Custom claims** | ✅ | ✅ | ✅ | ✅ |
+| **Key rotation** | ❌ Manual | ❌ | ❌ | ✅ Zero-downtime |
+| **Refresh tokens** | ❌ | ❌ | ❌ | ✅ Stateful storage |
+| **Instant revocation** | ❌ | ❌ | ❌ | ✅ RevokeAllUserTokens |
+| **Distributed state** | N/A | ❌ | N/A | ✅ Redis backend |
+| **Metrics** | ❌ | ❌ | ❌ | ✅ 22 Prometheus metrics |
+| **Correlation logging** | ❌ | ❌ | ❌ | ✅ Built-in |
+| **Framework lock-in** | ❌ | ✅ Gin only | ❌ | ❌ |
+| **Complexity** | Low | Medium | High (JOSE) | Medium |
+| **Use when** | Stateless | Gin + stateless | JWE, JWS | Stateful + distributed |
 
 ---
 
