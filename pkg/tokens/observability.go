@@ -1,6 +1,6 @@
 package tokens
 
-// Metric names for TokenService operations. All implementations record the
+// Metric names for TokenManager operations. All implementations record the
 // same set of metrics so the names are defined once here and referenced by
 // all methods.
 const (

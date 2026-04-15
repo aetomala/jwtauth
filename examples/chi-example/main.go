@@ -56,7 +56,7 @@ func main() {
 	store := storage.NewMemoryRefreshStore(logger, pm)
 
 	// Create TokenService
-	svc, err := tokens.NewService(tokens.ServiceConfig{
+	mgr, err := tokens.NewManager(tokens.ManagerConfig{
 		KeyManager:           km,
 		RefreshStore:         store,
 		AccessTokenDuration:  15 * time.Minute,
@@ -71,13 +71,13 @@ func main() {
 		log.Fatal("Failed to create TokenService:", err)
 	}
 
-	if err := svc.Start(ctx); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		log.Fatal("Failed to start TokenService:", err)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = svc.Shutdown(shutdownCtx)
+		_ = mgr.Shutdown(shutdownCtx)
 	}()
 
 	// Setup Chi router
@@ -92,17 +92,17 @@ func main() {
 	r.Get("/metrics", pm.Handler().ServeHTTP)
 
 	// Public endpoints
-	r.Post("/login", loginHandler(svc))
-	r.Post("/refresh", refreshHandler(svc))
+	r.Post("/login", issueTokensHandler(mgr))
+	r.Post("/refresh", refreshHandler(mgr))
 
 	// Health check
 	r.Get("/health", healthHandler)
 
 	// Protected routes
 	r.Route("/api", func(r chi.Router) {
-		r.Use(auth.AuthMiddleware(svc))
+		r.Use(auth.BearerMiddleware(mgr))
 		r.Get("/profile", profileHandler)
-		r.Post("/logout", logoutHandler(svc))
+		r.Post("/logout", logoutHandler(mgr))
 	})
 
 	log.Println("Starting server on :8080")
@@ -123,8 +123,8 @@ type TokenResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-// loginHandler issues a new token pair
-func loginHandler(svc *tokens.Service) http.HandlerFunc {
+// issueTokensHandler issues a new token pair
+func issueTokensHandler(mgr *tokens.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req LoginRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -140,7 +140,7 @@ func loginHandler(svc *tokens.Service) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		accessToken, refreshToken, err := svc.IssueTokenPair(ctx, req.UserID)
+		accessToken, refreshToken, err := mgr.IssueTokenPair(ctx, req.UserID)
 		if err != nil {
 			http.Error(w, "failed to issue tokens", http.StatusInternalServerError)
 			return
@@ -161,7 +161,7 @@ type RefreshRequest struct {
 }
 
 // refreshHandler refreshes an access token
-func refreshHandler(svc *tokens.Service) http.HandlerFunc {
+func refreshHandler(mgr *tokens.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req RefreshRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -177,7 +177,7 @@ func refreshHandler(svc *tokens.Service) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		accessToken, err := svc.RefreshAccessToken(ctx, req.RefreshToken)
+		accessToken, err := mgr.RefreshAccessToken(ctx, req.RefreshToken)
 		if err != nil {
 			http.Error(w, "failed to refresh token", http.StatusUnauthorized)
 			return
@@ -207,7 +207,7 @@ func profileHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // logoutHandler revokes the user's tokens
-func logoutHandler(svc *tokens.Service) http.HandlerFunc {
+func logoutHandler(mgr *tokens.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := r.Context().Value("userID")
 		if userID == nil {
@@ -218,7 +218,7 @@ func logoutHandler(svc *tokens.Service) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 
-		if err := svc.RevokeAllUserTokens(ctx, userID.(string)); err != nil {
+		if err := mgr.RevokeAllUserTokens(ctx, userID.(string)); err != nil {
 			http.Error(w, "failed to revoke tokens", http.StatusInternalServerError)
 			return
 		}

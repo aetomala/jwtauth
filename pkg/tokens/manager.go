@@ -18,11 +18,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// ServiceConfig holds the configuration for a Service.
+// ManagerConfig holds the configuration for a Manager.
 //
 // KeyManager and RefreshStore are required. All duration fields
-// default to production-safe values via ConfigDefault if left at zero.
-type ServiceConfig struct {
+// default to production-safe values via DefaultManagerConfig if left at zero.
+type ManagerConfig struct {
 	// Required dependencies
 	KeyManager   keymanager.KeyManager // Signs and validates tokens
 	RefreshStore storage.RefreshStore  // Persists refresh tokens
@@ -31,7 +31,7 @@ type ServiceConfig struct {
 	Logger  logging.Logger  // Structured logger; nil disables logging
 	Metrics metrics.Metrics // Optional; nil disables metrics.
 
-	// Token lifetimes — defaults applied by NewService if zero
+	// Token lifetimes — defaults applied by NewManager if zero
 	AccessTokenDuration  time.Duration // Default: 15 minutes
 	RefreshTokenDuration time.Duration // Default: 30 days
 	CleanupInterval      time.Duration // How often expired tokens are purged; default: 1 hour
@@ -44,12 +44,12 @@ type ServiceConfig struct {
 	Audience []string // Values for the "aud" claim
 }
 
-// Service issues, validates, and revokes JWT access tokens and opaque refresh
-// tokens. It must be started with Start before use and stopped with Shutdown
+// Manager issues, validates, and revokes JWT access tokens and opaque refresh
+// tokenm. It must be started with Start before use and stopped with Shutdown
 // for clean termination.
 //
 // All public methods are safe for concurrent use.
-type Service struct {
+type Manager struct {
 	// ===== Dependencies (Interfaces) =====
 	keyManager   keymanager.KeyManager // Crypto operations
 	refreshStore storage.RefreshStore  // Token storage
@@ -70,10 +70,10 @@ type Service struct {
 	wg           sync.WaitGroup // Waits for goroutines to finish on shutdown
 }
 
-// Sentinel errors returned by Service methods.
+// Sentinel errors returned by Manager methodm.
 var (
 	ErrInvalidUserID       = errors.New("invalid user ID")
-	ErrServiceNotRunning   = errors.New("service is not running")
+	ErrManagerNotRunning   = errors.New("manager is not running")
 	ErrInvalidToken        = errors.New("invalid token")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrRefreshTokenExpired = errors.New("token has expired")
@@ -81,41 +81,41 @@ var (
 )
 
 // ErrInvalidConfig returns a configuration error with the given message.
-// Returned by NewService when required fields are missing or values are invalid.
+// Returned by NewManager when required fields are missing or values are invalid.
 func ErrInvalidConfig(msg string) error {
 	return errors.New(msg)
 }
 
-// ConfigDefault returns a ServiceConfig populated with production-safe defaults.
-// NewService applies these automatically for any zero-value duration fields.
-func ConfigDefault() ServiceConfig {
-	return ServiceConfig{
+// DefaultManagerConfig returns a ManagerConfig populated with production-safe defaultm.
+// NewManager applies these automatically for any zero-value duration fieldm.
+func DefaultManagerConfig() ManagerConfig {
+	return ManagerConfig{
 		AccessTokenDuration:  15 * time.Minute,
 		RefreshTokenDuration: 30 * 24 * time.Hour,
 		CleanupInterval:      1 * time.Hour,
 	}
 }
 
-// IsRunning reports whether the service has been started and not yet shut down.
+// IsRunning reports whether the manager has been started and not yet shut down.
 // Safe to call concurrently.
-func (s *Service) IsRunning() bool {
-	return s.isRunning.Load()
+func (m *Manager) IsRunning() bool {
+	return m.isRunning.Load()
 }
 
-// NewService constructs a Service from the given config. Zero-value duration
-// fields are filled with defaults from ConfigDefault. Returns an error if any
+// NewManager constructs a Manager from the given config. Zero-value duration
+// fields are filled with defaults from DefaultManagerConfig. Returns an error if any
 // required dependency is nil or a duration is negative.
-func NewService(config ServiceConfig) (*Service, error) {
+func NewManager(config ManagerConfig) (*Manager, error) {
 	if config.AccessTokenDuration == 0 {
-		config.AccessTokenDuration = ConfigDefault().AccessTokenDuration
+		config.AccessTokenDuration = DefaultManagerConfig().AccessTokenDuration
 	}
 
 	if config.RefreshTokenDuration == 0 {
-		config.RefreshTokenDuration = ConfigDefault().RefreshTokenDuration
+		config.RefreshTokenDuration = DefaultManagerConfig().RefreshTokenDuration
 	}
 
 	if config.CleanupInterval == 0 {
-		config.CleanupInterval = ConfigDefault().CleanupInterval
+		config.CleanupInterval = DefaultManagerConfig().CleanupInterval
 	}
 
 	if config.KeyManager == nil {
@@ -142,7 +142,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 		return nil, ErrInvalidConfig("ClockSkew must be non-negative")
 	}
 
-	s := &Service{
+	m := &Manager{
 		keyManager:           config.KeyManager,
 		refreshStore:         config.RefreshStore,
 		logger:               config.Logger,
@@ -156,89 +156,89 @@ func NewService(config ServiceConfig) (*Service, error) {
 		shutdownChan:         make(chan struct{}),
 	}
 
-	return s, nil
+	return m, nil
 }
 
-// Start initializes the service and begins background operations. It starts
+// Start initializes the service and begins background operationm. It starts
 // the KeyManager and launches the cleanup goroutine that periodically purges
-// expired refresh tokens.
+// expired refresh tokenm.
 //
 // Start is idempotent — calling it on an already-running service is a no-op.
 // Returns an error if the KeyManager fails to start or the context is cancelled.
-func (s *Service) Start(ctx context.Context) error {
+func (m *Manager)Start(ctx context.Context) error {
 	// ===== STEP 1: Check If Already Running (Idempotent) =====
-	if !s.isRunning.CompareAndSwap(false, true) {
+	if !m.isRunning.CompareAndSwap(false, true) {
 		// Already running — idempotent no-op, no metric recorded
-		if s.logger != nil {
-			s.logger.Warn("start called but service already running", ctx)
+		if m.logger != nil {
+			m.logger.Warn("start called but service already running", ctx)
 		}
 		return nil // Already running, not an error
 	}
 
 	// ===== STEP 2: Log Startup =====
-	if s.logger != nil {
-		s.logger.Info("starting token service", ctx)
+	if m.logger != nil {
+		m.logger.Info("starting token service", ctx)
 	}
 
 	// ===== STEP 3: Start KeyManager =====
-	if err := s.keyManager.Start(ctx); err != nil {
-		s.isRunning.Store(false) // Revert state
+	if err := m.keyManager.Start(ctx); err != nil {
+		m.isRunning.Store(false) // Revert state
 
-		if s.logger != nil {
-			s.logger.Error("failed to start token service", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to start token service", ctx,
 				"error", err)
 		}
 		return fmt.Errorf("failed to start keymanager: %w", err)
 	}
 
 	// ===== STEP 4: Start Background Cleanup Goroutine =====
-	s.wg.Add(1)
-	go s.cleanupLoop(ctx)
+	m.wg.Add(1)
+	go m.cleanupLoop(ctx)
 
 	// ===== STEP 5: Record Metric and Log Success =====
-	if s.metrics != nil {
-		s.metrics.SetGauge(metricServiceRunning, 1.0, map[string]string{})
+	if m.metrics != nil {
+		m.metrics.SetGauge(metricServiceRunning, 1.0, map[string]string{})
 	}
-	if s.logger != nil {
-		s.logger.Info("token service started", ctx)
+	if m.logger != nil {
+		m.logger.Info("token service started", ctx)
 	}
 
 	return nil
 }
 
-func (s *Service) cleanupLoop(ctx context.Context) {
-	defer s.wg.Done()
+func (m *Manager)cleanupLoop(ctx context.Context) {
+	defer m.wg.Done()
 
 	// Cleanup at configured interval
-	ticker := time.NewTicker(s.cleanupInterval)
+	ticker := time.NewTicker(m.cleanupInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			if s.logger != nil {
-				s.logger.Debug("cleanup loop tick started", ctx)
+			if m.logger != nil {
+				m.logger.Debug("cleanup loop tick started", ctx)
 			}
 			// Cleanup expired refresh tokens
-			if s.logger != nil {
-				s.logger.Debug("cleanup ticker fired", ctx)
+			if m.logger != nil {
+				m.logger.Debug("cleanup ticker fired", ctx)
 			}
-			if count, err := s.refreshStore.Cleanup(ctx); err != nil {
-				if s.logger != nil {
-					s.logger.Error("refresh token cleanup failed", ctx,
+			if count, err := m.refreshStore.Cleanup(ctx); err != nil {
+				if m.logger != nil {
+					m.logger.Error("refresh token cleanup failed", ctx,
 						"error", err)
 				}
 			} else {
 
-				if s.logger != nil {
-					s.logger.Info("refresh token cleanup completed", ctx,
+				if m.logger != nil {
+					m.logger.Info("refresh token cleanup completed", ctx,
 						"tokens", count)
 				}
 			}
 
-		case <-s.shutdownChan:
-			if s.logger != nil {
-				s.logger.Info("cleanup loop stopping", ctx)
+		case <-m.shutdownChan:
+			if m.logger != nil {
+				m.logger.Info("cleanup loop stopping", ctx)
 			}
 			return
 		}
@@ -251,27 +251,27 @@ func (s *Service) cleanupLoop(ctx context.Context) {
 // Shutdown is idempotent — calling it on a stopped service is a no-op.
 // Returns context.DeadlineExceeded if the goroutines do not finish within
 // the deadline, or any error returned by the KeyManager's Shutdown.
-func (s *Service) Shutdown(ctx context.Context) error {
+func (m *Manager)Shutdown(ctx context.Context) error {
 	// ===== STEP 1: Check If Running (Idempotent) =====
-	if !s.isRunning.CompareAndSwap(true, false) {
-		if s.logger != nil {
-			s.logger.Warn("shutdown called but service not running", ctx)
+	if !m.isRunning.CompareAndSwap(true, false) {
+		if m.logger != nil {
+			m.logger.Warn("shutdown called but service not running", ctx)
 		}
 		return nil // Already stopped, not an error
 	}
 
 	// ===== STEP 2: Log Shutdown =====
-	if s.logger != nil {
-		s.logger.Info("shutting down token service", ctx)
+	if m.logger != nil {
+		m.logger.Info("shutting down token service", ctx)
 	}
 
 	// ===== STEP 3: Signal Background Goroutines =====
-	close(s.shutdownChan)
+	close(m.shutdownChan)
 
 	// ===== STEP 4: Wait For Goroutines With Timeout =====
 	done := make(chan struct{})
 	go func() {
-		s.wg.Wait()
+		m.wg.Wait()
 		close(done)
 	}()
 
@@ -280,28 +280,28 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		// Goroutines completed
 	case <-ctx.Done():
 		// Timeout
-		if s.logger != nil {
-			s.logger.Warn("shutdown timeout waiting for goroutines", ctx,
+		if m.logger != nil {
+			m.logger.Warn("shutdown timeout waiting for goroutines", ctx,
 				"error", ctx.Err())
 		}
 		return ctx.Err()
 	}
 
 	// ===== STEP 5: Shutdown KeyManager =====
-	if err := s.keyManager.Shutdown(ctx); err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to shutdown keymanager", ctx,
+	if err := m.keyManager.Shutdown(ctx); err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to shutdown keymanager", ctx,
 				"error", err)
 		}
 		return fmt.Errorf("failed to shutdown keymanager: %w", err)
 	}
 
 	// ===== STEP 6: Record Metric and Log Success =====
-	if s.metrics != nil {
-		s.metrics.SetGauge(metricServiceRunning, 0.0, map[string]string{})
+	if m.metrics != nil {
+		m.metrics.SetGauge(metricServiceRunning, 0.0, map[string]string{})
 	}
-	if s.logger != nil {
-		s.logger.Info("token service stopped", ctx)
+	if m.logger != nil {
+		m.logger.Info("token service stopped", ctx)
 	}
 
 	return nil
@@ -311,19 +311,19 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // user. The token carries standard registered claims (sub, iss, aud, exp, iat,
 // nbf, jti) and is signed with the current key from the KeyManager.
 //
-// Returns ErrInvalidUserID for empty/whitespace-only user IDs, ErrServiceNotRunning
+// Returns ErrInvalidUserID for empty/whitespace-only user IDs, ErrManagerNotRunning
 // if the service is stopped, or the context error if the context is already cancelled.
-func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, error) {
+func (m *Manager)IssueAccessToken(ctx context.Context, userID string) (string, error) {
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 				"status":     status,
 				"error_type": errorType,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "issue_access_token",
 			})
 		}
@@ -333,20 +333,20 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "invalid_input"
 		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted to get token with empty userID", ctx)
 		}
 		return "", ErrInvalidUserID
 	}
 
 	// ===== STEP 2: Service State Check =====
-	if !s.IsRunning() {
+	if !m.IsRunning() {
 		status = "not_running"
 		errorType = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("service not running", ctx)
+		if m.logger != nil {
+			m.logger.Warn("service not running", ctx)
 		}
-		return "", ErrServiceNotRunning
+		return "", ErrManagerNotRunning
 	}
 	// ===== STEP 3: Context Check =====
 	// Check if context is already cancelled/expired
@@ -354,8 +354,8 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if s.logger != nil {
-			s.logger.Warn("context cancelled during token issuance", ctx,
+		if m.logger != nil {
+			m.logger.Warn("context cancelled during token issuance", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -365,29 +365,29 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	// ===== STEP 4: Get Signing Key =====
 	// Retrieve current private key and its ID from KeyManager
 	// The key ID will be included in the JWT header for verification
-	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey(ctx)
+	privateKey, keyID, err := m.keyManager.GetCurrentSigningKey(ctx)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to get signing key", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to get signing key", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to get signing key: %w", err)
 	}
-	if s.logger != nil {
-		s.logger.Debug("signing key retrieved", ctx,
+	if m.logger != nil {
+		m.logger.Debug("signing key retrieved", ctx,
 			"userID", userID,
 			"keyID", keyID)
 	}
 
 	// ===== STEP 5: Create JWT Claims =====
 	now := time.Now()
-	expiresAt := now.Add(s.accessTokenDuration)
+	expiresAt := now.Add(m.accessTokenDuration)
 	// Generate unique token ID (jti claim)
 	tokenID, err := generateTokenID()
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to generate token ID", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to generate token ID", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -397,15 +397,15 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	// Create standard JWT claims
 	claims := jwt.RegisteredClaims{
 		Subject:   userID,                        // "sub" - who the token is for
-		Issuer:    s.issuer,                      // "iss" - who issued the token
-		Audience:  s.audience,                    // "aud" - who can use the token
+		Issuer:    m.issuer,                      // "iss" - who issued the token
+		Audience:  m.audience,                    // "aud" - who can use the token
 		ExpiresAt: jwt.NewNumericDate(expiresAt), // "exp" - when it expires
 		IssuedAt:  jwt.NewNumericDate(now),       // "iat" - when it was issued
 		NotBefore: jwt.NewNumericDate(now),       // "nbf" - valid from when
 		ID:        tokenID,                       // "jti" - unique token identifier
 	}
-	if s.logger != nil {
-		s.logger.Debug("access token claims created", ctx,
+	if m.logger != nil {
+		m.logger.Debug("access token claims created", ctx,
 			"userID", userID,
 			"tokenID", tokenID,
 			"expiresAt", expiresAt)
@@ -423,16 +423,16 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	signedToken, err := token.SignedString(privateKey)
 
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to sign token", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to sign token", ctx,
 				"userID", userID,
 				"keyID", keyID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to sign token: %w", err)
 	}
-	if s.logger != nil {
-		s.logger.Debug("access token signed", ctx,
+	if m.logger != nil {
+		m.logger.Debug("access token signed", ctx,
 			"userID", userID,
 			"tokenID", tokenID)
 	}
@@ -440,8 +440,8 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 	// ===== STEP 8: Record Success and Log =====
 	status = "success"
 	errorType = ""
-	if s.logger != nil {
-		s.logger.Info("access token issued", ctx,
+	if m.logger != nil {
+		m.logger.Info("access token issued", ctx,
 			"userID", userID,
 			"tokenID", tokenID,
 			"keyID", keyID,
@@ -457,17 +457,17 @@ func (s *Service) IssueAccessToken(ctx context.Context, userID string) (string, 
 // and logged as a warning.
 //
 // Returns the same errors as IssueAccessToken.
-func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string, customClaims map[string]interface{}) (string, error) {
+func (m *Manager)IssueAccessTokenWithClaims(ctx context.Context, userID string, customClaims map[string]interface{}) (string, error) {
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 				"status":     status,
 				"error_type": errorType,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "issue_access_token",
 			})
 		}
@@ -477,28 +477,28 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "invalid_input"
 		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted to get token with empty userID", ctx)
 		}
 		return "", ErrInvalidUserID
 	}
 
 	// ===== STEP 2: Service State Check =====
-	if !s.IsRunning() {
+	if !m.IsRunning() {
 		status = "not_running"
 		errorType = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("service not running", ctx)
+		if m.logger != nil {
+			m.logger.Warn("service not running", ctx)
 		}
-		return "", ErrServiceNotRunning
+		return "", ErrManagerNotRunning
 	}
 
 	// ===== STEP 3: Context Check =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if s.logger != nil {
-			s.logger.Warn("context cancelled during token issuance", ctx,
+		if m.logger != nil {
+			m.logger.Warn("context cancelled during token issuance", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -506,27 +506,27 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	}
 
 	// ===== STEP 4: Get Signing Key =====
-	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey(ctx)
+	privateKey, keyID, err := m.keyManager.GetCurrentSigningKey(ctx)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to get signing key", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to get signing key", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to get signing key: %w", err)
 	}
-	if s.logger != nil {
-		s.logger.Debug("signing key retrieved", ctx,
+	if m.logger != nil {
+		m.logger.Debug("signing key retrieved", ctx,
 			"userID", userID,
 			"keyID", keyID)
 	}
 
 	now := time.Now()
-	expiresAt := now.Add(s.accessTokenDuration)
+	expiresAt := now.Add(m.accessTokenDuration)
 	tokenID, err := generateTokenID()
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to generate token ID", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to generate token ID", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -536,8 +536,8 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	// Create map claims to support both standard and custom claims
 	claims := jwt.MapClaims{
 		"sub": userID,
-		"iss": s.issuer,
-		"aud": s.audience,
+		"iss": m.issuer,
+		"aud": m.audience,
 		"exp": expiresAt.Unix(),
 		"iat": now.Unix(),
 		"nbf": now.Unix(),
@@ -557,15 +557,15 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 			claims[key] = value
 			customClaimsCount++
 		} else {
-			if s.logger != nil {
-				s.logger.Warn("attempted to override reserved claim", ctx,
+			if m.logger != nil {
+				m.logger.Warn("attempted to override reserved claim", ctx,
 					"userID", userID,
 					"claim", key)
 			}
 		}
 	}
-	if s.logger != nil {
-		s.logger.Debug("access token claims created with custom claims", ctx,
+	if m.logger != nil {
+		m.logger.Debug("access token claims created with custom claims", ctx,
 			"userID", userID,
 			"tokenID", tokenID,
 			"customClaimsCount", customClaimsCount,
@@ -578,24 +578,24 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 
 	signedToken, err := token.SignedString(privateKey)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to sign token with custom claims", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to sign token with custom claims", ctx,
 				"userID", userID,
 				"keyID", keyID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to sign token: %w", err)
 	}
-	if s.logger != nil {
-		s.logger.Debug("access token with custom claims signed", ctx,
+	if m.logger != nil {
+		m.logger.Debug("access token with custom claims signed", ctx,
 			"userID", userID,
 			"tokenID", tokenID)
 	}
 	// ===== STEP 8: Record Success and Log =====
 	status = "success"
 	errorType = ""
-	if s.logger != nil {
-		s.logger.Info("access token with custom claims issued", ctx,
+	if m.logger != nil {
+		m.logger.Info("access token with custom claims issued", ctx,
 			"userID", userID,
 			"tokenID", tokenID,
 			"keyID", keyID,
@@ -611,17 +611,17 @@ func (s *Service) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 // not JWTs — they are 256-bit random values stored in the RefreshStore.
 //
 // Returns the same errors as IssueAccessToken.
-func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string, error) {
+func (m *Manager)IssueRefreshToken(ctx context.Context, userID string) (string, error) {
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 				"status":     status,
 				"error_type": errorType,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "issue_refresh_token",
 			})
 		}
@@ -631,21 +631,21 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "invalid_input"
 		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted to get token with empty userID", ctx)
 		}
 		return "", ErrInvalidUserID
 	}
 
 	// ===== STEP 2: Service State Check =====
 
-	if !s.IsRunning() {
+	if !m.IsRunning() {
 		status = "not_running"
 		errorType = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("service not running", ctx)
+		if m.logger != nil {
+			m.logger.Warn("service not running", ctx)
 		}
-		return "", ErrServiceNotRunning
+		return "", ErrManagerNotRunning
 	}
 
 	// ===== STEP 3: Context Check =====
@@ -654,16 +654,16 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if s.logger != nil {
-			s.logger.Warn("context cancelled during token issuance", ctx,
+		if m.logger != nil {
+			m.logger.Warn("context cancelled during token issuance", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", err
 	}
 
-	if s.logger != nil {
-		s.logger.Debug("issuing refresh token", ctx, "userID", userID)
+	if m.logger != nil {
+		m.logger.Debug("issuing refresh token", ctx, "userID", userID)
 	}
 
 	// ===== STEP 4: Generate Refresh Token =====
@@ -671,21 +671,21 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	// this is an OPAQUE token (not a JWT)
 	refreshToken, err := generateRefreshToken()
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to generate refresh token", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to generate refresh token", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
-	if s.logger != nil {
-		s.logger.Debug("refresh token generated", ctx,
+	if m.logger != nil {
+		m.logger.Debug("refresh token generated", ctx,
 			"userID", userID)
 	}
 
 	// ===== STEP 5: Calculate Expiration =====
 	now := time.Now()
-	expiresAt := now.Add(s.refreshTokenDuration)
+	expiresAt := now.Add(m.refreshTokenDuration)
 
 	// ===== STEP 6: Store Token =====
 	// Store token with metadata in RefreshStore
@@ -694,7 +694,7 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	//   - Token revocation
 	//   - User session tracking
 	//   - Audit trails
-	err = s.refreshStore.Store(
+	err = m.refreshStore.Store(
 		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
@@ -702,15 +702,15 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 		nil,          // No metadata (use IssueRefreshTokenWithMetadata for metadata)
 	)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to store refresh token", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to store refresh token", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to store refresh token: %w", err)
 	}
-	if s.logger != nil {
-		s.logger.Debug("refresh token stored", ctx,
+	if m.logger != nil {
+		m.logger.Debug("refresh token stored", ctx,
 			"userID", userID,
 			"expiresAt", expiresAt)
 	}
@@ -718,8 +718,8 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	// ===== STEP 7: Record Success and Log =====
 	status = "success"
 	errorType = ""
-	if s.logger != nil {
-		s.logger.Info("refresh token issued", ctx,
+	if m.logger != nil {
+		m.logger.Info("refresh token issued", ctx,
 			"userID", userID,
 			"tokenID", refreshToken,
 			"expiresAt", expiresAt)
@@ -733,17 +733,17 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 // tags). The metadata is retrievable via IntrospectToken.
 //
 // Returns the same errors as IssueAccessToken.
-func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID string, metadata map[string]interface{}) (string, error) {
+func (m *Manager)IssueRefreshTokenWithMetadata(ctx context.Context, userID string, metadata map[string]interface{}) (string, error) {
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 				"status":     status,
 				"error_type": errorType,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "issue_refresh_token",
 			})
 		}
@@ -753,20 +753,20 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "invalid_input"
 		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted to get token with empty userID", ctx)
 		}
 		return "", ErrInvalidUserID
 	}
 
 	// ===== STEP 2: Service State Check =====
-	if !s.IsRunning() {
+	if !m.IsRunning() {
 		status = "not_running"
 		errorType = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("service not running", ctx)
+		if m.logger != nil {
+			m.logger.Warn("service not running", ctx)
 		}
-		return "", ErrServiceNotRunning
+		return "", ErrManagerNotRunning
 	}
 
 	// ===== STEP 3: Context Check =====
@@ -775,16 +775,16 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if s.logger != nil {
-			s.logger.Warn("context cancelled during token issuance", ctx,
+		if m.logger != nil {
+			m.logger.Warn("context cancelled during token issuance", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", err
 	}
 
-	if s.logger != nil {
-		s.logger.Debug("issuing refresh token with metadata", ctx, "userID", userID)
+	if m.logger != nil {
+		m.logger.Debug("issuing refresh token with metadata", ctx, "userID", userID)
 	}
 
 	// ===== STEP 4: Generate Refresh Token =====
@@ -792,21 +792,21 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	// this is an OPAQUE token (not a JWT)
 	refreshToken, err := generateRefreshToken()
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to generate refresh token", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to generate refresh token", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to generate refresh token: %w", err)
 	}
-	if s.logger != nil {
-		s.logger.Debug("refresh token generated", ctx,
+	if m.logger != nil {
+		m.logger.Debug("refresh token generated", ctx,
 			"userID", userID)
 	}
 
 	// ===== STEP 5: Calculate Expiration =====
 	now := time.Now()
-	expiresAt := now.Add(s.refreshTokenDuration)
+	expiresAt := now.Add(m.refreshTokenDuration)
 
 	// ===== STEP 6: Store Token =====
 	// Store token with metadata in RefreshStore
@@ -815,7 +815,7 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	//   - Token revocation
 	//   - User session tracking
 	//   - Audit trails
-	err = s.refreshStore.Store(
+	err = m.refreshStore.Store(
 		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
@@ -823,15 +823,15 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		metadata,     // Custom metadata
 	)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to store refresh token with metadata", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to store refresh token with metadata", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", fmt.Errorf("failed to store refresh token with metadata: %w", err)
 	}
-	if s.logger != nil {
-		s.logger.Debug("refresh token with metadata stored", ctx,
+	if m.logger != nil {
+		m.logger.Debug("refresh token with metadata stored", ctx,
 			"userID", userID,
 			"metadataKeys", len(metadata),
 			"expiresAt", expiresAt)
@@ -840,8 +840,8 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	// ===== STEP 7: Record Success and Log =====
 	status = "success"
 	errorType = ""
-	if s.logger != nil {
-		s.logger.Info("refresh token with metadata issued", ctx,
+	if m.logger != nil {
+		m.logger.Info("refresh token with metadata issued", ctx,
 			"userID", userID,
 			"tokenID", refreshToken,
 			"expiresAt", expiresAt,
@@ -856,17 +856,17 @@ func (s *Service) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 //
 // Returns (accessToken, refreshToken, error). Returns the same errors as
 // IssueAccessToken.
-func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, string, error) {
+func (m *Manager)IssueTokenPair(ctx context.Context, userID string) (string, string, error) {
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 				"status":     status,
 				"error_type": errorType,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "issue_token_pair",
 			})
 		}
@@ -876,20 +876,20 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "invalid_input"
 		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("attempted to get token with empty userID", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted to get token with empty userID", ctx)
 		}
 		return "", "", ErrInvalidUserID
 	}
 
 	// ===== STEP 2: Service State Check =====
-	if !s.IsRunning() {
+	if !m.IsRunning() {
 		status = "not_running"
 		errorType = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("service not running", ctx)
+		if m.logger != nil {
+			m.logger.Warn("service not running", ctx)
 		}
-		return "", "", ErrServiceNotRunning
+		return "", "", ErrManagerNotRunning
 	}
 
 	// ===== STEP 3: Context Check =====
@@ -898,23 +898,23 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if s.logger != nil {
-			s.logger.Warn("context cancelled during token issuance", ctx,
+		if m.logger != nil {
+			m.logger.Warn("context cancelled during token issuance", ctx,
 				"userID", userID,
 				"error", err)
 		}
 		return "", "", err
 	}
 
-	if s.logger != nil {
-		s.logger.Debug("issuing token pair", ctx, "userID", userID)
+	if m.logger != nil {
+		m.logger.Debug("issuing token pair", ctx, "userID", userID)
 	}
 
 	// ===== STEP 4: Get Signing Key =====
-	privateKey, keyID, err := s.keyManager.GetCurrentSigningKey(ctx)
+	privateKey, keyID, err := m.keyManager.GetCurrentSigningKey(ctx)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to get signing key", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to get signing key", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -923,12 +923,12 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 
 	// ===== STEP 5: Create JWT Claims =====
 	now := time.Now()
-	expiresAt := now.Add(s.accessTokenDuration)
+	expiresAt := now.Add(m.accessTokenDuration)
 	// Generate unique token ID (jti claim)
 	tokenID, err := generateTokenID()
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to generate token ID", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to generate token ID", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -938,8 +938,8 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	// Create standard JWT claims
 	claims := jwt.RegisteredClaims{
 		Subject:   userID,                        // "sub" - who the token is for
-		Issuer:    s.issuer,                      // "iss" - who issued the token
-		Audience:  s.audience,                    // "aud" - who can use the token
+		Issuer:    m.issuer,                      // "iss" - who issued the token
+		Audience:  m.audience,                    // "aud" - who can use the token
 		ExpiresAt: jwt.NewNumericDate(expiresAt), // "exp" - when it expires
 		IssuedAt:  jwt.NewNumericDate(now),       // "iat" - when it was issued
 		NotBefore: jwt.NewNumericDate(now),       // "nbf" - valid from when
@@ -958,8 +958,8 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	signedToken, err := token.SignedString(privateKey)
 
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to sign token", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to sign token", ctx,
 				"userID", userID,
 				"keyID", keyID,
 				"error", err)
@@ -970,8 +970,8 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	// ===== STEP 8: Generate Refresh Token =====
 	refreshToken, err := generateRefreshToken()
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to generate refresh token", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to generate refresh token", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -980,7 +980,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 
 	// ===== STEP 9: Calculate Refresh Token Expiration =====
 	now = time.Now()
-	expiresAt = now.Add(s.refreshTokenDuration)
+	expiresAt = now.Add(m.refreshTokenDuration)
 
 	// ===== STEP 10: Store Refresh Token =====
 	// Store token with metadata in RefreshStore
@@ -989,7 +989,7 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	//   - Token revocation
 	//   - User session tracking
 	//   - Audit trails
-	err = s.refreshStore.Store(
+	err = m.refreshStore.Store(
 		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
@@ -997,8 +997,8 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 		nil,          // No metadata (use IssueRefreshTokenWithMetadata for metadata)
 	)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to store refresh token", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to store refresh token", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -1008,8 +1008,8 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 	// ===== STEP 11: Record Success and Log =====
 	status = "success"
 	errorType = ""
-	if s.logger != nil {
-		s.logger.Info("token pair issued", ctx,
+	if m.logger != nil {
+		m.logger.Info("token pair issued", ctx,
 			"userID", userID,
 			"tokenID", refreshToken,
 			"expiresAt", expiresAt)
@@ -1021,55 +1021,55 @@ func (s *Service) IssueTokenPair(ctx context.Context, userID string) (string, st
 // It verifies the RS256 signature using the public key identified by the token's
 // "kid" header, then checks expiration, issuer, and audience claims.
 //
-/// Returns the parsed RegisteredClaims on success, or one of: ErrServiceNotRunning,
+/// Returns the parsed RegisteredClaims on success, or one of: ErrManagerNotRunning,
 // ErrTokenExpired, ErrTokenNotYetValid, ErrInvalidIssuer, ErrInvalidAudience,
 // ErrInvalidToken (covers malformed tokens, wrong signing method, and unknown key IDs),
 // or the context error.
-func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, error) {
+func (m *Manager)ValidateAccessToken(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, error) {
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricTokensValidatedTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensValidatedTotal, map[string]string{
 				"status":     status,
 				"error_type": errorType,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "validate_access_token",
 			})
 		}
 	}()
 
 	// ===== STEP 1: Service State Check =====
-	if !s.IsRunning() {
+	if !m.IsRunning() {
 		status = "not_running"
 		errorType = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("attempted token validation while service stopped", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted token validation while service stopped", ctx)
 		}
-		return nil, ErrServiceNotRunning
+		return nil, ErrManagerNotRunning
 	}
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if s.logger != nil {
-			s.logger.Info("context cancelled during token validation", ctx,
+		if m.logger != nil {
+			m.logger.Info("context cancelled during token validation", ctx,
 				"error", err)
 		}
 		return nil, err
 	}
 
-	if s.logger != nil {
-		s.logger.Debug("validating access token", ctx)
+	if m.logger != nil {
+		m.logger.Debug("validating access token", ctx)
 	}
 
 	// ===== STEP 3: Parse JWT Token =====
 	parseOpts := []jwt.ParserOption{}
-	if s.clockSkew > 0 {
-		parseOpts = append(parseOpts, jwt.WithLeeway(s.clockSkew))
+	if m.clockSkew > 0 {
+		parseOpts = append(parseOpts, jwt.WithLeeway(m.clockSkew))
 	}
 
 	token, err := jwt.ParseWithClaims(
@@ -1078,8 +1078,8 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		func(token *jwt.Token) (interface{}, error) {
 			// ===== STEP 4a: Verify Signing Method =====
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				if s.logger != nil {
-					s.logger.Warn("token uses unexpected signing method", ctx,
+				if m.logger != nil {
+					m.logger.Warn("token uses unexpected signing method", ctx,
 						"method", token.Header["alg"])
 				}
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -1088,28 +1088,28 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 			// ===== STEP 4b: Extract Key ID =====
 			kid, ok := token.Header["kid"].(string)
 			if !ok {
-				if s.logger != nil {
-					s.logger.Warn("token missing kid in header", ctx)
+				if m.logger != nil {
+					m.logger.Warn("token missing kid in header", ctx)
 				}
 				return nil, errors.New("missing kid in token header")
 			}
-			if s.logger != nil {
-				s.logger.Debug("token kid extracted from header", ctx,
+			if m.logger != nil {
+				m.logger.Debug("token kid extracted from header", ctx,
 					"kid", kid)
 			}
 
 			// ===== STEP 4c: Get Public Key =====
-			publicKey, err := s.keyManager.GetPublicKey(ctx, kid)
+			publicKey, err := m.keyManager.GetPublicKey(ctx, kid)
 			if err != nil {
-				if s.logger != nil {
-					s.logger.Error("failed to get public key", ctx,
+				if m.logger != nil {
+					m.logger.Error("failed to get public key", ctx,
 						"kid", kid,
 						"error", err)
 				}
 				return nil, fmt.Errorf("failed to get public key: %w", err)
 			}
-			if s.logger != nil {
-				s.logger.Debug("public key retrieved for token validation", ctx,
+			if m.logger != nil {
+				m.logger.Debug("public key retrieved for token validation", ctx,
 					"kid", kid)
 			}
 
@@ -1120,8 +1120,8 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 
 	// ===== STEP 5: Check Parsing Errors =====
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Warn("token parsing failed", ctx,
+		if m.logger != nil {
+			m.logger.Warn("token parsing failed", ctx,
 				"error", err)
 		}
 
@@ -1129,8 +1129,8 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			status = "expired"
 			errorType = "expired"
-			if s.logger != nil {
-				s.logger.Warn("token expired", ctx)
+			if m.logger != nil {
+				m.logger.Warn("token expired", ctx)
 			}
 			return nil, ErrTokenExpired
 		}
@@ -1142,8 +1142,8 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		if errors.Is(err, keymanager.ErrKeyNotFound) {
 			status = "error"
 			errorType = "key_not_found"
-			if s.logger != nil {
-				s.logger.Warn("token references unknown key ID", ctx)
+			if m.logger != nil {
+				m.logger.Warn("token references unknown key ID", ctx)
 			}
 			return nil, ErrInvalidToken
 		}
@@ -1153,47 +1153,47 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 
 	// ===== STEP 6: Verify Token is Valid =====
 	if !token.Valid {
-		if s.logger != nil {
-			s.logger.Warn("token marked as invalid", ctx)
+		if m.logger != nil {
+			m.logger.Warn("token marked as invalid", ctx)
 		}
 		return nil, ErrInvalidToken
 	}
-	if s.logger != nil {
-		s.logger.Debug("token signature and structure validated", ctx)
+	if m.logger != nil {
+		m.logger.Debug("token signature and structure validated", ctx)
 	}
 
 	// ===== STEP 7: Extract Claims =====
 	claims, ok := token.Claims.(*jwt.RegisteredClaims)
 	if !ok {
-		if s.logger != nil {
-			s.logger.Error("failed to extract claims from token", ctx)
+		if m.logger != nil {
+			m.logger.Error("failed to extract claims from token", ctx)
 		}
 		return nil, ErrInvalidToken
 	}
-	if s.logger != nil {
-		s.logger.Debug("claims extracted from token", ctx,
+	if m.logger != nil {
+		m.logger.Debug("claims extracted from token", ctx,
 			"tokenID", claims.ID,
 			"userID", claims.Subject)
 	}
 
 	// ===== STEP 8: Validate Issuer =====
-	if s.issuer != "" && claims.Issuer != s.issuer {
-		if s.logger != nil {
-			s.logger.Warn("token issuer mismatch", ctx,
-				"expected", s.issuer,
+	if m.issuer != "" && claims.Issuer != m.issuer {
+		if m.logger != nil {
+			m.logger.Warn("token issuer mismatch", ctx,
+				"expected", m.issuer,
 				"actual", claims.Issuer)
 		}
 		return nil, ErrInvalidIssuer
 	}
-	if s.logger != nil {
-		s.logger.Debug("token issuer validated", ctx,
+	if m.logger != nil {
+		m.logger.Debug("token issuer validated", ctx,
 			"issuer", claims.Issuer)
 	}
 
 	// ===== STEP 9: Validate Audience =====
-	if len(s.audience) > 0 {
+	if len(m.audience) > 0 {
 		validAudience := false
-		for _, aud := range s.audience {
+		for _, aud := range m.audience {
 			for _, tokenAud := range claims.Audience {
 				if aud == tokenAud {
 					validAudience = true
@@ -1206,15 +1206,15 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 		}
 
 		if !validAudience {
-			if s.logger != nil {
-				s.logger.Warn("token audience mismatch", ctx,
-					"expected", s.audience,
+			if m.logger != nil {
+				m.logger.Warn("token audience mismatch", ctx,
+					"expected", m.audience,
 					"actual", claims.Audience)
 			}
 			return nil, ErrInvalidAudience
 		}
-		if s.logger != nil {
-			s.logger.Debug("token audience validated", ctx,
+		if m.logger != nil {
+			m.logger.Debug("token audience validated", ctx,
 				"audience", claims.Audience)
 		}
 	}
@@ -1222,8 +1222,8 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 	// ===== STEP 10: Record Success and Log =====
 	status = "success"
 	errorType = ""
-	if s.logger != nil {
-		s.logger.Info("access token validated", ctx,
+	if m.logger != nil {
+		m.logger.Info("access token validated", ctx,
 			"userID", claims.Subject,
 			"tokenID", claims.ID)
 	}
@@ -1232,21 +1232,21 @@ func (s *Service) ValidateAccessToken(ctx context.Context, tokenString string) (
 }
 
 // ValidateAccessTokenWithClaims validates the token and returns both the registered
-// claims and any custom claims embedded at issuance via IssueAccessTokenWithClaims.
+// claims and any custom claims embedded at issuance via IssueAccessTokenWithClaimm.
 // Reserved claim keys (sub, exp, nbf, iat, jti, iss, aud) are excluded from the
-// custom claims map so callers receive only the application-defined fields.
+// custom claims map so callers receive only the application-defined fieldm.
 // Returns an empty map when no custom claims were embedded.
 //
-// Returns ErrServiceNotRunning if the service has not been started, ErrTokenExpired
+// Returns ErrManagerNotRunning if the service has not been started, ErrTokenExpired
 // if the token has expired beyond the configured ClockSkew, ErrTokenNotYetValid if
 // the nbf claim has not been reached, ErrInvalidIssuer or ErrInvalidAudience if
 // configured values do not match, ErrInvalidToken for malformed tokens or unknown
 // key IDs, or the context error if the context is cancelled.
-func (s *Service) ValidateAccessTokenWithClaims(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, map[string]interface{}, error) {
+func (m *Manager)ValidateAccessTokenWithClaims(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, map[string]interface{}, error) {
 	// ===== STEP 1: Validate via Standard Path =====
 	// All error handling (signature, expiry, issuer, audience, metrics, logging)
 	// is handled by ValidateAccessToken — no duplication needed.
-	registered, err := s.ValidateAccessToken(ctx, tokenString)
+	registered, err := m.ValidateAccessToken(ctx, tokenString)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1283,63 +1283,63 @@ func (s *Service) ValidateAccessTokenWithClaims(ctx context.Context, tokenString
 // It retrieves the refresh token from storage, checks expiration and revocation
 // status, then calls IssueAccessToken for the token's owner.
 //
-// Returns ErrServiceNotRunning, ErrInvalidRefreshToken, ErrRefreshTokenExpired,
+// Returns ErrManagerNotRunning, ErrInvalidRefreshToken, ErrRefreshTokenExpired,
 // ErrTokenRevoked, or the context error.
-func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (string, error) {
+func (m *Manager)RefreshAccessToken(ctx context.Context, refreshToken string) (string, error) {
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricTokensRefreshedTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensRefreshedTotal, map[string]string{
 				"status":     status,
 				"error_type": errorType,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "refresh_access_token",
 			})
 		}
 	}()
 
 	// ===== STEP 1: Service State Check =====
-	if !s.isRunning.Load() {
+	if !m.isRunning.Load() {
 		status = "not_running"
 		errorType = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("attempted to refresh while service was stopped", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted to refresh while service was stopped", ctx)
 		}
-		return "", ErrServiceNotRunning
+		return "", ErrManagerNotRunning
 	}
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if s.logger != nil {
-			s.logger.Info("context cancelled during token refresh", ctx)
+		if m.logger != nil {
+			m.logger.Info("context cancelled during token refresh", ctx)
 		}
 		return "", err
 	}
 
-	if s.logger != nil {
-		s.logger.Debug("attempting token refresh", ctx)
+	if m.logger != nil {
+		m.logger.Debug("attempting token refresh", ctx)
 	}
 
 	// ===== STEP 3: Input Validation =====
 	if refreshToken == "" {
 		status = "invalid_input"
 		errorType = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("empty refresh token provided", ctx)
+		if m.logger != nil {
+			m.logger.Warn("empty refresh token provided", ctx)
 		}
 		return "", ErrInvalidRefreshToken
 	}
 
 	// ===== STEP 4: Lookup Refresh Token =====
-	token, err := s.refreshStore.Retrieve(ctx, refreshToken)
+	token, err := m.refreshStore.Retrieve(ctx, refreshToken)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Warn("refresh token not found in store", ctx,
+		if m.logger != nil {
+			m.logger.Warn("refresh token not found in store", ctx,
 				"error", err)
 		}
 		// Propagate specific errors, default to invalid token for generic errors
@@ -1353,8 +1353,8 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		return "", ErrInvalidRefreshToken
 	}
 
-	if s.logger != nil {
-		s.logger.Debug("refresh token retrieved from store", ctx,
+	if m.logger != nil {
+		m.logger.Debug("refresh token retrieved from store", ctx,
 			"userID", token.UserID,
 			"tokenID", token.TokenID)
 	}
@@ -1363,14 +1363,14 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	if token.ExpiresAt.Before(time.Now()) {
 		status = "expired"
 		errorType = "expired"
-		if s.logger != nil {
-			s.logger.Warn("refresh token has expired", ctx,
+		if m.logger != nil {
+			m.logger.Warn("refresh token has expired", ctx,
 				"tokenID", refreshToken,
 				"expiredAt", token.ExpiresAt)
 		}
 
 		// Clean up expired token (ignore error — we're returning ErrRefreshTokenExpired anyway)
-		_ = s.refreshStore.Revoke(ctx, refreshToken)
+		_ = m.refreshStore.Revoke(ctx, refreshToken)
 
 		return "", ErrRefreshTokenExpired
 	}
@@ -1379,18 +1379,18 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	if token.Revoked {
 		status = "revoked"
 		errorType = "revoked"
-		if s.logger != nil {
-			s.logger.Warn("refresh token has been revoked", ctx,
+		if m.logger != nil {
+			m.logger.Warn("refresh token has been revoked", ctx,
 				"tokenID", refreshToken)
 		}
 		return "", ErrTokenRevoked
 	}
 
 	// ===== STEP 7: Issue New Access Token =====
-	newAccessToken, err := s.IssueAccessToken(ctx, token.UserID)
+	newAccessToken, err := m.IssueAccessToken(ctx, token.UserID)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to issue new access token", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to issue new access token", ctx,
 				"userID", token.UserID,
 				"error", err)
 		}
@@ -1400,8 +1400,8 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	// ===== STEP 9: Record Success and Log =====
 	status = "success"
 	errorType = ""
-	if s.logger != nil {
-		s.logger.Info("access token refreshed", ctx,
+	if m.logger != nil {
+		m.logger.Info("access token refreshed", ctx,
 			"userID", token.UserID,
 			"tokenID", refreshToken)
 	}
@@ -1413,37 +1413,37 @@ func (s *Service) RefreshAccessToken(ctx context.Context, refreshToken string) (
 // Subsequent calls to RefreshAccessToken or IntrospectToken will see the token
 // as inactive.
 //
-// Returns ErrServiceNotRunning, ErrInvalidRefreshToken for empty tokenID, or
+// Returns ErrManagerNotRunning, ErrInvalidRefreshToken for empty tokenID, or
 // the context error.
-func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error {
+func (m *Manager)RevokeRefreshToken(ctx context.Context, tokenID string) error {
 	start := time.Now()
 	status := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
 				"operation": "single",
 				"status":    status,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "revoke_token",
 			})
 		}
 	}()
 
 	// ===== STEP 1: Service State Check =====
-	if !s.isRunning.Load() {
+	if !m.isRunning.Load() {
 		status = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("attempted to revoke token while service stopped", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted to revoke token while service stopped", ctx)
 		}
-		return ErrServiceNotRunning
+		return ErrManagerNotRunning
 	}
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
-		if s.logger != nil {
-			s.logger.Info("context cancelled during token revocation", ctx)
+		if m.logger != nil {
+			m.logger.Info("context cancelled during token revocation", ctx)
 		}
 		return err
 	}
@@ -1451,18 +1451,18 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	// ===== STEP 3: Input Validation =====
 	if tokenID == "" {
 		status = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("empty token ID provided for revocation", ctx)
+		if m.logger != nil {
+			m.logger.Warn("empty token ID provided for revocation", ctx)
 		}
 		return ErrInvalidRefreshToken
 	}
 
 	// ===== STEP 4: Revoke Token =====
-	err := s.refreshStore.Revoke(ctx, tokenID)
+	err := m.refreshStore.Revoke(ctx, tokenID)
 	if err != nil {
-		if s.logger != nil {
+		if m.logger != nil {
 
-			s.logger.Error("failed to revoke refresh token", ctx,
+			m.logger.Error("failed to revoke refresh token", ctx,
 				"tokenID", tokenID,
 				"error", err)
 		}
@@ -1471,8 +1471,8 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 
 	// ===== STEP 5: Record Success and Log =====
 	status = "success"
-	if s.logger != nil {
-		s.logger.Info("refresh token revoked", ctx,
+	if m.logger != nil {
+		m.logger.Info("refresh token revoked", ctx,
 			"tokenID", tokenID)
 	}
 
@@ -1480,39 +1480,39 @@ func (s *Service) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 }
 
 // RevokeAllUserTokens revokes every refresh token belonging to the given user.
-// Use this for logout-all-devices or account suspension scenarios.
+// Use this for logout-all-devices or account suspension scenariom.
 //
-// Returns ErrServiceNotRunning, ErrInvalidUserID for empty userID, or the
+// Returns ErrManagerNotRunning, ErrInvalidUserID for empty userID, or the
 // context error.
-func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error {
+func (m *Manager)RevokeAllUserTokens(ctx context.Context, userID string) error {
 	start := time.Now()
 	status := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
 				"operation": "all_user",
 				"status":    status,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "revoke_all_user_tokens",
 			})
 		}
 	}()
 
 	// ===== STEP 1: Service State Check =====
-	if !s.isRunning.Load() {
+	if !m.isRunning.Load() {
 		status = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("attempted to revoke all user tokens while service stopped", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted to revoke all user tokens while service stopped", ctx)
 		}
-		return ErrServiceNotRunning
+		return ErrManagerNotRunning
 	}
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
-		if s.logger != nil {
-			s.logger.Info("context cancelled during bulk token revocation", ctx,
+		if m.logger != nil {
+			m.logger.Info("context cancelled during bulk token revocation", ctx,
 				"error", err)
 		}
 		return err
@@ -1521,17 +1521,17 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	// ===== STEP 3: Input Validation =====
 	if userID == "" {
 		status = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("empty user ID provided for bulk revocation", ctx)
+		if m.logger != nil {
+			m.logger.Warn("empty user ID provided for bulk revocation", ctx)
 		}
 		return ErrInvalidUserID // Note: Different error than single revoke
 	}
 
 	// ===== STEP 4: Revoke All Tokens For User =====
-	err := s.refreshStore.RevokeAllForUser(ctx, userID)
+	err := m.refreshStore.RevokeAllForUser(ctx, userID)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to revoke all user tokens", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to revoke all user tokens", ctx,
 				"userID", userID,
 				"error", err)
 		}
@@ -1540,8 +1540,8 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 
 	// ===== STEP 5: Record Success and Log =====
 	status = "success"
-	if s.logger != nil {
-		s.logger.Info("all refresh tokens revoked for user", ctx,
+	if m.logger != nil {
+		m.logger.Info("all refresh tokens revoked for user", ctx,
 			"userID", userID)
 	}
 
@@ -1555,60 +1555,60 @@ func (s *Service) RevokeAllUserTokens(ctx context.Context, userID string) error 
 // Only refresh tokens are supported. Access tokens (JWTs) should be validated
 // with ValidateAccessToken instead.
 //
-// Returns ErrServiceNotRunning, ErrInvalidRefreshToken for empty tokens, or
+// Returns ErrManagerNotRunning, ErrInvalidRefreshToken for empty tokens, or
 // the context error.
-func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMetadata, error) {
+func (m *Manager)IntrospectToken(ctx context.Context, token string) (*TokenMetadata, error) {
 	start := time.Now()
 	status := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricTokensIntrospectedTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensIntrospectedTotal, map[string]string{
 				"status": status,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "introspect_token",
 			})
 		}
 	}()
 
 	// ===== STEP 1: Service State Check =====
-	if !s.isRunning.Load() {
+	if !m.isRunning.Load() {
 		status = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("attempted to introspect token while service is stopped", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted to introspect token while service is stopped", ctx)
 		}
-		return nil, ErrServiceNotRunning
+		return nil, ErrManagerNotRunning
 	}
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
-		if s.logger != nil {
-			s.logger.Info("context cancelled during token introspection", ctx)
+		if m.logger != nil {
+			m.logger.Info("context cancelled during token introspection", ctx)
 		}
 		return nil, err
 	}
 
-	if s.logger != nil {
-		s.logger.Debug("introspecting token", ctx)
+	if m.logger != nil {
+		m.logger.Debug("introspecting token", ctx)
 	}
 
 	// ===== STEP 3: Input Validation =====
 	if token == "" {
 		status = "invalid_input"
-		if s.logger != nil {
-			s.logger.Warn("empty token provided for introspection", ctx)
+		if m.logger != nil {
+			m.logger.Warn("empty token provided for introspection", ctx)
 		}
 		return nil, ErrInvalidRefreshToken
 	}
 
 	// ===== STEP 4: Retrieve Token From Storage =====
-	refreshToken, err := s.refreshStore.Retrieve(ctx, token)
+	refreshToken, err := m.refreshStore.Retrieve(ctx, token)
 	if err != nil {
 		// Return inactive metadata instead of error — introspect never errors on unknown tokens
 		status = "success"
-		if s.logger != nil {
-			s.logger.Info("token not found during introspection", ctx,
+		if m.logger != nil {
+			m.logger.Info("token not found during introspection", ctx,
 				"error", err)
 		}
 		return &TokenMetadata{
@@ -1626,8 +1626,8 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	// Check if expired
 	if refreshToken.ExpiresAt.Before(now) {
 		status = "success"
-		if s.logger != nil {
-			s.logger.Info("introspect token is expired", ctx,
+		if m.logger != nil {
+			m.logger.Info("introspect token is expired", ctx,
 				"token", token,
 				"expiredAt", refreshToken.ExpiresAt)
 		}
@@ -1643,8 +1643,8 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	// Check if revoked
 	if refreshToken.Revoked {
 		status = "success"
-		if s.logger != nil {
-			s.logger.Info("introspected token is revoked", ctx,
+		if m.logger != nil {
+			m.logger.Info("introspected token is revoked", ctx,
 				"tokenID", token)
 		}
 
@@ -1659,8 +1659,8 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// ===== STEP 6: Record Success and Return Active Token Metadata =====
 	status = "success"
-	if s.logger != nil {
-		s.logger.Info("token introspection successfully", ctx,
+	if m.logger != nil {
+		m.logger.Info("token introspection successfully", ctx,
 			"tokenID", token,
 			"userID", refreshToken.UserID,
 			"active", true)
@@ -1676,48 +1676,48 @@ func (s *Service) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 // CleanupExpiredTokens removes all expired refresh tokens from the RefreshStore.
 // The service also runs this automatically in the background at CleanupInterval,
-// so manual calls are only needed for on-demand sweeps.
+// so manual calls are only needed for on-demand sweepm.
 //
-// Returns the number of tokens deleted, ErrServiceNotRunning, or the context error.
-func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
+// Returns the number of tokens deleted, ErrManagerNotRunning, or the context error.
+func (m *Manager)CleanupExpiredTokens(ctx context.Context) (int, error) {
 	start := time.Now()
 	status := "error"
 	defer func() {
-		if s.metrics != nil {
-			s.metrics.IncrementCounter(metricOperationsTotal, map[string]string{
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricOperationsTotal, map[string]string{
 				"operation": "cleanup",
 				"status":    status,
 			})
-			s.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 				"operation": "cleanup",
 			})
 		}
 	}()
 
 	// ===== STEP 1: Service State Check =====
-	if !s.isRunning.Load() {
+	if !m.isRunning.Load() {
 		status = "not_running"
-		if s.logger != nil {
-			s.logger.Warn("attempted cleanup while service stopped", ctx)
+		if m.logger != nil {
+			m.logger.Warn("attempted cleanup while service stopped", ctx)
 		}
-		return 0, ErrServiceNotRunning
+		return 0, ErrManagerNotRunning
 	}
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
-		if s.logger != nil {
-			s.logger.Info("context cancelled during cleanup", ctx,
+		if m.logger != nil {
+			m.logger.Info("context cancelled during cleanup", ctx,
 				"error", err)
 		}
 		return 0, err
 	}
 
 	// ===== STEP 3: Run Cleanup =====
-	count, err := s.refreshStore.Cleanup(ctx)
+	count, err := m.refreshStore.Cleanup(ctx)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("failed to cleanup expired tokens", ctx,
+		if m.logger != nil {
+			m.logger.Error("failed to cleanup expired tokens", ctx,
 				"error", err)
 		}
 		return 0, fmt.Errorf("cleanup failed: %w", err)
@@ -1725,8 +1725,8 @@ func (s *Service) CleanupExpiredTokens(ctx context.Context) (int, error) {
 
 	// ===== STEP 4: Record Success and Log =====
 	status = "success"
-	if s.logger != nil {
-		s.logger.Info("expired tokens cleaned up", ctx,
+	if m.logger != nil {
+		m.logger.Info("expired tokens cleaned up", ctx,
 			"deleted", count)
 	}
 
