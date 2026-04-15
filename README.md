@@ -134,6 +134,75 @@ Swap the constructor arguments. The `KeyManager` and `TokenService` interfaces a
 
 **What jwtauth is not:** a full authorization server (no login flows, no OAuth2/OIDC), a session management library, or a rate limiter. For managed auth infrastructure, Keycloak, Dex, or Ory Hydra serve that role. jwtauth is the token engine you'd wire underneath them, or build directly into a service that already verifies identity by other means.
 
+## When NOT to Use This
+
+Good libraries state their boundaries. Here's when jwtauth is the **wrong choice**:
+
+### ❌ You Need a Complete Authentication Server
+
+**Don't use jwtauth if you need:**
+- Login flows (username/password, OAuth callbacks, SAML assertion handling)
+- User registration and account management
+- Password reset flows and email verification
+- Multi-factor authentication (MFA/2FA)
+- Session management with cookies
+- Identity provider integration (Google, GitHub, Auth0)
+
+**Use instead:** [Keycloak](https://www.keycloak.org/), [Ory Hydra](https://www.ory.sh/hydra/), [Auth0](https://auth0.com/), [Dex](https://dexidp.io/)
+
+**Why:** These provide complete authentication infrastructure. jwtauth assumes you've already verified identity and just need token machinery.
+
+### ❌ You Only Need Stateless JWT Signing/Validation
+
+**Don't use jwtauth if:**
+- You don't need refresh tokens (short-lived access tokens are enough)
+- You don't need revocation (expiry-based invalidation is acceptable)
+- You're okay with manual key rotation (or no rotation at all)
+- Single-instance deployment (no horizontal scaling)
+
+**Use instead:** [golang-jwt/jwt](https://github.com/golang-jwt/jwt) — simpler, fewer dependencies, does one thing well
+
+**Why:** Stateless JWT is conceptually simpler. If you don't need the stateful machinery (refresh tokens, revocation, key rotation), you're carrying unnecessary complexity.
+
+### ❌ You Need Encrypted Tokens (JWE) or Multi-Algorithm JOSE
+
+**Don't use jwtauth if you need:**
+- JWE (JSON Web Encryption) for encrypted token payloads
+- JWS detached payloads or nested tokens
+- Multiple signing algorithms (ES256, EdDSA, etc.)
+- Full JOSE (JWS, JWE, JWK, JWA) operations
+
+**Use instead:** [lestrrat-go/jwx](https://github.com/lestrrat-go/jwx), [go-jose/go-jose](https://github.com/go-jose/go-jose)
+
+**Why:** jwtauth supports RS256 only. If you need the full JOSE suite, reach for a comprehensive library.
+
+### ❌ Framework-Specific Convenience is Your Priority
+
+**Don't use jwtauth if:**
+- You're using Gin and want zero configuration
+- You want middleware that "just works" with your framework
+- You're building a prototype and don't care about production operations
+- Single file, copy-paste simplicity is more valuable than flexibility
+
+**Use instead:** [gin-jwt/jwt](https://github.com/appleboy/gin-jwt) (for Gin), [echo-jwt](https://github.com/labstack/echo-jwt) (for Echo)
+
+**Why:** Framework-specific middleware trades flexibility for convenience. If you're not running distributed systems in production, that trade-off might be worth it.
+
+---
+
+### ✅ Use jwtauth When
+
+You've already verified identity and need **production-grade token machinery** for distributed systems:
+- Zero-downtime key rotation (not manual)
+- Instant revocation (not expiry-based)
+- Horizontal scale with refresh token state
+- Observability (metrics, logging, tracing)
+- Stateful refresh token lifecycle
+
+**Good fit:** Microservices, multi-instance deployments, production systems where token operations are critical infrastructure.
+
+**Not a fit:** MVPs, single-instance apps, stateless architectures, or when you need an all-in-one auth server.
+
 ### Design Philosophy
 
 - **Dependency Inversion**: All components depend on interfaces, not concrete implementations
