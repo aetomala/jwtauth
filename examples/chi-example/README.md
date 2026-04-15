@@ -153,7 +153,7 @@ Response:
 Chi middleware uses the standard `func(http.Handler) http.Handler` pattern. The custom middleware in `auth/middleware.go`:
 
 1. **Extracts** the token from the `Authorization: Bearer <token>` header
-2. **Validates** the token using `svc.ValidateAccessToken()`
+2. **Validates** the token using `mgr.ValidateAccessToken()`
 3. **Attaches** the claims to the request context with `context.WithValue()`
 4. **Proceeds** to the next handler or **writes** 401 if validation fails
 
@@ -165,7 +165,7 @@ Chi allows organizing routes hierarchically:
 
 ```go
 r.Route("/api", func(r chi.Router) {
-    r.Use(auth.AuthMiddleware(svc))  // Only applied to /api routes
+    r.Use(auth.BearerMiddleware(mgr))  // Only applied to /api routes
     r.Get("/profile", profileHandler)
     r.Post("/logout", logoutHandler)
 })
@@ -178,16 +178,16 @@ The example demonstrates proper `jwtauth` lifecycle management:
 ```go
 // Start
 km.Start(ctx)
-svc.Start(ctx)
+mgr.Start(ctx)
 
 // Use
-svc.IssueTokenPair(ctx, userID)
-svc.ValidateAccessToken(ctx, token)
-svc.RefreshAccessToken(ctx, refreshToken)
-svc.RevokeAllUserTokens(ctx, userID)
+mgr.IssueTokenPair(ctx, userID)
+mgr.ValidateAccessToken(ctx, token)
+mgr.RefreshAccessToken(ctx, refreshToken)
+mgr.RevokeAllUserTokens(ctx, userID)
 
 // Shutdown
-svc.Shutdown(shutdownCtx)
+mgr.Shutdown(shutdownCtx)
 km.Shutdown(shutdownCtx)
 ```
 
@@ -218,7 +218,7 @@ claims := map[string]interface{}{
     "tenant": "org-123",
 }
 
-token, err := svc.IssueAccessTokenWithClaims(ctx, userID, claims)
+token, err := mgr.IssueAccessTokenWithClaims(ctx, userID, claims)
 ```
 
 ### Add Authorization Middleware
@@ -227,7 +227,7 @@ Use `ValidateAccessTokenWithClaims` in your middleware to surface custom claims,
 
 ```go
 // In auth middleware — replace ValidateAccessToken with ValidateAccessTokenWithClaims
-registered, custom, err := svc.ValidateAccessTokenWithClaims(r.Context(), token)
+registered, custom, err := mgr.ValidateAccessTokenWithClaims(r.Context(), token)
 if err != nil {
     writeJSONError(w, tokenErrorCode(err), http.StatusUnauthorized)
     return
@@ -265,7 +265,7 @@ Replace the in-memory `RefreshStore` with your own implementation:
 // Create custom store
 store := database.NewPostgresRefreshStore(db, logger)
 
-svc, _ := tokens.NewService(tokens.ServiceConfig{
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{
     RefreshStore: store,
     // ... other config
 })
@@ -284,7 +284,7 @@ km, _ := keymanager.NewManager(keymanager.ManagerConfig{
     Logger:   logger,
 })
 
-svc, _ := tokens.NewService(tokens.ServiceConfig{
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{
     Logger: logger,
 })
 ```
