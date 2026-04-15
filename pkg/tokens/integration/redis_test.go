@@ -17,12 +17,12 @@ import (
 )
 
 func init() {
-	RunTokenServiceIntegrationTests(
-		"TokenService Integration — RedisKeyStore + RedisRefreshStore",
+	RunTokenManagerIntegrationTests(
+		"TokenManager Integration — RedisKeyStore + RedisRefreshStore",
 		redisFactory,
 	)
 
-	Describe("TokenService Integration — distributed Redis behavior", func() {
+	Describe("TokenManager Integration — distributed Redis behavior", func() {
 		var (
 			mr     *miniredis.Miniredis
 			client *redis.Client
@@ -52,9 +52,9 @@ func init() {
 			// key store and refresh store — this is the distributed deployment model.
 			// Each Manager starts independently, loading shared keys from Redis.
 			// Instance A issues and revokes; instance B must observe the revocation immediately
-			// because both TokenServices read from the same Redis refresh store.
+			// because both TokenManagers read from the same Redis refresh store.
 
-			// Instance A — own KeyManager, own TokenService, shared Redis backend
+			// Instance A — own KeyManager, own TokenManager, shared Redis backend
 			ksA, err := keymanager.NewRedisKeyStore(client, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -66,7 +66,7 @@ func init() {
 			Expect(err).NotTo(HaveOccurred())
 
 			storeA := storage.NewRedisRefreshStore(client, nil, nil)
-			svcA, err := tokens.NewService(tokens.ServiceConfig{
+			mgrA, err := tokens.NewManager(tokens.ManagerConfig{
 				KeyManager:           kmA,
 				RefreshStore:         storeA,
 				AccessTokenDuration:  5 * time.Minute,
@@ -75,14 +75,14 @@ func init() {
 				Audience:             []string{"integration-test"},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(svcA.Start(ctx)).To(Succeed())
+			Expect(mgrA.Start(ctx)).To(Succeed())
 			DeferCleanup(func() {
 				shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
 				defer c()
-				_ = svcA.Shutdown(shutdownCtx)
+				_ = mgrA.Shutdown(shutdownCtx)
 			})
 
-			// Instance B — own KeyManager (loads A's keys from Redis), own TokenService, shared refresh store
+			// Instance B — own KeyManager (loads A's keys from Redis), own TokenManager, shared refresh store
 			ksB, err := keymanager.NewRedisKeyStore(client, nil, nil)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -94,7 +94,7 @@ func init() {
 			Expect(err).NotTo(HaveOccurred())
 
 			storeB := storage.NewRedisRefreshStore(client, nil, nil)
-			svcB, err := tokens.NewService(tokens.ServiceConfig{
+			mgrB, err := tokens.NewManager(tokens.ManagerConfig{
 				KeyManager:           kmB,
 				RefreshStore:         storeB,
 				AccessTokenDuration:  5 * time.Minute,
@@ -103,33 +103,33 @@ func init() {
 				Audience:             []string{"integration-test"},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(svcB.Start(ctx)).To(Succeed())
+			Expect(mgrB.Start(ctx)).To(Succeed())
 			DeferCleanup(func() {
 				shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
 				defer c()
-				_ = svcB.Shutdown(shutdownCtx)
+				_ = mgrB.Shutdown(shutdownCtx)
 			})
 
 			userID := "distributed-user"
 
 			// Instance A issues tokens
-			_, refreshToken, err := svcA.IssueTokenPair(ctx, userID)
+			_, refreshToken, err := mgrA.IssueTokenPair(ctx, userID)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Instance B can use the refresh token (shared store)
-			newAccessToken, err := svcB.RefreshAccessToken(ctx, refreshToken)
+			newAccessToken, err := mgrB.RefreshAccessToken(ctx, refreshToken)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(newAccessToken).NotTo(BeEmpty())
 
 			// Issue a fresh refresh token (the previous one was consumed by RefreshAccessToken)
-			_, freshRefresh, err := svcA.IssueTokenPair(ctx, userID)
+			_, freshRefresh, err := mgrA.IssueTokenPair(ctx, userID)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Instance A revokes all tokens for the user
-			Expect(svcA.RevokeAllUserTokens(ctx, userID)).To(Succeed())
+			Expect(mgrA.RevokeAllUserTokens(ctx, userID)).To(Succeed())
 
 			// Instance B must immediately observe the revocation — no cache, reads Redis directly
-			_, err = svcB.RefreshAccessToken(ctx, freshRefresh)
+			_, err = mgrB.RefreshAccessToken(ctx, freshRefresh)
 			Expect(err).To(Equal(tokens.ErrTokenRevoked))
 		})
 
@@ -149,7 +149,7 @@ func init() {
 			Expect(err).NotTo(HaveOccurred())
 
 			storeA := storage.NewRedisRefreshStore(client, nil, nil)
-			svcA, err := tokens.NewService(tokens.ServiceConfig{
+			mgrA, err := tokens.NewManager(tokens.ManagerConfig{
 				KeyManager:           kmA,
 				RefreshStore:         storeA,
 				AccessTokenDuration:  5 * time.Minute,
@@ -158,24 +158,24 @@ func init() {
 				Audience:             []string{"integration-test"},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(svcA.Start(ctx)).To(Succeed())
+			Expect(mgrA.Start(ctx)).To(Succeed())
 			DeferCleanup(func() {
 				shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
 				defer c()
-				_ = svcA.Shutdown(shutdownCtx)
+				_ = mgrA.Shutdown(shutdownCtx)
 			})
 
 			userID := "rotation-distributed-user"
 
 			// Instance A issues a token with the initial key
-			preRotationToken, err := svcA.IssueAccessToken(ctx, userID)
+			preRotationToken, err := mgrA.IssueAccessToken(ctx, userID)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Instance A rotates keys — new key saved to Redis
 			Expect(kmA.RotateKeys(ctx)).To(Succeed())
 
 			// Instance A issues a token with the new key
-			postRotationToken, err := svcA.IssueAccessToken(ctx, userID)
+			postRotationToken, err := mgrA.IssueAccessToken(ctx, userID)
 			Expect(err).NotTo(HaveOccurred())
 
 			// Instance B starts with the same Redis key store — loads all keys on Start
@@ -190,7 +190,7 @@ func init() {
 			Expect(err).NotTo(HaveOccurred())
 
 			storeB := storage.NewRedisRefreshStore(client, nil, nil)
-			svcB, err := tokens.NewService(tokens.ServiceConfig{
+			mgrB, err := tokens.NewManager(tokens.ManagerConfig{
 				KeyManager:           kmB,
 				RefreshStore:         storeB,
 				AccessTokenDuration:  5 * time.Minute,
@@ -199,28 +199,28 @@ func init() {
 				Audience:             []string{"integration-test"},
 			})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(svcB.Start(ctx)).To(Succeed())
+			Expect(mgrB.Start(ctx)).To(Succeed())
 			DeferCleanup(func() {
 				shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
 				defer c()
-				_ = svcB.Shutdown(shutdownCtx)
+				_ = mgrB.Shutdown(shutdownCtx)
 			})
 
 			// Instance B validates both tokens signed by instance A's keys
-			claims, err := svcB.ValidateAccessToken(ctx, preRotationToken)
+			claims, err := mgrB.ValidateAccessToken(ctx, preRotationToken)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(claims.Subject).To(Equal(userID))
 
-			claims, err = svcB.ValidateAccessToken(ctx, postRotationToken)
+			claims, err = mgrB.ValidateAccessToken(ctx, postRotationToken)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(claims.Subject).To(Equal(userID))
 		})
 	})
 }
 
-// redisFactory creates a TokenService backed by RedisKeyStore + RedisRefreshStore
+// redisFactory creates a TokenManager backed by RedisKeyStore + RedisRefreshStore
 // using an isolated miniredis instance. Each call produces a fully independent backend.
-func redisFactory(cfg tokens.ServiceConfig) (*tokens.Service, *keymanager.Manager, func()) {
+func redisFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keymanager.Manager, func()) {
 	mr, err := miniredis.Run()
 	Expect(err).NotTo(HaveOccurred())
 
@@ -239,7 +239,7 @@ func redisFactory(cfg tokens.ServiceConfig) (*tokens.Service, *keymanager.Manage
 	cfg.KeyManager = km
 	cfg.RefreshStore = storage.NewRedisRefreshStore(client, nil, nil)
 
-	svc, err := tokens.NewService(cfg)
+	mgr, err := tokens.NewManager(cfg)
 	Expect(err).NotTo(HaveOccurred())
 
 	cleanup := func() {
@@ -247,5 +247,5 @@ func redisFactory(cfg tokens.ServiceConfig) (*tokens.Service, *keymanager.Manage
 		mr.Close()
 	}
 
-	return svc, km, cleanup
+	return mgr, km, cleanup
 }

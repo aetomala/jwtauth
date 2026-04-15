@@ -54,7 +54,7 @@ func main() {
 	store := storage.NewMemoryRefreshStore(logger, pm)
 
 	// Create TokenService
-	svc, err := tokens.NewService(tokens.ServiceConfig{
+	mgr, err := tokens.NewManager(tokens.ManagerConfig{
 		KeyManager:           km,
 		RefreshStore:         store,
 		AccessTokenDuration:  15 * time.Minute,
@@ -69,13 +69,13 @@ func main() {
 		log.Fatal("Failed to create TokenService:", err)
 	}
 
-	if err := svc.Start(ctx); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		log.Fatal("Failed to start TokenService:", err)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = svc.Shutdown(shutdownCtx)
+		_ = mgr.Shutdown(shutdownCtx)
 	}()
 
 	// Setup Gin router
@@ -85,14 +85,14 @@ func main() {
 	r.GET("/metrics", gin.WrapH(pm.Handler()))
 
 	// Public endpoints
-	r.POST("/login", loginHandler(svc))
-	r.POST("/refresh", refreshHandler(svc))
+	r.POST("/login", issueTokensHandler(mgr))
+	r.POST("/refresh", refreshHandler(mgr))
 
 	// Protected endpoints
 	protected := r.Group("/api")
-	protected.Use(middleware.AuthMiddleware(svc))
+	protected.Use(middleware.BearerMiddleware(mgr))
 	protected.GET("/profile", profileHandler)
-	protected.POST("/logout", logoutHandler(svc))
+	protected.POST("/logout", logoutHandler(mgr))
 
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
@@ -117,8 +117,8 @@ type TokenResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-// loginHandler issues a new token pair
-func loginHandler(svc *tokens.Service) gin.HandlerFunc {
+// issueTokensHandler issues a new token pair
+func issueTokensHandler(mgr *tokens.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req LoginRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -134,7 +134,7 @@ func loginHandler(svc *tokens.Service) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
-		accessToken, refreshToken, err := svc.IssueTokenPair(ctx, req.UserID)
+		accessToken, refreshToken, err := mgr.IssueTokenPair(ctx, req.UserID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue tokens"})
 			return
@@ -154,7 +154,7 @@ type RefreshRequest struct {
 }
 
 // refreshHandler refreshes an access token
-func refreshHandler(svc *tokens.Service) gin.HandlerFunc {
+func refreshHandler(mgr *tokens.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req RefreshRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -165,7 +165,7 @@ func refreshHandler(svc *tokens.Service) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
-		accessToken, err := svc.RefreshAccessToken(ctx, req.RefreshToken)
+		accessToken, err := mgr.RefreshAccessToken(ctx, req.RefreshToken)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "failed to refresh token"})
 			return
@@ -193,7 +193,7 @@ func profileHandler(c *gin.Context) {
 }
 
 // logoutHandler revokes the user's tokens
-func logoutHandler(svc *tokens.Service) gin.HandlerFunc {
+func logoutHandler(mgr *tokens.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, exists := c.Get("userID")
 		if !exists {
@@ -204,7 +204,7 @@ func logoutHandler(svc *tokens.Service) gin.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 
-		if err := svc.RevokeAllUserTokens(ctx, userID.(string)); err != nil {
+		if err := mgr.RevokeAllUserTokens(ctx, userID.(string)); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to revoke tokens"})
 			return
 		}

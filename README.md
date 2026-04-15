@@ -4,13 +4,13 @@
 ![Go Version](https://img.shields.io/badge/go-1.21+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-**Production-ready JWT authentication library for distributed Go applications**
+**Production-grade JWT authorization token engine for distributed Go applications**
 
-> ⚠️ **Beta Status**: KeyManager and RefreshStore are production-ready and fully tested. TokenService is in beta — core operations are complete with comprehensive test coverage. API may change before v1.0.0.
+> ⚠️ **Beta Status**: KeyManager and RefreshStore are production-ready and fully tested. TokenManager is in beta — core operations are complete with comprehensive test coverage. API may change before v1.0.0.
 
 ## Overview
 
-`jwtauth` is a JWT authentication library built from the ground up with **observability, testability, and production operations** as first-class concerns. Unlike traditional JWT libraries that focus solely on token operations, jwtauth provides complete lifecycle management including zero-downtime key rotation, structured logging, metrics integration, and graceful shutdown patterns.
+`jwtauth` is a JWT authorization token engine for Go, built from the ground up with **observability, testability, and production operations** as first-class concerns. It manages the stateful machinery that production token systems require — cryptographic key generation and zero-downtime rotation, access token issuance and validation, and refresh token lifecycle with revocation support. Identity verification is intentionally out of scope: jwtauth takes a verified subject ID and handles everything after.
 
 ### Design Philosophy
 
@@ -36,7 +36,7 @@
 - **Full metrics instrumentation** — KeyStore and Manager operations via `jwtauth_keystore_*` and `jwtauth_key_*` metrics
 - **Comprehensive test coverage** with race detection
 
-**TokenService** (Beta)
+**TokenManager** (Beta)
 - **Access token issuance** (IssueAccessToken, IssueAccessTokenWithClaims, IssueTokenPair)
 - **Refresh token issuance** (IssueRefreshToken, IssueRefreshTokenWithMetadata)
 - **Access token validation** with registered and custom claims extraction (ValidateAccessToken, ValidateAccessTokenWithClaims)
@@ -75,7 +75,7 @@
 
 ### 🚧 In Development (v0.4.0)
 
-- **OpenTelemetry / Distributed Tracing**: `pkg/tracing` interfaces (`Tracer`, `Span`) and `NoOpTracer` are scaffolded. Full wiring into KeyManager, TokenService, and RefreshStore — with an OpenTelemetry adapter — is planned for v0.4.0.
+- **OpenTelemetry / Distributed Tracing**: `pkg/tracing` interfaces (`Tracer`, `Span`) and `NoOpTracer` are scaffolded. Full wiring into KeyManager, TokenManager, and RefreshStore — with an OpenTelemetry adapter — is planned for v0.4.0.
 
 ## Architecture Highlights
 
@@ -253,7 +253,7 @@ func main() {
 }
 ```
 
-### TokenService Usage (Beta)
+### TokenManager Usage (Beta)
 
 ```go
 package main
@@ -268,8 +268,8 @@ import (
 )
 
 func main() {
-    // Create TokenService with storage
-    config := tokens.ServiceConfig{
+    // Create TokenManager with storage
+    config := tokens.ManagerConfig{
         KeyManager:           keyManager,      // from KeyManager above
         RefreshStore:         refreshStore,    // RefreshStore implementation
         Logger:               logger,          // Optional
@@ -282,20 +282,20 @@ func main() {
         Audience:             []string{"my-app-api"},
     }
 
-    service, err := tokens.NewService(config)
+    mgr, err := tokens.NewManager(config)
     if err != nil {
         log.Fatal(err)
     }
 
-    // Start service lifecycle
+    // Start manager lifecycle
     ctx := context.Background()
-    if err := service.Start(ctx); err != nil {
+    if err := mgr.Start(ctx); err != nil {
         log.Fatal(err)
     }
-    defer service.Shutdown(ctx)
+    defer mgr.Shutdown(ctx)
 
     // Issue access token with custom claims
-    token, err := service.IssueAccessTokenWithClaims(ctx, "user-123", map[string]interface{}{
+    token, err := mgr.IssueAccessTokenWithClaims(ctx, "user-123", map[string]interface{}{
         "role": "admin",
         "tenant": "org-456",
     })
@@ -304,7 +304,7 @@ func main() {
     }
 
     // Validate token and retrieve custom claims
-    registered, custom, err := service.ValidateAccessTokenWithClaims(ctx, token)
+    registered, custom, err := mgr.ValidateAccessTokenWithClaims(ctx, token)
     if err != nil {
         log.Fatal(err)
     }
@@ -333,7 +333,7 @@ func main() {
 | `Logger` | `logging.Logger` | No | `nil` | Optional structured logger |
 | `Metrics` | `metrics.Metrics` | No | `nil` | Optional metrics collector |
 
-### ServiceConfig
+### ManagerConfig
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
@@ -386,7 +386,7 @@ config := keymanager.ManagerConfig{
 
 ## Error Reference
 
-All `TokenService` errors are exported sentinels compatible with `errors.Is()`. Middleware and API handlers should switch on these to return specific responses.
+All `TokenManager` errors are exported sentinels compatible with `errors.Is()`. Middleware and API handlers should switch on these to return specific responses.
 
 | Error | Trigger | Client-side action |
 |-------|---------|-------------------|
@@ -399,11 +399,11 @@ All `TokenService` errors are exported sentinels compatible with `errors.Is()`. 
 | `tokens.ErrInvalidRefreshToken` | Refresh token not found in store | Force re-login |
 | `tokens.ErrRefreshTokenExpired` | Refresh token past its TTL | Force re-login |
 | `tokens.ErrInvalidUserID` | Empty or whitespace-only `userID` passed to issuance method | Fix caller — input validation error |
-| `tokens.ErrServiceNotRunning` | Token operation called before `Start()` or after `Shutdown()` | Fix caller — lifecycle management error |
+| `tokens.ErrManagerNotRunning` | Token operation called before `Start()` or after `Shutdown()` | Fix caller — lifecycle management error |
 
 ```go
 // Example: mapping errors to HTTP responses in middleware
-claims, err := svc.ValidateAccessToken(r.Context(), token)
+claims, err := mgr.ValidateAccessToken(r.Context(), token)
 switch {
 case errors.Is(err, tokens.ErrTokenExpired):
     writeJSON(w, 401, `{"error":"token_expired"}`)
@@ -451,7 +451,7 @@ func (m *MyZapAdapter) Info(msg string, args ...interface{}) {
 
 ### Correlation ID
 
-Correlation IDs let you filter all log lines from a single request across every internal component — KeyManager, RefreshStore, and TokenService — with a single `jq` query.
+Correlation IDs let you filter all log lines from a single request across every internal component — KeyManager, RefreshStore, and TokenManager — with a single `jq` query.
 
 **Quick start**:
 
@@ -473,7 +473,7 @@ func correlationMiddleware(next http.Handler) http.Handler {
 }
 
 // 3. Pass ctx through — all internal logs automatically carry correlation_id
-accessToken, refreshToken, err := svc.IssueTokenPair(ctx, userID)
+accessToken, refreshToken, err := mgr.IssueTokenPair(ctx, userID)
 ```
 
 **Before** (hard to correlate):
@@ -535,7 +535,7 @@ http.Handle("/metrics", pm.Handler())
 ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
 km, _ := keymanager.NewManager(keymanager.ManagerConfig{KeyStore: ks, Metrics: pm})
 store := storage.NewMemoryRefreshStore(logger, pm)
-svc, _ := tokens.NewService(tokens.ServiceConfig{
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{
     KeyManager:   km,
     RefreshStore: store,
     Metrics:      pm,
@@ -592,7 +592,7 @@ jwtauth_key_active_versions_count
 **Alerting guidance**:
 - `jwtauth_key_active_versions_count == 0` → critical — no signing key available, all token issuance will fail
 - `rate(jwtauth_key_rotations_total{status!="success"}[1h]) > 0` → warning — key rotation is failing
-- `jwtauth_service_running == 0` → critical — TokenService has stopped
+- `jwtauth_service_running == 0` → critical — TokenManager has stopped
 
 For the full operator reference including Grafana dashboard guidance and label cardinality analysis, see [doc/METRICS.md](doc/METRICS.md).
 
@@ -628,10 +628,10 @@ github.com/aetomala/jwtauth/
 │   │   ├── disk_test.go          # 9-phase DiskKeyStore tests (38 specs)
 │   │   └── redis_test.go         # 9-phase RedisKeyStore tests (35 specs, miniredis)
 │   ├── tokens/                   # JWT operations (Beta) 🟡
-│   │   ├── service.go            # TokenService implementation
+│   │   ├── manager.go            # TokenManager implementation
 │   │   ├── claims.go             # Claims management
-│   │   ├── service_test.go       # Token operations tests
-│   │   ├── service_lifecycle_test.go  # Lifecycle management tests
+│   │   ├── manager_test.go       # Token operations tests
+│   │   ├── manager_lifecycle_test.go  # Lifecycle management tests
 │   │   └── integration/          # Integration tests
 │   │       └── integration_test.go
 │   └── storage/                  # Refresh token storage ✅
@@ -666,7 +666,7 @@ github.com/aetomala/jwtauth/
 
 ### Test Coverage
 
-**Current**: 605 comprehensive tests across KeyManager, TokenService, RefreshStore, Metrics, Logging, and Tracing, all passing with race detection (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
+**Current**: 605 comprehensive tests across KeyManager, TokenManager, RefreshStore, Metrics, Logging, and Tracing, all passing with race detection (KeyManager ~90%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
 
 **KeyManager** (3 test suites — 125 total specs):
 - **9-phase Manager tests** (52 specs, MockKeyStore — no I/O):
@@ -686,7 +686,7 @@ github.com/aetomala/jwtauth/
   - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
   - Concurrency, metrics recording (storage_backend: "redis")
 
-**TokenService** (7 test suites, 153 total tests):
+**TokenManager** (7 test suites, 153 total tests):
 - **Lifecycle Management Tests** (20 tests):
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency
@@ -720,7 +720,7 @@ github.com/aetomala/jwtauth/
 - **Test Suite Architecture**: Single parameterized suite eliminates 800+ lines of duplication, ensures both implementations have identical semantics
 
 **Test Organization**:
-- Separate test files for logical concerns (`service_test.go`, `service_lifecycle_test.go`)
+- Separate test files for logical concerns (`manager_test.go`, `manager_lifecycle_test.go`)
 - Ginkgo/Gomega BDD-style test organization
 - gomock for dependency injection testing
 - Shared test utilities and fixtures
@@ -756,41 +756,83 @@ Tests follow **progressive phase-based development**:
 
 ## Why This Library?
 
-### Concrete Differentiators
+`jwtauth` occupies a specific layer: it takes a verified subject ID and manages everything after — signing, key rotation, refresh token lifecycle, and revocation. Identity verification (password check, OAuth exchange, SAML assertion) is out of scope and belongs in the layer above.
 
-1. **Algorithm confusion prevented at the library level** — `ValidateAccessToken` performs a `*jwt.SigningMethodRSA` type assertion before any key lookup. HS256, ECDSA, and `none` are rejected unconditionally — not configurably. There is no option to weaken this.
+If that's your gap, here's what you'd be comparing against:
 
-2. **Custom claims round-trip without raw token re-parsing** — `IssueAccessTokenWithClaims` embeds application-defined fields, and `ValidateAccessTokenWithClaims` returns them as `map[string]interface{}` after verifying the signature. Handlers never need to base64-decode the token or type-assert `MapClaims` themselves.
+---
 
-3. **Zero-downtime key rotation** — `KeyManager` keeps the previous key valid for an overlap period (default 1 hour) while signing all new tokens with the rotated key. Tokens issued before rotation continue to validate. No service restart or forced re-login is required.
+### vs. `golang-jwt/jwt` — building the engine yourself
 
-4. **Clock skew tolerance without inflating TTLs** — the `ClockSkew` field on `ServiceConfig` applies `jwt.WithLeeway()` to `exp` and `nbf` validation. Distributed deployments with NTP drift work correctly without extending access token lifetimes.
+`golang-jwt/jwt` signs and validates tokens against a key you supply. It does exactly one thing and does it well. Most teams start here and then spend weeks building the surrounding machinery:
 
-5. **10 granular sentinel errors, all `errors.Is()`-compatible** — callers can distinguish `ErrTokenExpired` from `ErrTokenRevoked` from `ErrInvalidAudience` without string matching. Middleware can return specific JSON error codes (`token_expired`, `token_revoked`, `invalid_audience`) that clients can act on.
+| What you build yourself | What jwtauth provides |
+|---|---|
+| Key generation and storage | `KeyManager` with `DiskKeyStore` / `RedisKeyStore` |
+| Zero-downtime key rotation + overlap | Built in — old key stays valid during overlap period |
+| Refresh token storage and lookup | `MemoryRefreshStore` / `RedisRefreshStore` |
+| Revocation (single token, all user sessions) | `RevokeRefreshToken`, `RevokeAllUserTokens` |
+| Custom claims round-trip without re-parsing | `IssueAccessTokenWithClaims` + `ValidateAccessTokenWithClaims` |
+| Clock skew tolerance for distributed deployments | `ManagerConfig.ClockSkew` |
+| 22 Prometheus metrics across all operations | Pre-registered, zero config |
+| 10 typed sentinel errors for middleware logic | `ErrTokenExpired`, `ErrTokenRevoked`, `ErrInvalidAudience`, … |
 
-6. **Stateful refresh layer with instant revocation** — `RefreshStore` tracks every refresh token by ID and user. `RevokeAllUserTokens` invalidates all sessions for a compromised account in a single call — no waiting for expiry.
+**jwtauth is what you'd build on top of golang-jwt after a few months in production.**
 
-7. **Observability at every exit path** — a deferred closure pattern records `status` and `error_type` labels at every return, including error paths. No silent failures. The `error_type` label follows the OpenTelemetry `error.type` semantic convention for interoperability with OTEL-based pipelines.
+---
 
-8. **JWKS endpoint ready** — `KeyManager.GetJWKS()` returns an RFC 7517-compliant key set that external verifiers (API gateways, other services) can consume without calling your signing service.
+### vs. framework JWT middleware (`gin-jwt`, `echo-jwt`, similar)
 
-### vs. golang-jwt/jwt
+Framework-specific JWT packages bundle signing, validation, and middleware into a single dependency. They're the fastest path to a working login endpoint but carry structural limitations:
 
-**golang-jwt/jwt** handles token operations (create/validate) against a key you supply. **jwtauth** adds:
-- Automatic key rotation with overlap periods — no restart required
-- Stateful refresh token lifecycle (issue, rotate, revoke, clean up)
-- `ValidateAccessTokenWithClaims` for custom claims without re-parsing
-- `ClockSkew` for distributed deployment tolerance
-- 22 pre-registered Prometheus metrics across all operations
-- 10 typed sentinel errors for precise error handling in middleware
+- **No key rotation** — one static secret or key pair for the lifetime of the service
+- **No refresh token state** — revocation requires a separate blocklist you build yourself
+- **Framework lock-in** — the middleware only works with your chosen framework; switching means rewriting auth
+- **No metrics** — you don't know how many tokens are being issued, validated, or rejected
 
-### vs. lestrrat-go/jwx
+`jwtauth` is framework-agnostic. The middleware in the examples is ~20 lines you own; swapping Gin for Chi or Echo is a one-file change.
 
-**lestrrat-go/jwx** is a comprehensive JOSE implementation — JWS, JWE, JWK, JWT. **jwtauth** is narrower and higher-level:
-- Focused API for the auth token lifecycle (issue → validate → refresh → revoke)
-- Key rotation is built in, not assembled from primitives
-- Observability (structured logging, metrics) is first-class, not an afterthought
-- No JOSE surface area you don't need — less API to reason about
+---
+
+### vs. `lestrrat-go/jwx` / `go-jose/go-jose` — JOSE toolkits
+
+Both are comprehensive JOSE implementations covering JWS, JWE, JWK, JWT, and more. `jwtauth` is narrower and higher-level:
+
+- The token lifecycle API (issue → validate → refresh → revoke) is ready — you're not assembling it from primitives
+- Key rotation is built in, not something you wire together from JWK set operations
+- Structured logging and metrics are first-class, not an afterthought
+- Less surface area to reason about if you only need RS256 JWT tokens
+
+If you need JWE (encrypted tokens), JWS detached payloads, or multi-algorithm JOSE operations, reach for one of those libraries instead.
+
+---
+
+### Concrete security guarantees
+
+1. **Algorithm confusion prevented unconditionally** — `ValidateAccessToken` asserts `*jwt.SigningMethodRSA` before any key lookup. HS256, ECDSA, and `none` are rejected — not configurably, unconditionally.
+
+2. **Reserved claim protection** — `IssueAccessTokenWithClaims` rejects custom claims that would overwrite `sub`, `exp`, `iat`, `nbf`, `jti`, `iss`, or `aud`. Application fields cannot collide with registered claims silently.
+
+3. **10 granular sentinel errors, all `errors.Is()`-compatible** — middleware can distinguish `ErrTokenExpired` from `ErrTokenRevoked` from `ErrInvalidAudience` and return specific JSON error codes (`token_expired`, `token_revoked`, `invalid_audience`) that clients can act on.
+
+4. **Instant revocation, not expiry-based** — `RevokeAllUserTokens` invalidates all sessions for a compromised account immediately. No waiting for short-lived tokens to expire.
+
+---
+
+### Horizontal scale path
+
+The storage backends are designed to move from single-instance to distributed without code changes:
+
+| Deployment | KeyStore | RefreshStore |
+|---|---|---|
+| Single instance (dev, small prod) | `DiskKeyStore` | `MemoryRefreshStore` |
+| Multi-instance (Kubernetes, load-balanced) | `RedisKeyStore` | `RedisRefreshStore` |
+
+Swap the constructor arguments. The `KeyManager` and `TokenManager` interfaces are unchanged.
+
+---
+
+**What jwtauth is not:** a full authentication server (no login flows, no OAuth2/OIDC), a session management library, or a rate limiter. For managed auth infrastructure, Keycloak, Dex, or Ory Hydra serve that role. jwtauth is the token engine you'd wire underneath them, or build directly into a service that already verifies identity by other means.
 
 ## Roadmap
 
@@ -802,14 +844,14 @@ Tests follow **progressive phase-based development**:
 - ✅ Architecture documentation
 
 ### v0.2.0 ✅ Complete
-- ✅ TokenService: JWT creation with RS256 signing
-- ✅ TokenService: Lifecycle management (Start/Shutdown/IsRunning)
-- ✅ TokenService: Claims management with custom claims support and reserved claim protection
-- ✅ TokenService: Access token validation with issuer/audience enforcement (ValidateAccessToken)
-- ✅ TokenService: Refresh token rotation with expiration and revocation checks (RefreshAccessToken)
-- ✅ TokenService: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
-- ✅ TokenService: Token introspection per RFC 7662 (IntrospectToken)
-- ✅ TokenService: Manual cleanup sweep (CleanupExpiredTokens)
+- ✅ TokenManager: JWT creation with RS256 signing
+- ✅ TokenManager: Lifecycle management (Start/Shutdown/IsRunning)
+- ✅ TokenManager: Claims management with custom claims support and reserved claim protection
+- ✅ TokenManager: Access token validation with issuer/audience enforcement (ValidateAccessToken)
+- ✅ TokenManager: Refresh token rotation with expiration and revocation checks (RefreshAccessToken)
+- ✅ TokenManager: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
+- ✅ TokenManager: Token introspection per RFC 7662 (IntrospectToken)
+- ✅ TokenManager: Manual cleanup sweep (CleanupExpiredTokens)
 - ✅ RefreshStore: Shared test suite pattern (eliminates duplication, runs against all implementations)
 - ✅ RefreshStore: MemoryRefreshStore with defensive copying and concurrent safety
 - ✅ RefreshStore: RedisRefreshStore for distributed deployments with go-redis/v9
@@ -817,9 +859,9 @@ Tests follow **progressive phase-based development**:
 - ✅ KeyStore interface extracted from KeyManager — `DiskKeyStore` for single-instance, `RedisKeyStore` for distributed deployments
 
 ### v0.3.0 (Current — Beta)
-- ✅ TokenService: Clock skew tolerance (`ClockSkew` field, `jwt.WithLeeway()` integration)
-- ✅ TokenService: `ValidateAccessTokenWithClaims` — registered and custom claims returned after validation
-- ✅ Wire metrics into all components — KeyStore, Manager, TokenService, RefreshStore with `error_type` label and context propagation
+- ✅ TokenManager: Clock skew tolerance (`ClockSkew` field, `jwt.WithLeeway()` integration)
+- ✅ TokenManager: `ValidateAccessTokenWithClaims` — registered and custom claims returned after validation
+- ✅ Wire metrics into all components — KeyStore, Manager, TokenManager, RefreshStore with `error_type` label and context propagation
 - ✅ Example middleware returns specific JSON error codes (`token_expired`, `token_revoked`, etc.) via sentinel error mapping
 - ✅ `KeyManager` interface extended with context on all read methods (`GetCurrentSigningKey`, `GetPublicKey`, `GetJWKS`)
 - ✅ Correlation ID logging — `CorrelationIDHandler`, `WithCorrelationID`/`GetCorrelationID` helpers, `NewCorrelationJSONLogger`/`NewCorrelationTextLogger`, context-aware `SlogAdapter`
@@ -831,7 +873,7 @@ Tests follow **progressive phase-based development**:
 - ✅ `pkg/tracing` interfaces scaffolded — `Tracer`, `Span`, `SpanOption`, `StatusCode`, `SpanKind`
 - ✅ `NoOpTracer` / `NoOpSpan` implementations (36 tests, race-detection clean)
 - ✅ `MockTracer` / `MockSpan` generated for dependency injection in component tests
-- 🚧 Wire tracing into KeyManager, TokenService, and RefreshStore
+- 🚧 Wire tracing into KeyManager, TokenManager, and RefreshStore
 - 🚧 OpenTelemetry adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
 
 ### v1.0.0 (Stable)
@@ -922,7 +964,7 @@ MIT License - see [LICENSE](LICENSE) for details
 
 ## Background
 
-Built by a Senior Platform Engineer with 28 years of experience in distributed systems. This library represents production-grade patterns learned from building authentication systems at scale, with a focus on operational excellence, observability, and maintainability.
+Built by a Senior Platform Engineer with 28 years of experience in distributed systems. This library represents production-grade patterns learned from building authorization token systems at scale, with a focus on operational excellence, observability, and maintainability.
 
 **Design Philosophy**: Software should be observable, testable, and maintainable. Good architecture makes these properties natural, not afterthoughts.
 
@@ -930,6 +972,6 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 
 **Status**: Beta (Active Development)
 **Version**: 0.3.0-beta
-**Components**: KeyManager ✅ | TokenService (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing (scaffold) 🚧
-**Test Coverage**: 605 tests (KeyManager ~90%, TokenService ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%), all passing, race-detection enabled
+**Components**: KeyManager ✅ | TokenManager (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing (scaffold) 🚧
+**Test Coverage**: 605 tests (KeyManager ~90%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%), all passing, race-detection enabled
 **Last Updated**: April 14, 2026

@@ -54,7 +54,7 @@ func main() {
 	store := storage.NewMemoryRefreshStore(logger, pm)
 
 	// Create TokenService
-	svc, err := tokens.NewService(tokens.ServiceConfig{
+	mgr, err := tokens.NewManager(tokens.ManagerConfig{
 		KeyManager:           km,
 		RefreshStore:         store,
 		AccessTokenDuration:  15 * time.Minute,
@@ -69,13 +69,13 @@ func main() {
 		log.Fatal("Failed to create TokenService:", err)
 	}
 
-	if err := svc.Start(ctx); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		log.Fatal("Failed to start TokenService:", err)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = svc.Shutdown(shutdownCtx)
+		_ = mgr.Shutdown(shutdownCtx)
 	}()
 
 	// Setup Echo router
@@ -84,7 +84,7 @@ func main() {
 	// Middleware
 	e.Use(echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			c.Set("tokenService", svc)
+			c.Set("tokenService", mgr)
 			return next(c)
 		}
 	}))
@@ -96,17 +96,17 @@ func main() {
 	})
 
 	// Public endpoints
-	e.POST("/login", loginHandler(svc))
-	e.POST("/refresh", refreshHandler(svc))
+	e.POST("/login", issueTokensHandler(mgr))
+	e.POST("/refresh", refreshHandler(mgr))
 
 	// Health check
 	e.GET("/health", healthHandler)
 
 	// Protected endpoints
 	protected := e.Group("/api")
-	protected.Use(middleware.AuthMiddleware(svc))
+	protected.Use(middleware.BearerMiddleware(mgr))
 	protected.GET("/profile", profileHandler)
-	protected.POST("/logout", logoutHandler(svc))
+	protected.POST("/logout", logoutHandler(mgr))
 
 	log.Println("Starting server on :8080")
 	if err := e.Start(":8080"); err != nil && err != http.ErrServerClosed {
@@ -126,8 +126,8 @@ type TokenResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 }
 
-// loginHandler issues a new token pair
-func loginHandler(svc *tokens.Service) echo.HandlerFunc {
+// issueTokensHandler issues a new token pair
+func issueTokensHandler(mgr *tokens.Manager) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		var req LoginRequest
 		if err := c.Bind(&req); err != nil {
@@ -145,7 +145,7 @@ func loginHandler(svc *tokens.Service) echo.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 		defer cancel()
 
-		accessToken, refreshToken, err := svc.IssueTokenPair(ctx, req.UserID)
+		accessToken, refreshToken, err := mgr.IssueTokenPair(ctx, req.UserID)
 		if err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{
 				"error": "failed to issue tokens",
@@ -166,7 +166,7 @@ type RefreshRequest struct {
 }
 
 // refreshHandler refreshes an access token
-func refreshHandler(svc *tokens.Service) echo.HandlerFunc {
+func refreshHandler(mgr *tokens.Manager) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		var req RefreshRequest
 		if err := c.Bind(&req); err != nil {
@@ -184,7 +184,7 @@ func refreshHandler(svc *tokens.Service) echo.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 		defer cancel()
 
-		accessToken, err := svc.RefreshAccessToken(ctx, req.RefreshToken)
+		accessToken, err := mgr.RefreshAccessToken(ctx, req.RefreshToken)
 		if err != nil {
 			return c.JSON(http.StatusUnauthorized, map[string]string{
 				"error": "failed to refresh token",
@@ -214,7 +214,7 @@ func profileHandler(c echo.Context) error {
 }
 
 // logoutHandler revokes the user's tokens
-func logoutHandler(svc *tokens.Service) echo.HandlerFunc {
+func logoutHandler(mgr *tokens.Manager) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		userID := c.Get("userID")
 		if userID == nil {
@@ -226,7 +226,7 @@ func logoutHandler(svc *tokens.Service) echo.HandlerFunc {
 		ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
 		defer cancel()
 
-		if err := svc.RevokeAllUserTokens(ctx, userID.(string)); err != nil {
+		if err := mgr.RevokeAllUserTokens(ctx, userID.(string)); err != nil {
 			return c.JSON(http.StatusInternalServerError, map[string]string{
 				"error": "failed to revoke tokens",
 			})

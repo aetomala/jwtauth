@@ -43,7 +43,7 @@ Identifies which RefreshStore or KeyStore implementation is recording the metric
 
 ---
 
-## TokenService Metrics
+## TokenManager Metrics
 
 ### `jwtauth_tokens_issued_total`
 - **Type**: Counter
@@ -79,7 +79,7 @@ Identifies which RefreshStore or KeyStore implementation is recording the metric
 - **Type**: Histogram
 - **Labels**: `operation`
 - **Buckets**: 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s
-- **Description**: End-to-end latency for TokenService operations. `operation` matches the method name (e.g. `"issue_token_pair"`, `"validate_access_token"`).
+- **Description**: End-to-end latency for TokenManager operations. `operation` matches the method name (e.g. `"issue_token_pair"`, `"validate_access_token"`).
 
 ### `jwtauth_active_tokens`
 - **Type**: Gauge
@@ -89,7 +89,7 @@ Identifies which RefreshStore or KeyStore implementation is recording the metric
 ### `jwtauth_service_running`
 - **Type**: Gauge
 - **Labels**: none
-- **Description**: `1` when the TokenService is running (after `Start()`), `0` when stopped. Alert on `== 0`.
+- **Description**: `1` when the TokenManager is running (after `Start()`), `0` when stopped. Alert on `== 0`.
 
 ---
 
@@ -242,12 +242,12 @@ groups:
           severity: critical
           summary: "No active signing key — all token issuance will fail until rotation succeeds"
 
-      - alert: TokenServiceStopped
+      - alert: TokenManagerStopped
         expr: jwtauth_service_running == 0
         for: 1m
         annotations:
           severity: critical
-          summary: "TokenService is not running"
+          summary: "TokenManager is not running"
 
   - name: jwtauth.warning
     rules:

@@ -10,9 +10,9 @@ import (
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
 
-// AuthMiddleware validates JWT tokens in the Authorization header
+// BearerMiddleware validates JWT tokens in the Authorization header
 // and attaches claims to the request context.
-func AuthMiddleware(svc *tokens.Service) func(http.Handler) http.Handler {
+func BearerMiddleware(mgr *tokens.Manager) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Extract token from Authorization header
@@ -30,7 +30,7 @@ func AuthMiddleware(svc *tokens.Service) func(http.Handler) http.Handler {
 			}
 
 			// Validate token using jwtauth
-			claims, err := svc.ValidateAccessToken(r.Context(), token)
+			claims, err := mgr.ValidateAccessToken(r.Context(), token)
 			if err != nil {
 				writeJSONError(w, tokenErrorCode(err), http.StatusUnauthorized)
 				return

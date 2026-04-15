@@ -31,14 +31,14 @@ store := storage.NewRedisRefreshStore(redisClient, logger, pm)
 
 ### Service Start Order
 
-Always start `KeyManager` before `TokenService` — `TokenService.Start()` does not call `KeyManager.Start()`:
+Always start `KeyManager` before `TokenManager` — `TokenManager.Start()` does not call `KeyManager.Start()`:
 ```go
 // Correct order
 if err := km.Start(ctx); err != nil {
     log.Fatal("KeyManager failed to start:", err)
 }
-if err := svc.Start(ctx); err != nil {
-    log.Fatal("TokenService failed to start:", err)
+if err := mgr.Start(ctx); err != nil {
+    log.Fatal("TokenManager failed to start:", err)
 }
 ```
 
@@ -49,10 +49,10 @@ if err := svc.Start(ctx); err != nil {
 Expose a health endpoint that reflects actual service state — not just HTTP liveness.
 
 ```go
-// Health check handler — checks both service and key availability
-func healthHandler(svc *tokens.Service, km keymanager.KeyManager) http.HandlerFunc {
+// Health check handler — checks both manager and key availability
+func healthHandler(mgr *tokens.Manager, km keymanager.KeyManager) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
-        if !svc.IsRunning() {
+        if !mgr.IsRunning() {
             w.WriteHeader(http.StatusServiceUnavailable)
             json.NewEncoder(w).Encode(map[string]string{
                 "status": "unhealthy",
@@ -107,7 +107,7 @@ pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
 ks, _   := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
 km, _   := keymanager.NewManager(keymanager.ManagerConfig{KeyStore: ks, Metrics: pm})
 store   := storage.NewMemoryRefreshStore(logger, pm)
-svc, _  := tokens.NewService(tokens.ServiceConfig{
+mgr, _  := tokens.NewManager(tokens.ManagerConfig{
     KeyManager:   km,
     RefreshStore: store,
     Metrics:      pm,
@@ -147,12 +147,12 @@ groups:
         annotations:
           summary: "Key rotation errors detected"
 
-      - alert: TokenServiceStopped
+      - alert: TokenManagerStopped
         expr: jwtauth_service_running == 0
         for: 1m
         severity: critical
         annotations:
-          summary: "TokenService is not running"
+          summary: "TokenManager is not running"
 ```
 
 For the complete metric reference — all 22 metrics with label values and PromQL cookbook — see [METRICS.md](METRICS.md).
@@ -161,7 +161,7 @@ For the complete metric reference — all 22 metrics with label values and PromQ
 
 ## Graceful Shutdown
 
-Shut down in reverse start order — `TokenService` first, then `KeyManager`. Always use a deadline:
+Shut down in reverse start order — `TokenManager` first, then `KeyManager`. Always use a deadline:
 
 ```go
 srv := &http.Server{Addr: ":8080", Handler: r}
@@ -180,9 +180,9 @@ if err := srv.Shutdown(shutdownCtx); err != nil {
     log.Println("HTTP server shutdown error:", err)
 }
 
-// 2. Shut down TokenService (drains in-flight operations)
-if err := svc.Shutdown(shutdownCtx); err != nil {
-    log.Println("TokenService shutdown error:", err)
+// 2. Shut down TokenManager (drains in-flight operations)
+if err := mgr.Shutdown(shutdownCtx); err != nil {
+    log.Println("TokenManager shutdown error:", err)
 }
 
 // 3. Shut down KeyManager
@@ -230,7 +230,7 @@ store := storage.NewRedisRefreshStore(redisClient, logger, pm)
 In distributed deployments, servers may have slight clock drift. `ClockSkew` adds leeway to `exp` and `nbf` validation without inflating token lifetimes:
 
 ```go
-svc, _ := tokens.NewService(tokens.ServiceConfig{
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{
     // ...
     ClockSkew: 30 * time.Second,  // Accept tokens up to 30s past expiry
 })

@@ -15,13 +15,13 @@ import (
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
 
-var _ = Describe("TokenService Metrics", func() {
+var _ = Describe("TokenManager Metrics", func() {
 	var (
 		ctrl      *gomock.Controller
 		mockKM    *testutil.MockKeyManager
 		mockStore *testutil.MockRefreshStore
 		mockM     *testutil.MockMetrics
-		service   *tokens.Service
+		service   *tokens.Manager
 		ctx       context.Context
 		cancel    context.CancelFunc
 		testKey   *rsa.PrivateKey
@@ -41,7 +41,7 @@ var _ = Describe("TokenService Metrics", func() {
 		mockStore = testutil.NewMockRefreshStore(ctrl)
 		mockM = testutil.NewMockMetrics(ctrl)
 
-		service, err = tokens.NewService(tokens.ServiceConfig{
+		service, err = tokens.NewManager(tokens.ManagerConfig{
 			KeyManager:           mockKM,
 			RefreshStore:         mockStore,
 			Metrics:              mockM,
@@ -122,7 +122,7 @@ var _ = Describe("TokenService Metrics", func() {
 				"operation": "issue_access_token",
 			})
 			_, err := service.IssueAccessToken(ctx, "user-1")
-			Expect(err).To(MatchError(tokens.ErrServiceNotRunning))
+			Expect(err).To(MatchError(tokens.ErrManagerNotRunning))
 		})
 
 		It("records invalid_input counter for empty user ID", func() {
@@ -210,7 +210,7 @@ var _ = Describe("TokenService Metrics", func() {
 				"operation": "validate_access_token",
 			})
 			_, err := service.ValidateAccessToken(ctx, "some-token")
-			Expect(err).To(MatchError(tokens.ErrServiceNotRunning))
+			Expect(err).To(MatchError(tokens.ErrManagerNotRunning))
 		})
 	})
 
@@ -385,7 +385,7 @@ var _ = Describe("TokenService Metrics", func() {
 
 	Describe("nil metrics", func() {
 		It("does not panic when Metrics is nil", func() {
-			nilService, nilMetricsErr := tokens.NewService(tokens.ServiceConfig{
+			nilService, nilMetricsErr := tokens.NewManager(tokens.ManagerConfig{
 				KeyManager:          mockKM,
 				RefreshStore:        mockStore,
 				Metrics:             nil,
