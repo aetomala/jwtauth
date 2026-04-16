@@ -133,7 +133,29 @@ Response (401 Unauthorized):
 Error: failed to refresh token
 ```
 
-### 5. Health Check
+### 5. Key Status (Admin Endpoint)
+
+```bash
+curl http://localhost:8080/admin/key-status
+```
+
+Response:
+```json
+{
+  "key_id": "20260415_100000",
+  "created_at": "2026-04-15T10:00:00Z",
+  "rotate_at": "2026-05-15T10:00:00Z",
+  "expires_at": "0001-01-01T00:00:00Z",
+  "key_size_bits": 2048,
+  "algorithm": "RS256",
+  "is_current": true,
+  "is_valid": true
+}
+```
+
+The response contains only public metadata — no private key material is included. In production, protect this route with authentication middleware before the `r.Route("/admin", ...)` group.
+
+### 6. Health Check
 
 ```bash
 curl http://localhost:8080/health
@@ -170,6 +192,18 @@ r.Route("/api", func(r chi.Router) {
     r.Post("/logout", logoutHandler)
 })
 ```
+
+### Key Inspection
+
+The `/admin/key-status` endpoint calls `km.GetCurrentKeyInfo(ctx)` and returns the result as JSON. `GetCurrentKeyInfo` returns a `*KeyInfo` struct — no private key material, safe to expose:
+
+```go
+info, err := km.GetCurrentKeyInfo(ctx)
+// info.KeyID, info.CreatedAt, info.RotateAt, info.ExpiresAt,
+// info.KeySizeBits, info.Algorithm, info.IsCurrent, info.IsValid
+```
+
+Use `is_valid: false` in an alerting rule to detect stalled key rotation.
 
 ### Service Lifecycle
 

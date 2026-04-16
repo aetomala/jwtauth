@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -310,6 +311,62 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 				_, err = mgr.RefreshAccessToken(ctx, refreshToken)
 				Expect(err).To(Equal(tokens.ErrTokenRevoked))
 			}
+		})
+
+		It("should return accurate key info after Start", func() {
+			info, err := km.GetCurrentKeyInfo(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.KeyID).NotTo(BeEmpty())
+			Expect(info.IsCurrent).To(BeTrue())
+			Expect(info.IsValid).To(BeTrue())
+			Expect(info.Algorithm).To(Equal("RS256"))
+			Expect(info.KeySizeBits).To(Equal(2048))
+			Expect(info.CreatedAt).To(BeTemporally("<=", time.Now()))
+			Expect(info.RotateAt).To(BeTemporally(">", time.Now()))
+		})
+
+		It("should reflect the new key after rotation and keep old key accessible via GetKeyInfo", func() {
+			before, err := km.GetCurrentKeyInfo(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(km.RotateKeys(ctx)).To(Succeed())
+
+			after, err := km.GetCurrentKeyInfo(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after.KeyID).NotTo(Equal(before.KeyID))
+			Expect(after.IsCurrent).To(BeTrue())
+			Expect(after.IsValid).To(BeTrue())
+
+			old, err := km.GetKeyInfo(ctx, before.KeyID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(old.KeyID).To(Equal(before.KeyID))
+			Expect(old.IsCurrent).To(BeFalse())
+		})
+
+		It("should allow concurrent GetCurrentKeyInfo calls during rotation without data races", func() {
+			const numReaders = 20
+			var wg sync.WaitGroup
+
+			for i := 0; i < numReaders; i++ {
+				wg.Add(1)
+				go func() {
+					defer GinkgoRecover()
+					defer wg.Done()
+					info, err := km.GetCurrentKeyInfo(ctx)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(info.KeyID).NotTo(BeEmpty())
+					Expect(info.IsCurrent).To(BeTrue())
+				}()
+			}
+
+			wg.Add(1)
+			go func() {
+				defer GinkgoRecover()
+				defer wg.Done()
+				Expect(km.RotateKeys(ctx)).To(Succeed())
+			}()
+
+			wg.Wait()
 		})
 
 		It("should reject invalid, expired, and revoked refresh tokens", func() {

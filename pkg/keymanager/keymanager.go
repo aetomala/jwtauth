@@ -64,6 +64,26 @@
 //	if err := mgr.RotateKeys(ctx); err != nil {
 //	    log.Fatal(err)
 //	}
+//
+// ## Key Inspection
+//
+// GetCurrentKeyInfo and GetKeyInfo expose key metadata — creation time, estimated
+// rotation time, expiry, key size, and validity — without returning private key
+// material. Suitable for health check endpoints, Prometheus gauges, and admin APIs:
+//
+//	info, err := mgr.GetCurrentKeyInfo(ctx)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	fmt.Printf("Current key: %s\n", info.KeyID)
+//	fmt.Printf("Key age:     %s\n", time.Since(info.CreatedAt))
+//	fmt.Printf("Rotates at:  %s\n", info.RotateAt.Format(time.RFC3339))
+//
+// Use cases:
+//   - /health/keys endpoints showing rotation schedule
+//   - Prometheus gauges (key age, time-until-rotation, validity)
+//   - Debugging token validation failures against a specific kid
+//   - Admin dashboards displaying key state
 package keymanager
 
 import (
@@ -146,6 +166,20 @@ type KeyMetadata struct {
 	CreatedAt time.Time `json:"created_at"` // When the key was generated
 	ExpiresAt time.Time `json:"expires_at"` // When the key expires (zero means no expiry)
 	ID        string    `json:"id"`         // Unique key identifier
+}
+
+// KeyInfo contains public metadata about a cryptographic key — no private key
+// material is included. Suitable for health check endpoints, Prometheus metrics,
+// debugging, and admin dashboards. All methods are safe for concurrent use.
+type KeyInfo struct {
+	KeyID       string    `json:"key_id"`              // Unique key identifier
+	CreatedAt   time.Time `json:"created_at"`          // When the key was generated
+	RotateAt    time.Time `json:"rotate_at,omitempty"` // Estimated rotation time — current key only; zero for historical keys
+	ExpiresAt   time.Time `json:"expires_at,omitempty"` // When the key stops being valid for verification; zero means still current
+	KeySizeBits int       `json:"key_size_bits"`       // RSA key size in bits (e.g., 2048)
+	Algorithm   string    `json:"algorithm"`           // Signing algorithm — always "RS256"
+	IsCurrent   bool      `json:"is_current"`          // True if this is the active signing key
+	IsValid     bool      `json:"is_valid"`            // True if the key has not yet expired
 }
 
 // JWKS (JSON Web Key Set) is the standard format for publishing public keys,
@@ -586,26 +620,72 @@ func (m *Manager) GetJWKS(ctx context.Context) (*JWKS, error) {
 	return &JWKS{Keys: keys}, nil
 }
 
-// GetKeyInfo returns the cached KeyPair for the given key ID.
-// Returns ErrManagerNotRunning if the Manager is not running, or ErrKeyNotFound
-// if the key does not exist in the cache.
-func (m *Manager) GetKeyInfo(keyID string) (*KeyPair, error) {
-	// ===== STEP 1: Check Manager is Running =====
+// GetKeyInfo returns public metadata for a specific key by ID.
+// If keyID is empty, returns metadata for the current signing key.
+// Returns ErrManagerNotRunning if the manager is not running.
+// Returns ErrKeyNotFound if the specified key does not exist.
+// Returns the context error if the context is cancelled.
+//
+// The returned KeyInfo contains no private key material — safe to expose via
+// health check endpoints or admin APIs.
+func (m *Manager) GetKeyInfo(ctx context.Context, keyID string) (*KeyInfo, error) {
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// ===== STEP 2: Check Manager is Running =====
 	if !m.IsRunning() {
 		return nil, ErrManagerNotRunning
 	}
 
-	// ===== STEP 2: Acquire Read Lock and Lookup =====
+	// ===== STEP 3: Acquire Read Lock =====
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	keyPair, exists := m.keys[keyID]
-	if !exists {
-		return nil, ErrKeyNotFound
+	// ===== STEP 4: Resolve Key =====
+	var keyPair *KeyPair
+	if keyID == "" {
+		if m.currentKeyID == "" {
+			return nil, ErrKeyNotFound
+		}
+		keyPair = m.keys[m.currentKeyID]
+	} else {
+		var exists bool
+		keyPair, exists = m.keys[keyID]
+		if !exists {
+			return nil, ErrKeyNotFound
+		}
 	}
 
-	// ===== STEP 3: Return Key Pair =====
-	return keyPair, nil
+	// ===== STEP 5: Build KeyInfo =====
+	isCurrent := keyPair.ID == m.currentKeyID
+	isValid := keyPair.ExpiresAt.IsZero() || time.Now().Before(keyPair.ExpiresAt)
+
+	var rotateAt time.Time
+	if isCurrent {
+		rotateAt = keyPair.CreatedAt.Add(m.config.KeyRotationInterval)
+	}
+
+	return &KeyInfo{
+		KeyID:       keyPair.ID,
+		CreatedAt:   keyPair.CreatedAt,
+		RotateAt:    rotateAt,
+		ExpiresAt:   keyPair.ExpiresAt,
+		KeySizeBits: keyPair.PrivateKey.N.BitLen(),
+		Algorithm:   "RS256",
+		IsCurrent:   isCurrent,
+		IsValid:     isValid,
+	}, nil
+}
+
+// GetCurrentKeyInfo returns metadata for the current signing key.
+// This is a convenience wrapper around GetKeyInfo(ctx, "").
+// Returns ErrManagerNotRunning if the manager is not running.
+// Returns ErrKeyNotFound if no current key exists.
+// Returns the context error if the context is cancelled.
+func (m *Manager) GetCurrentKeyInfo(ctx context.Context) (*KeyInfo, error) {
+	return m.GetKeyInfo(ctx, "")
 }
 
 // RotateKeys rotates the current signing key to a newly generated one, and marks

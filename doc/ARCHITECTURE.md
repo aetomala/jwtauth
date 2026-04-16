@@ -535,6 +535,31 @@ Keys carry no TTL — Manager owns the lifecycle and calls `Delete` explicitly v
 
 `operation` values: `"load_all"`, `"save"`, `"update_metadata"`, `"load_key"`, `"delete"`
 
+**Key Inspection API**
+
+`GetKeyInfo(ctx, keyID)` and `GetCurrentKeyInfo(ctx)` return a `*KeyInfo` struct containing public metadata only — no private key material is exposed:
+
+```go
+type KeyInfo struct {
+    KeyID       string    // Unique key identifier
+    CreatedAt   time.Time // When the key was generated
+    RotateAt    time.Time // Estimated rotation time (current key only; zero for historical keys)
+    ExpiresAt   time.Time // When the key expires (zero = still current)
+    KeySizeBits int       // RSA key size in bits (e.g., 2048)
+    Algorithm   string    // Always "RS256"
+    IsCurrent   bool      // True if this is the active signing key
+    IsValid     bool      // True if the key has not yet expired
+}
+```
+
+`RotateAt` is computed as `CreatedAt + KeyRotationInterval` for the current signing key — it is not stored. Both methods check context cancellation before acquiring the read lock, consistent with all other KeyManager read methods.
+
+Use cases:
+- `/health/keys` endpoints — expose key age and upcoming rotation schedule
+- Prometheus gauges — `jwtauth_key_age_seconds`, `jwtauth_rotation_scheduled_seconds`, `jwtauth_key_valid`
+- Admin dashboards — display key rotation state without exposing cryptographic material
+- Debug — correlate a `kid` JWT header claim with key metadata
+
 `status` values: `"success"`, `"not_found"`, `"error"`, `"cancelled"`
 
 `storage_backend` values: `"disk"`, `"redis"`
