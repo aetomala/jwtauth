@@ -1022,7 +1022,6 @@ var _ = Describe("Manager", func() {
 			}
 		}
 
-		// ===== Phase 10.1: Not Running =====
 		Context("when the manager is not running", func() {
 			BeforeEach(func() {
 				var err error
@@ -1043,7 +1042,6 @@ var _ = Describe("Manager", func() {
 			})
 		})
 
-		// ===== Phase 10.2: Empty keyID returns current key =====
 		Context("when manager is running and keyID is empty", func() {
 			var currentKeyID string
 
@@ -1078,7 +1076,6 @@ var _ = Describe("Manager", func() {
 			})
 		})
 
-		// ===== Phase 10.3: Specific keyID =====
 		Context("when a specific keyID is provided", func() {
 			var currentKeyID, oldKeyID string
 
@@ -1116,7 +1113,6 @@ var _ = Describe("Manager", func() {
 			})
 		})
 
-		// ===== Phase 10.4: Key not found =====
 		Context("when the key does not exist", func() {
 			BeforeEach(func() {
 				startWithKeys([]*keymanager.StoredKey{
@@ -1137,7 +1133,6 @@ var _ = Describe("Manager", func() {
 			})
 		})
 
-		// ===== Phase 10.5: Context cancelled =====
 		Context("when the context is already cancelled", func() {
 			BeforeEach(func() {
 				startWithKeys([]*keymanager.StoredKey{
@@ -1161,7 +1156,6 @@ var _ = Describe("Manager", func() {
 			})
 		})
 
-		// ===== Phase 10.6: Context deadline exceeded =====
 		Context("when the context deadline has already passed", func() {
 			BeforeEach(func() {
 				startWithKeys([]*keymanager.StoredKey{
@@ -1185,7 +1179,6 @@ var _ = Describe("Manager", func() {
 			})
 		})
 
-		// ===== Phase 10.7: Historical (expired) key =====
 		Context("when the key has already expired", func() {
 			var oldKeyID string
 
@@ -1220,7 +1213,6 @@ var _ = Describe("Manager", func() {
 			})
 		})
 
-		// ===== Phase 10.8: GetCurrentKeyInfo convenience wrapper =====
 		Context("GetCurrentKeyInfo", func() {
 			var currentKeyID string
 
