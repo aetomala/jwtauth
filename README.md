@@ -436,6 +436,33 @@ func main() {
 }
 ```
 
+### Key Inspection
+
+`GetCurrentKeyInfo` returns key metadata — safe to expose from health checks or admin endpoints:
+
+```go
+info, err := km.GetCurrentKeyInfo(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("Key: %s | Age: %s | Rotates at: %s | Valid: %v",
+    info.KeyID,
+    time.Since(info.CreatedAt).Round(time.Second),
+    info.RotateAt.Format(time.RFC3339),
+    info.IsValid,
+)
+```
+
+Look up a specific key by its `kid` JWT header claim:
+
+```go
+info, err := km.GetKeyInfo(ctx, kid)
+// info.IsCurrent reports whether this is the active signing key
+// info.IsValid reports whether it has not yet expired
+```
+
+See `examples/health-check/` and `examples/prometheus-metrics/` for complete runnable examples.
+
 ### With Observability
 
 ```go

@@ -105,6 +105,11 @@ func main() {
 		r.Post("/logout", logoutHandler(mgr))
 	})
 
+	// Admin routes — key inspection (no auth in this example; add middleware in production)
+	r.Route("/admin", func(r chi.Router) {
+		r.Get("/key-status", keyStatusHandler(km))
+	})
+
 	log.Println("Starting server on :8080")
 	if err := http.ListenAndServe(":8080", r); err != nil {
 		log.Fatal(err)
@@ -236,4 +241,24 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"status": "healthy",
 	})
+}
+
+// keyStatusHandler returns the current signing key metadata via GetCurrentKeyInfo.
+// No private key material is included — safe to expose via an admin endpoint.
+func keyStatusHandler(km *keymanager.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		info, err := km.GetCurrentKeyInfo(ctx)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{"error": "key manager unavailable"})
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(info)
+	}
 }

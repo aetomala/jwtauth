@@ -989,4 +989,264 @@ var _ = Describe("Manager", func() {
 			})
 		})
 	})
+
+	// ===== PHASE 10: GetKeyInfo and GetCurrentKeyInfo =====
+	Describe("Phase 10: GetKeyInfo and GetCurrentKeyInfo", func() {
+		var (
+			ctrl   *gomock.Controller
+			mockKS *testutil.MockKeyStore
+			m      *keymanager.Manager
+		)
+
+		BeforeEach(func() {
+			ctrl = gomock.NewController(GinkgoT())
+			mockKS = testutil.NewMockKeyStore(ctrl)
+		})
+
+		AfterEach(func() { ctrl.Finish() })
+
+		// startWithKeys starts the manager after loading the given StoredKeys.
+		startWithKeys := func(keys []*keymanager.StoredKey) {
+			mockKS.EXPECT().LoadAll(gomock.Any()).Return(keys, nil)
+			var err error
+			m, err = keymanager.NewManager(newTestConfig(mockKS))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(m.Start(ctx)).To(Succeed())
+		}
+
+		shutdownManager := func() {
+			if m != nil && m.IsRunning() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				m.Shutdown(shutdownCtx)
+			}
+		}
+
+		Context("when the manager is not running", func() {
+			BeforeEach(func() {
+				var err error
+				m, err = keymanager.NewManager(newTestConfig(mockKS))
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("GetKeyInfo should return ErrManagerNotRunning", func() {
+				info, err := m.GetKeyInfo(ctx, "")
+				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+				Expect(info).To(BeNil())
+			})
+
+			It("GetCurrentKeyInfo should return ErrManagerNotRunning", func() {
+				info, err := m.GetCurrentKeyInfo(ctx)
+				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+				Expect(info).To(BeNil())
+			})
+		})
+
+		Context("when manager is running and keyID is empty", func() {
+			var currentKeyID string
+
+			BeforeEach(func() {
+				currentKeyID = "key-current"
+				startWithKeys([]*keymanager.StoredKey{
+					{
+						KeyID:      currentKeyID,
+						PrivateKey: newTestKey(),
+						Metadata:   keymanager.KeyMetadata{ID: currentKeyID, CreatedAt: time.Now().Add(-1 * time.Hour)},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return KeyInfo with IsCurrent=true and IsValid=true", func() {
+				info, err := m.GetKeyInfo(ctx, "")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info).NotTo(BeNil())
+				Expect(info.KeyID).To(Equal(currentKeyID))
+				Expect(info.IsCurrent).To(BeTrue())
+				Expect(info.IsValid).To(BeTrue())
+				Expect(info.Algorithm).To(Equal("RS256"))
+				Expect(info.KeySizeBits).To(Equal(2048))
+			})
+
+			It("should populate RotateAt for the current key", func() {
+				info, err := m.GetKeyInfo(ctx, "")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info.RotateAt.IsZero()).To(BeFalse())
+			})
+		})
+
+		Context("when a specific keyID is provided", func() {
+			var currentKeyID, oldKeyID string
+
+			BeforeEach(func() {
+				currentKeyID = "key-current"
+				oldKeyID = "key-old"
+				// currentKeyID has the most recent CreatedAt, so Start will pick it
+				startWithKeys([]*keymanager.StoredKey{
+					{
+						KeyID:      currentKeyID,
+						PrivateKey: newTestKey(),
+						Metadata:   keymanager.KeyMetadata{ID: currentKeyID, CreatedAt: time.Now()},
+					},
+					{
+						KeyID:      oldKeyID,
+						PrivateKey: newTestKey(),
+						Metadata:   keymanager.KeyMetadata{ID: oldKeyID, CreatedAt: time.Now().Add(-48 * time.Hour), ExpiresAt: time.Now().Add(-24 * time.Hour)},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return IsCurrent=true for the current signing key", func() {
+				info, err := m.GetKeyInfo(ctx, currentKeyID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info.KeyID).To(Equal(currentKeyID))
+				Expect(info.IsCurrent).To(BeTrue())
+			})
+
+			It("should return IsCurrent=false for a non-current key", func() {
+				info, err := m.GetKeyInfo(ctx, oldKeyID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info.IsCurrent).To(BeFalse())
+			})
+		})
+
+		Context("when the key does not exist", func() {
+			BeforeEach(func() {
+				startWithKeys([]*keymanager.StoredKey{
+					{
+						KeyID:      "key-only",
+						PrivateKey: newTestKey(),
+						Metadata:   keymanager.KeyMetadata{ID: "key-only", CreatedAt: time.Now()},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return ErrKeyNotFound for an unknown keyID", func() {
+				info, err := m.GetKeyInfo(ctx, "does-not-exist")
+				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+				Expect(info).To(BeNil())
+			})
+		})
+
+		Context("when the context is already cancelled", func() {
+			BeforeEach(func() {
+				startWithKeys([]*keymanager.StoredKey{
+					{
+						KeyID:      "key-ctx",
+						PrivateKey: newTestKey(),
+						Metadata:   keymanager.KeyMetadata{ID: "key-ctx", CreatedAt: time.Now()},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return context.Canceled", func() {
+				cancelCtx, cancelFn := context.WithCancel(context.Background())
+				cancelFn()
+
+				info, err := m.GetKeyInfo(cancelCtx, "")
+				Expect(err).To(MatchError(context.Canceled))
+				Expect(info).To(BeNil())
+			})
+		})
+
+		Context("when the context deadline has already passed", func() {
+			BeforeEach(func() {
+				startWithKeys([]*keymanager.StoredKey{
+					{
+						KeyID:      "key-deadline",
+						PrivateKey: newTestKey(),
+						Metadata:   keymanager.KeyMetadata{ID: "key-deadline", CreatedAt: time.Now()},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return context.DeadlineExceeded", func() {
+				deadCtx, deadCancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+				defer deadCancel()
+
+				info, err := m.GetKeyInfo(deadCtx, "")
+				Expect(err).To(MatchError(context.DeadlineExceeded))
+				Expect(info).To(BeNil())
+			})
+		})
+
+		Context("when the key has already expired", func() {
+			var oldKeyID string
+
+			BeforeEach(func() {
+				oldKeyID = "key-expired"
+				startWithKeys([]*keymanager.StoredKey{
+					{
+						KeyID:      "key-current",
+						PrivateKey: newTestKey(),
+						Metadata:   keymanager.KeyMetadata{ID: "key-current", CreatedAt: time.Now()},
+					},
+					{
+						KeyID:      oldKeyID,
+						PrivateKey: newTestKey(),
+						Metadata: keymanager.KeyMetadata{
+							ID:        oldKeyID,
+							CreatedAt: time.Now().Add(-48 * time.Hour),
+							ExpiresAt: time.Now().Add(-1 * time.Hour),
+						},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return IsValid=false, IsCurrent=false, RotateAt zero for an expired key", func() {
+				info, err := m.GetKeyInfo(ctx, oldKeyID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info.IsValid).To(BeFalse())
+				Expect(info.IsCurrent).To(BeFalse())
+				Expect(info.RotateAt.IsZero()).To(BeTrue())
+			})
+		})
+
+		Context("GetCurrentKeyInfo", func() {
+			var currentKeyID string
+
+			BeforeEach(func() {
+				currentKeyID = "key-convenience"
+				startWithKeys([]*keymanager.StoredKey{
+					{
+						KeyID:      currentKeyID,
+						PrivateKey: newTestKey(),
+						Metadata:   keymanager.KeyMetadata{ID: currentKeyID, CreatedAt: time.Now().Add(-30 * time.Minute)},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return the same result as GetKeyInfo with empty keyID", func() {
+				info1, err1 := m.GetCurrentKeyInfo(ctx)
+				info2, err2 := m.GetKeyInfo(ctx, "")
+
+				Expect(err1).NotTo(HaveOccurred())
+				Expect(err2).NotTo(HaveOccurred())
+				Expect(info1.KeyID).To(Equal(info2.KeyID))
+				Expect(info1.CreatedAt).To(Equal(info2.CreatedAt))
+				Expect(info1.IsCurrent).To(BeTrue())
+				Expect(info2.IsCurrent).To(BeTrue())
+			})
+
+			It("should return ErrManagerNotRunning when not running", func() {
+				shutdownManager()
+				info, err := m.GetCurrentKeyInfo(ctx)
+				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+				Expect(info).To(BeNil())
+			})
+		})
+	})
 })
