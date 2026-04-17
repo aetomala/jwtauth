@@ -37,3 +37,4 @@ go.work.sum
 # Development session log (not tracked in git)
 code-sessions.md
 .DS_Store
+CLAUDE.local.md
