@@ -15,7 +15,28 @@ import (
 
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
+	"github.com/aetomala/jwtauth/pkg/tracing"
 )
+
+// DiskKeyStoreConfig holds configuration for a DiskKeyStore instance.
+type DiskKeyStoreConfig struct {
+	Dir     string          // Absolute or relative path to the key storage directory.
+	KeySize int             // Minimum accepted RSA key bit-size for load-time validation. Defaults to 2048.
+	Logger  logging.Logger  // Optional; nil defaults to NoOpLogger.
+	Metrics metrics.Metrics // Optional; nil defaults to NoOpMetrics.
+	Tracer  tracing.Tracer  // Optional; nil defaults to NoOpTracer.
+}
+
+// DiskKeyStoreConfigDefault returns a DiskKeyStoreConfig with sensible defaults.
+// NewDiskKeyStore applies these automatically for any zero-value or nil fields.
+func DiskKeyStoreConfigDefault() DiskKeyStoreConfig {
+	return DiskKeyStoreConfig{
+		KeySize: 2048,
+		Logger:  &logging.NoOpLogger{},
+		Metrics: metrics.NewNoOpMetrics(),
+		Tracer:  tracing.NewNoOpTracer(),
+	}
+}
 
 // DiskKeyStore is a thread-safe, filesystem-backed implementation of KeyStore.
 // Each key pair is persisted as a PKCS#1 PEM file alongside a companion JSON
@@ -28,38 +49,60 @@ type DiskKeyStore struct {
 	keySize int    // minimum accepted RSA key bit-size for load-time validation
 
 	// ===== Observability =====
-	logger  logging.Logger  // Optional; nil disables logging
-	metrics metrics.Metrics // Optional; nil disables metrics
+	logger  logging.Logger  // never nil; defaults to NoOpLogger
+	metrics metrics.Metrics // never nil; defaults to NoOpMetrics
+	tracer  tracing.Tracer  // never nil; defaults to NoOpTracer
 	backend string          // always "disk"
 }
 
-// NewDiskKeyStore returns a new DiskKeyStore rooted at dir. The directory is
-// created if it does not already exist. Returns ErrInvalidKeyDirectory if dir
-// is empty or the directory cannot be created.
-func NewDiskKeyStore(dir string, keySize int, logger logging.Logger, m metrics.Metrics) (*DiskKeyStore, error) {
+// NewDiskKeyStore returns a new DiskKeyStore using cfg. Zero-value and nil
+// fields are filled with defaults from DiskKeyStoreConfigDefault. The
+// directory is created if it does not already exist. Returns
+// ErrInvalidKeyDirectory if cfg.Dir is empty or the directory cannot be created.
+func NewDiskKeyStore(cfg DiskKeyStoreConfig) (*DiskKeyStore, error) {
 	// ===== STEP 1: Validate Directory =====
-	if strings.TrimSpace(dir) == "" {
+	if strings.TrimSpace(cfg.Dir) == "" {
 		return nil, ErrInvalidKeyDirectory
 	}
 
-	// ===== STEP 2: Create Directory =====
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// ===== STEP 2: Apply Defaults =====
+	defaults := DiskKeyStoreConfigDefault()
+	if cfg.KeySize == 0 {
+		cfg.KeySize = defaults.KeySize
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = defaults.Logger
+	}
+	if cfg.Metrics == nil {
+		cfg.Metrics = defaults.Metrics
+	}
+	if cfg.Tracer == nil {
+		cfg.Tracer = defaults.Tracer
+	}
+
+	// ===== STEP 3: Create Directory =====
+	if err := os.MkdirAll(cfg.Dir, 0755); err != nil {
 		return nil, fmt.Errorf("create key directory: %w", err)
 	}
 
-	// ===== STEP 3: Return Initialized Store =====
-	store := &DiskKeyStore{
-		dir:     dir,
-		keySize: keySize,
+	// ===== STEP 4: Return Initialized Store =====
+	return &DiskKeyStore{
+		dir:     cfg.Dir,
+		keySize: cfg.KeySize,
 		backend: "disk",
-	}
-	if logger != nil {
-		store.logger = logger
-	}
-	if m != nil {
-		store.metrics = m
-	}
-	return store, nil
+		logger:  cfg.Logger,
+		metrics: cfg.Metrics,
+		tracer:  cfg.Tracer,
+	}, nil
+}
+
+// startSpan begins a new tracing span with storage.backend pre-set to "disk".
+func (d *DiskKeyStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
+	return d.tracer.Start(ctx, "DiskKeyStore."+operation,
+		tracing.WithAttributes(map[string]any{
+			"storage.backend": d.backend,
+		}),
+	)
 }
 
 // LoadAll returns every valid (non-expired) key in the directory. Corrupted PEM
@@ -67,6 +110,9 @@ func NewDiskKeyStore(dir string, keySize int, logger logging.Logger, m metrics.M
 // an empty slice when no valid keys exist — this is not an error. Returns the
 // context error if the context is cancelled before completion.
 func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
+	ctx, span := d.startSpan(ctx, "LoadAll")
+	defer span.End()
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
@@ -95,6 +141,8 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, err
 	}
 
@@ -105,6 +153,8 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		if d.logger != nil {
 			d.logger.Error("failed to glob key files", ctx, "error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, "glob key files failed")
 		return nil, fmt.Errorf("glob key files: %w", err)
 	}
 
@@ -159,6 +209,7 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	if d.logger != nil {
 		d.logger.Info("loaded keys from disk", ctx, "count", keyCount)
 	}
+	span.SetStatus(tracing.StatusOK, "")
 	return keys, nil
 }
 
@@ -166,6 +217,10 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 // with 0600 permissions. If the metadata write fails, the PEM file is removed to
 // maintain consistency. Returns the context error if the context is cancelled.
 func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta KeyMetadata) error {
+	ctx, span := d.startSpan(ctx, "Save")
+	defer span.End()
+	span.SetAttribute("key_id", keyID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
@@ -188,6 +243,8 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return err
 	}
 
@@ -207,6 +264,8 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, "create key file failed")
 		return fmt.Errorf("create key file: %w", err)
 	}
 	defer file.Close()
@@ -217,6 +276,8 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, "write key file failed")
 		return fmt.Errorf("write key file: %w", err)
 	}
 
@@ -229,6 +290,8 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, "save key metadata failed")
 		return fmt.Errorf("save key metadata: %w", err)
 	}
 
@@ -238,6 +301,7 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 	if d.logger != nil {
 		d.logger.Info("saved key to disk", ctx, "keyID", keyID)
 	}
+	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
 
@@ -246,6 +310,10 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 // Returns ErrKeyStoreKeyNotFound if the PEM file for keyID does not exist.
 // Returns the context error if the context is cancelled.
 func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta KeyMetadata) error {
+	ctx, span := d.startSpan(ctx, "UpdateMetadata")
+	defer span.End()
+	span.SetAttribute("key_id", keyID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
@@ -268,6 +336,8 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return err
 	}
 
@@ -276,6 +346,7 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 	if _, err := os.Stat(pemPath); errors.Is(err, os.ErrNotExist) {
 		status = "not_found"
 		errorType = "not_found"
+		span.SetStatus(tracing.StatusError, "key not found")
 		return ErrKeyStoreKeyNotFound
 	}
 
@@ -286,6 +357,8 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, "update metadata failed")
 		return fmt.Errorf("update metadata: %w", err)
 	}
 
@@ -295,6 +368,7 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 	if d.logger != nil {
 		d.logger.Info("updated key metadata", ctx, "keyID", keyID)
 	}
+	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
 
@@ -302,6 +376,10 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 // GetPublicKey cache miss. Returns ErrKeyStoreInvalidKeyID if keyID is empty or
 // whitespace-only, ErrKeyStoreKeyNotFound if the key does not exist on disk.
 func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *KeyMetadata, error) {
+	ctx, span := d.startSpan(ctx, "LoadKey")
+	defer span.End()
+	span.SetAttribute("key_id", keyID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
@@ -324,6 +402,8 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, nil, err
 	}
 
@@ -331,6 +411,7 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	if strings.TrimSpace(keyID) == "" {
 		status = "not_found"
 		errorType = "not_found"
+		span.SetStatus(tracing.StatusError, "invalid key ID")
 		return nil, nil, ErrKeyStoreInvalidKeyID
 	}
 
@@ -341,6 +422,7 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file") {
 			status = "not_found"
 			errorType = "not_found"
+			span.SetStatus(tracing.StatusError, "key not found")
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if d.logger != nil {
@@ -348,6 +430,8 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, "load key file failed")
 		return nil, nil, fmt.Errorf("load key: %w", err)
 	}
 
@@ -359,6 +443,8 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, "load metadata failed")
 		return nil, nil, fmt.Errorf("load metadata: %w", err)
 	}
 
@@ -368,6 +454,7 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	if d.logger != nil {
 		d.logger.Debug("loaded key from disk", ctx, "keyID", keyID)
 	}
+	span.SetStatus(tracing.StatusOK, "")
 	return privateKey, &meta, nil
 }
 
@@ -375,6 +462,10 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 // If the key does not exist, no error is returned — the call is idempotent.
 // Returns the context error if the context is cancelled.
 func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
+	ctx, span := d.startSpan(ctx, "Delete")
+	defer span.End()
+	span.SetAttribute("key_id", keyID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
@@ -397,6 +488,8 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return err
 	}
 
@@ -408,6 +501,8 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, "delete key file failed")
 		return fmt.Errorf("delete key file: %w", err)
 	}
 
@@ -419,6 +514,8 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, "delete metadata file failed")
 		return fmt.Errorf("delete metadata file: %w", err)
 	}
 
@@ -428,6 +525,7 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	if d.logger != nil {
 		d.logger.Info("deleted key from disk", ctx, "keyID", keyID)
 	}
+	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
 

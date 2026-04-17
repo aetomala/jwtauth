@@ -17,7 +17,7 @@ func main() {
 	logger := logging.NewTextLogger(slog.LevelInfo)
 
 	// ===== STEP 1: Create KeyManager =====
-	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, nil)
+	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger})
 	if err != nil {
 		log.Fatal("Failed to create DiskKeyStore:", err)
 	}

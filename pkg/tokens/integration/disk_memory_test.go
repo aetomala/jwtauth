@@ -24,7 +24,7 @@ func diskMemoryFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keymanager.M
 	tmpDir, err := os.MkdirTemp("", "integration-disk-*")
 	Expect(err).NotTo(HaveOccurred())
 
-	ks, err := keymanager.NewDiskKeyStore(tmpDir, 2048, nil, nil)
+	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: tmpDir, KeySize: 2048})
 	Expect(err).NotTo(HaveOccurred())
 
 	km, err := keymanager.NewManager(keymanager.ManagerConfig{

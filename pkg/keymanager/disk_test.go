@@ -18,6 +18,7 @@ import (
 	"github.com/aetomala/jwtauth/internal/testutil"
 	"github.com/aetomala/jwtauth/pkg/keymanager"
 	"github.com/aetomala/jwtauth/pkg/metrics"
+	"github.com/aetomala/jwtauth/pkg/tracing"
 )
 
 // writePEMFile writes a PKCS#1 PEM file for key at dir/keyID.pem with 0600 permissions.
@@ -34,7 +35,7 @@ func writePEMFile(dir, keyID string, key *rsa.PrivateKey) {
 func writeMetaFile(dir, keyID string, meta keymanager.KeyMetadata) {
 	// Re-use DiskKeyStore serialisation by saving through the store
 	// — this avoids duplicating JSON logic in tests.
-	ds, err := keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+	ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(ds.UpdateMetadata(context.Background(), keyID, meta)).To(Succeed())
 }
@@ -54,14 +55,14 @@ var _ = Describe("DiskKeyStore", func() {
 	Describe("Phase 1: Constructor and Initialization", func() {
 		Context("with a valid directory", func() {
 			It("should create a DiskKeyStore successfully", func() {
-				ds, err := keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+				ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(ds).NotTo(BeNil())
 			})
 
 			It("should create a non-existent directory automatically", func() {
 				newDir := filepath.Join(dir, "auto-created")
-				ds, err := keymanager.NewDiskKeyStore(newDir, 2048, nil, nil)
+				ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: newDir, KeySize: 2048})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(ds).NotTo(BeNil())
 				_, statErr := os.Stat(newDir)
@@ -70,7 +71,31 @@ var _ = Describe("DiskKeyStore", func() {
 
 			It("should accept a logger and metrics without error", func() {
 				mockLogger := testutil.NewMockLogger()
-				ds, err := keymanager.NewDiskKeyStore(dir, 2048, mockLogger, nil)
+				ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048, Logger: mockLogger})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ds).NotTo(BeNil())
+			})
+
+			It("should apply defaults from DiskKeyStoreConfigDefault when optional fields are nil", func() {
+				// Dir only — all optional fields nil/zero; must not panic on any operation.
+				ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir})
+				Expect(err).NotTo(HaveOccurred())
+				key := newTestKey()
+				Expect(ds.Save(ctx, "defaults-key", key, keymanager.KeyMetadata{ID: "defaults-key", CreatedAt: time.Now()})).To(Succeed())
+				_, _, err = ds.LoadKey(ctx, "defaults-key")
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should accept an explicit Tracer without error", func() {
+				ctrl := gomock.NewController(GinkgoT())
+				defer ctrl.Finish()
+				mockTracer := testutil.NewMockTracer(ctrl)
+				mockSpan := testutil.NewMockSpan(ctrl)
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Any(), gomock.Any()).Return(ctx, mockSpan).AnyTimes()
+				mockSpan.EXPECT().End().AnyTimes()
+				mockSpan.EXPECT().SetAttribute(gomock.Any(), gomock.Any()).AnyTimes()
+				mockSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
+				ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048, Tracer: mockTracer})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(ds).NotTo(BeNil())
 			})
@@ -78,12 +103,12 @@ var _ = Describe("DiskKeyStore", func() {
 
 		Context("with an invalid directory", func() {
 			It("should return ErrInvalidKeyDirectory for an empty string", func() {
-				_, err := keymanager.NewDiskKeyStore("", 2048, nil, nil)
+				_, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "", KeySize: 2048})
 				Expect(err).To(MatchError(keymanager.ErrInvalidKeyDirectory))
 			})
 
 			It("should return ErrInvalidKeyDirectory for a whitespace-only string", func() {
-				_, err := keymanager.NewDiskKeyStore("   ", 2048, nil, nil)
+				_, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "   ", KeySize: 2048})
 				Expect(err).To(MatchError(keymanager.ErrInvalidKeyDirectory))
 			})
 		})
@@ -95,7 +120,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		BeforeEach(func() {
 			var err error
-			ds, err = keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+			ds, err = keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -154,7 +179,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		BeforeEach(func() {
 			var err error
-			ds, err = keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+			ds, err = keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -225,7 +250,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		BeforeEach(func() {
 			var err error
-			ds, err = keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+			ds, err = keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -287,7 +312,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		BeforeEach(func() {
 			var err error
-			ds, err = keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+			ds, err = keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -333,7 +358,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		BeforeEach(func() {
 			var err error
-			ds, err = keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+			ds, err = keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -383,7 +408,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		BeforeEach(func() {
 			var err error
-			ds, err = keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+			ds, err = keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -418,7 +443,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		BeforeEach(func() {
 			var err error
-			ds, err = keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+			ds, err = keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -500,7 +525,7 @@ var _ = Describe("DiskKeyStore", func() {
 		AfterEach(func() { ctrl.Finish() })
 
 		newMetricStore := func() *keymanager.DiskKeyStore {
-			ds, err := keymanager.NewDiskKeyStore(dir, 2048, nil, mockM)
+			ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048, Metrics: mockM})
 			Expect(err).NotTo(HaveOccurred())
 			return ds
 		}
@@ -546,7 +571,7 @@ var _ = Describe("DiskKeyStore", func() {
 		Context("LoadKey", func() {
 			It("should record success metrics", func() {
 				// Pre-save via unmetered store
-				plain, _ := keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+				plain, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 				key := newTestKey()
 				Expect(plain.Save(ctx, "metric-load-key", key, keymanager.KeyMetadata{ID: "metric-load-key", CreatedAt: time.Now()})).To(Succeed())
 
@@ -566,7 +591,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		Context("UpdateMetadata", func() {
 			It("should record success metrics", func() {
-				plain, _ := keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+				plain, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 				key := newTestKey()
 				Expect(plain.Save(ctx, "metric-update-key", key, keymanager.KeyMetadata{ID: "metric-update-key", CreatedAt: time.Now()})).To(Succeed())
 
@@ -578,7 +603,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		Context("Delete", func() {
 			It("should record success metrics", func() {
-				plain, _ := keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+				plain, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 				key := newTestKey()
 				Expect(plain.Save(ctx, "metric-delete-key", key, keymanager.KeyMetadata{ID: "metric-delete-key", CreatedAt: time.Now()})).To(Succeed())
 
@@ -590,7 +615,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		Context("nil metrics", func() {
 			It("should not panic when metrics is nil", func() {
-				ds, err := keymanager.NewDiskKeyStore(dir, 2048, nil, nil)
+				ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 				Expect(err).NotTo(HaveOccurred())
 
 				key := newTestKey()
@@ -601,6 +626,51 @@ var _ = Describe("DiskKeyStore", func() {
 					_ = ds.UpdateMetadata(ctx, "nil-metrics-key", keymanager.KeyMetadata{ID: "nil-metrics-key", CreatedAt: time.Now()})
 				}).NotTo(Panic())
 				Expect(func() { _ = ds.Delete(ctx, "nil-metrics-key") }).NotTo(Panic())
+			})
+		})
+	})
+
+	// ===== PHASE 10: Tracing =====
+	Describe("Phase 10: Tracing", func() {
+		var (
+			ctrl        *gomock.Controller
+			mockTracer  *testutil.MockTracer
+			mockSpan    *testutil.MockSpan
+			tracingStore *keymanager.DiskKeyStore
+		)
+
+		BeforeEach(func() {
+			ctrl = gomock.NewController(GinkgoT())
+			mockTracer = testutil.NewMockTracer(ctrl)
+			mockSpan = testutil.NewMockSpan(ctrl)
+			var err error
+			tracingStore, err = keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048, Tracer: mockTracer})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() { ctrl.Finish() })
+
+		Context("Save — success path", func() {
+			It("should start a span named DiskKeyStore.Save with key_id and StatusOK", func() {
+				mockTracer.EXPECT().Start(gomock.Any(), "DiskKeyStore.Save", gomock.Any()).Return(ctx, mockSpan)
+				mockSpan.EXPECT().SetAttribute("key_id", "trace-save-key")
+				mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+				mockSpan.EXPECT().End()
+
+				key := newTestKey()
+				Expect(tracingStore.Save(ctx, "trace-save-key", key, keymanager.KeyMetadata{ID: "trace-save-key", CreatedAt: time.Now()})).To(Succeed())
+			})
+		})
+
+		Context("LoadKey — error path", func() {
+			It("should call RecordError and StatusError when key is not found", func() {
+				mockTracer.EXPECT().Start(gomock.Any(), "DiskKeyStore.LoadKey", gomock.Any()).Return(ctx, mockSpan)
+				mockSpan.EXPECT().SetAttribute("key_id", "missing-trace-key")
+				mockSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
+				mockSpan.EXPECT().End()
+
+				_, _, err := tracingStore.LoadKey(ctx, "missing-trace-key")
+				Expect(err).To(MatchError(keymanager.ErrKeyStoreKeyNotFound))
 			})
 		})
 	})

@@ -28,7 +28,7 @@ func main() {
 	logger := logging.NewCorrelationJSONLogger(slog.LevelDebug)
 
 	// ===== KeyManager =====
-	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, nil)
+	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger})
 	if err != nil {
 		slog.Error("failed to create key store", "error", err)
 		os.Exit(1)
