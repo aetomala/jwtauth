@@ -76,11 +76,14 @@ var _ = Describe("DiskKeyStore", func() {
 				Expect(ds).NotTo(BeNil())
 			})
 
-			It("should default to NoOpTracer when Tracer is nil", func() {
-				ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
+			It("should apply defaults from DiskKeyStoreConfigDefault when optional fields are nil", func() {
+				// Dir only — all optional fields nil/zero; must not panic on any operation.
+				ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir})
 				Expect(err).NotTo(HaveOccurred())
 				key := newTestKey()
-				Expect(ds.Save(ctx, "noop-tracer-key", key, keymanager.KeyMetadata{ID: "noop-tracer-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "defaults-key", key, keymanager.KeyMetadata{ID: "defaults-key", CreatedAt: time.Now()})).To(Succeed())
+				_, _, err = ds.LoadKey(ctx, "defaults-key")
+				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("should accept an explicit Tracer without error", func() {

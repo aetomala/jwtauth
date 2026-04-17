@@ -21,10 +21,21 @@ import (
 // DiskKeyStoreConfig holds configuration for a DiskKeyStore instance.
 type DiskKeyStoreConfig struct {
 	Dir     string          // Absolute or relative path to the key storage directory.
-	KeySize int             // Minimum accepted RSA key bit-size for load-time validation.
-	Logger  logging.Logger  // Optional; nil disables logging.
-	Metrics metrics.Metrics // Optional; nil disables metrics.
+	KeySize int             // Minimum accepted RSA key bit-size for load-time validation. Defaults to 2048.
+	Logger  logging.Logger  // Optional; nil defaults to NoOpLogger.
+	Metrics metrics.Metrics // Optional; nil defaults to NoOpMetrics.
 	Tracer  tracing.Tracer  // Optional; nil defaults to NoOpTracer.
+}
+
+// DiskKeyStoreConfigDefault returns a DiskKeyStoreConfig with sensible defaults.
+// NewDiskKeyStore applies these automatically for any zero-value or nil fields.
+func DiskKeyStoreConfigDefault() DiskKeyStoreConfig {
+	return DiskKeyStoreConfig{
+		KeySize: 2048,
+		Logger:  &logging.NoOpLogger{},
+		Metrics: metrics.NewNoOpMetrics(),
+		Tracer:  tracing.NewNoOpTracer(),
+	}
 }
 
 // DiskKeyStore is a thread-safe, filesystem-backed implementation of KeyStore.
@@ -38,46 +49,51 @@ type DiskKeyStore struct {
 	keySize int    // minimum accepted RSA key bit-size for load-time validation
 
 	// ===== Observability =====
-	logger  logging.Logger  // Optional; nil disables logging
-	metrics metrics.Metrics // Optional; nil disables metrics
+	logger  logging.Logger  // never nil; defaults to NoOpLogger
+	metrics metrics.Metrics // never nil; defaults to NoOpMetrics
 	tracer  tracing.Tracer  // never nil; defaults to NoOpTracer
 	backend string          // always "disk"
 }
 
-// NewDiskKeyStore returns a new DiskKeyStore using cfg. The directory is
-// created if it does not already exist. Returns ErrInvalidKeyDirectory if
-// cfg.Dir is empty or the directory cannot be created.
+// NewDiskKeyStore returns a new DiskKeyStore using cfg. Zero-value and nil
+// fields are filled with defaults from DiskKeyStoreConfigDefault. The
+// directory is created if it does not already exist. Returns
+// ErrInvalidKeyDirectory if cfg.Dir is empty or the directory cannot be created.
 func NewDiskKeyStore(cfg DiskKeyStoreConfig) (*DiskKeyStore, error) {
 	// ===== STEP 1: Validate Directory =====
 	if strings.TrimSpace(cfg.Dir) == "" {
 		return nil, ErrInvalidKeyDirectory
 	}
 
-	// ===== STEP 2: Create Directory =====
+	// ===== STEP 2: Apply Defaults =====
+	defaults := DiskKeyStoreConfigDefault()
+	if cfg.KeySize == 0 {
+		cfg.KeySize = defaults.KeySize
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = defaults.Logger
+	}
+	if cfg.Metrics == nil {
+		cfg.Metrics = defaults.Metrics
+	}
+	if cfg.Tracer == nil {
+		cfg.Tracer = defaults.Tracer
+	}
+
+	// ===== STEP 3: Create Directory =====
 	if err := os.MkdirAll(cfg.Dir, 0755); err != nil {
 		return nil, fmt.Errorf("create key directory: %w", err)
 	}
 
-	// ===== STEP 3: Default Optional Fields =====
-	t := cfg.Tracer
-	if t == nil {
-		t = tracing.NewNoOpTracer()
-	}
-
 	// ===== STEP 4: Return Initialized Store =====
-	store := &DiskKeyStore{
+	return &DiskKeyStore{
 		dir:     cfg.Dir,
 		keySize: cfg.KeySize,
 		backend: "disk",
-		tracer:  t,
-	}
-	if cfg.Logger != nil {
-		store.logger = cfg.Logger
-	}
-	if cfg.Metrics != nil {
-		store.metrics = cfg.Metrics
-	}
-	return store, nil
+		logger:  cfg.Logger,
+		metrics: cfg.Metrics,
+		tracer:  cfg.Tracer,
+	}, nil
 }
 
 // startSpan begins a new tracing span with storage.backend pre-set to "disk".
