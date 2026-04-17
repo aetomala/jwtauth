@@ -75,6 +75,27 @@ var _ = Describe("DiskKeyStore", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(ds).NotTo(BeNil())
 			})
+
+			It("should default to NoOpTracer when Tracer is nil", func() {
+				ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
+				Expect(err).NotTo(HaveOccurred())
+				key := newTestKey()
+				Expect(ds.Save(ctx, "noop-tracer-key", key, keymanager.KeyMetadata{ID: "noop-tracer-key", CreatedAt: time.Now()})).To(Succeed())
+			})
+
+			It("should accept an explicit Tracer without error", func() {
+				ctrl := gomock.NewController(GinkgoT())
+				defer ctrl.Finish()
+				mockTracer := testutil.NewMockTracer(ctrl)
+				mockSpan := testutil.NewMockSpan(ctrl)
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Any(), gomock.Any()).Return(ctx, mockSpan).AnyTimes()
+				mockSpan.EXPECT().End().AnyTimes()
+				mockSpan.EXPECT().SetAttribute(gomock.Any(), gomock.Any()).AnyTimes()
+				mockSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
+				ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048, Tracer: mockTracer})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(ds).NotTo(BeNil())
+			})
 		})
 
 		Context("with an invalid directory", func() {
@@ -606,36 +627,8 @@ var _ = Describe("DiskKeyStore", func() {
 		})
 	})
 
-	// ===== PHASE 10: Config =====
-	Describe("Phase 10: Config", func() {
-		It("should default to a NoOpTracer when Tracer is nil", func() {
-			ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
-			Expect(err).NotTo(HaveOccurred())
-			// NoOpTracer: Save must not panic even though no tracer was provided explicitly.
-			key := newTestKey()
-			Expect(ds.Save(ctx, "noop-tracer-key", key, keymanager.KeyMetadata{ID: "noop-tracer-key", CreatedAt: time.Now()})).To(Succeed())
-		})
-
-		It("should store an explicit Tracer without error", func() {
-			ctrl := gomock.NewController(GinkgoT())
-			defer ctrl.Finish()
-
-			mockTracer := testutil.NewMockTracer(ctrl)
-			mockSpan := testutil.NewMockSpan(ctrl)
-
-			mockTracer.EXPECT().Start(gomock.Any(), gomock.Any(), gomock.Any()).Return(ctx, mockSpan).AnyTimes()
-			mockSpan.EXPECT().End().AnyTimes()
-			mockSpan.EXPECT().SetAttribute(gomock.Any(), gomock.Any()).AnyTimes()
-			mockSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
-
-			ds, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: 2048, Tracer: mockTracer})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(ds).NotTo(BeNil())
-		})
-	})
-
-	// ===== PHASE 11: Tracing =====
-	Describe("Phase 11: Tracing", func() {
+	// ===== PHASE 10: Tracing =====
+	Describe("Phase 10: Tracing", func() {
 		var (
 			ctrl        *gomock.Controller
 			mockTracer  *testutil.MockTracer
