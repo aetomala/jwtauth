@@ -44,9 +44,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ===== TokenService =====
+	// ===== TokenManager =====
 	store := storage.NewMemoryRefreshStore(logger, nil)
-	svc, err := tokens.NewService(tokens.ServiceConfig{
+	mgr, err := tokens.NewManager(tokens.ManagerConfig{
 		KeyManager:           km,
 		RefreshStore:         store,
 		AccessTokenDuration:  15 * time.Minute,
@@ -62,14 +62,14 @@ func main() {
 	}
 
 	startCtx := context.Background()
-	if err := svc.Start(startCtx); err != nil {
+	if err := mgr.Start(startCtx); err != nil {
 		slog.Error("failed to start token service", "error", err)
 		os.Exit(1)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = svc.Shutdown(shutdownCtx)
+		_ = mgr.Shutdown(shutdownCtx)
 	}()
 
 	// ===== HTTP Handlers =====
@@ -103,7 +103,7 @@ func main() {
 			return
 		}
 
-		accessToken, refreshToken, err := svc.IssueTokenPair(ctx, req.UserID)
+		accessToken, refreshToken, err := mgr.IssueTokenPair(ctx, req.UserID)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 			return
@@ -128,7 +128,7 @@ func main() {
 			return
 		}
 
-		newAccessToken, err := svc.RefreshAccessToken(ctx, req.RefreshToken)
+		newAccessToken, err := mgr.RefreshAccessToken(ctx, req.RefreshToken)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusUnauthorized)
 			return
@@ -150,7 +150,7 @@ func main() {
 			return
 		}
 
-		claims, err := svc.ValidateAccessToken(ctx, bearer[7:])
+		claims, err := mgr.ValidateAccessToken(ctx, bearer[7:])
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusUnauthorized)
 			return

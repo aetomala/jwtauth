@@ -1,6 +1,6 @@
-# JWT Authentication System - Architecture
+# jwtauth — Stateful JWT Authorization Token Engine
 
-This document explains the design decisions, patterns, and principles used in the JWT authentication system.
+This document explains the design decisions, patterns, and principles used in the JWT authorization token engine.
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@ This document explains the design decisions, patterns, and principles used in th
 
 ## Overview
 
-The JWT authentication system is designed as a **production-ready, highly observable, and testable** authentication solution for Go applications.
+jwtauth is designed as a production-ready, highly observable, and testable **stateful** JWT authorization token engine for Go applications. It manages the stateful machinery that production token systems require — cryptographic key generation and zero-downtime rotation, access token issuance and validation, and refresh token lifecycle with revocation support. Identity verification is intentionally out of scope.
 
 ### Key Features
 
@@ -112,10 +112,10 @@ github.com/aetomala/jwtauth/
 │   │   ├── disk_test.go           # 9-phase DiskKeyStore tests (38 specs)
 │   │   └── redis_test.go          # 9-phase RedisKeyStore tests (35 specs, miniredis)
 │   ├── tokens/                    # JWT token operations (Beta)
-│   │   ├── service.go             # TokenService implementation
+│   │   ├── manager.go             # TokenManager implementation
 │   │   ├── claims.go              # Claims management
-│   │   ├── service_test.go        # Token operations tests
-│   │   ├── service_lifecycle_test.go  # Lifecycle management tests
+│   │   ├── manager_test.go        # Token operations tests
+│   │   ├── manager_lifecycle_test.go  # Lifecycle management tests
 │   │   └── integration/           # Integration tests
 │   │       └── integration_test.go
 │   └── storage/                   # Refresh token storage ✅
@@ -142,7 +142,8 @@ github.com/aetomala/jwtauth/
 ├── examples/                      # Framework usage examples
 │   ├── gin-example/               # Gin HTTP framework
 │   ├── echo-example/              # Echo HTTP framework
-│   └── chi-example/               # Chi HTTP router
+│   ├── chi-example/               # Chi HTTP router
+│   └── correlation-example/       # End-to-end correlation ID with stdlib net/http
 └── jwtauth_suite_test.go          # Root Ginkgo suite bootstrap
 ```
 
@@ -254,6 +255,39 @@ KeyManager → logging.Logger interface → SlogAdapter → os.Stdout → K8s lo
 - ✅ Testable (MockLogger)
 - ✅ Debug level disableable in production (disable at handler, not in code)
 
+**Correlation ID**:
+
+All jwtauth components accept `context.Context` on every operation and pass it as the first element of `keysAndValues` when logging. `SlogAdapter` detects this and routes the call through `slog.*Context()`, which lets `CorrelationIDHandler` extract a correlation ID from the context and append it to every record automatically.
+
+```go
+// Internal component logging — ctx as the first kwarg:
+m.config.Logger.Info("key rotation successful",
+    ctx,
+    "keyID", newKeyID,
+    "duration", time.Since(start))
+
+// SlogAdapter calls InfoContext(ctx, ...), CorrelationIDHandler injects the field:
+// → {"msg":"key rotation successful","keyID":"abc","correlation_id":"req-001"}
+```
+
+Wire it at application startup:
+
+```go
+// NewCorrelationJSONLogger wraps slog.NewJSONHandler with CorrelationIDHandler.
+logger := logging.NewCorrelationJSONLogger(slog.LevelInfo)
+
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{Logger: logger, ...})
+```
+
+Inject the ID once at the HTTP request boundary — it propagates to all jwtauth calls for that request:
+
+```go
+ctx := logging.WithCorrelationID(r.Context(), r.Header.Get("X-Correlation-ID"))
+accessToken, _, err := mgr.IssueTokenPair(ctx, userID)
+```
+
+See `examples/correlation-example/` for a complete working demonstration.
+
 ### Metrics
 
 **Interface**: `pkg/metrics/Metrics`
@@ -329,9 +363,11 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
     
     // Rotate logic...
     
-    // Optional logging
+    // Optional logging — ctx is the first kwarg so SlogAdapter routes through
+    // InfoContext, which lets CorrelationIDHandler inject correlation_id.
     if m.config.Logger != nil {
         m.config.Logger.Info("key rotation successful",
+            ctx,
             "keyID", newKeyID,
             "duration", time.Since(start))
     }
@@ -499,13 +535,38 @@ Keys carry no TTL — Manager owns the lifecycle and calls `Delete` explicitly v
 
 `operation` values: `"load_all"`, `"save"`, `"update_metadata"`, `"load_key"`, `"delete"`
 
+**Key Inspection API**
+
+`GetKeyInfo(ctx, keyID)` and `GetCurrentKeyInfo(ctx)` return a `*KeyInfo` struct containing public metadata only — no private key material is exposed:
+
+```go
+type KeyInfo struct {
+    KeyID       string    // Unique key identifier
+    CreatedAt   time.Time // When the key was generated
+    RotateAt    time.Time // Estimated rotation time (current key only; zero for historical keys)
+    ExpiresAt   time.Time // When the key expires (zero = still current)
+    KeySizeBits int       // RSA key size in bits (e.g., 2048)
+    Algorithm   string    // Always "RS256"
+    IsCurrent   bool      // True if this is the active signing key
+    IsValid     bool      // True if the key has not yet expired
+}
+```
+
+`RotateAt` is computed as `CreatedAt + KeyRotationInterval` for the current signing key — it is not stored. Both methods check context cancellation before acquiring the read lock, consistent with all other KeyManager read methods.
+
+Use cases:
+- `/health/keys` endpoints — expose key age and upcoming rotation schedule
+- Prometheus gauges — `jwtauth_key_age_seconds`, `jwtauth_rotation_scheduled_seconds`, `jwtauth_key_valid`
+- Admin dashboards — display key rotation state without exposing cryptographic material
+- Debug — correlate a `kid` JWT header claim with key metadata
+
 `status` values: `"success"`, `"not_found"`, `"error"`, `"cancelled"`
 
 `storage_backend` values: `"disk"`, `"redis"`
 
 `SetGauge(jwtauth_keystore_keys_count)` is recorded only by `LoadAll` — set to the count of valid non-expired keys returned. This is sufficient because `GetCurrentSigningKey` never calls the store after startup and `GetPublicKey` only calls `LoadKey` on rare cache misses, so KeyStore operations are not on the hot path.
 
-### TokenService (Beta)
+### TokenManager (Beta)
 
 **Responsibilities**:
 - Issue access tokens (short-lived, e.g., 15 minutes) with optional custom claims
@@ -530,7 +591,7 @@ Created → Start() → Running → Shutdown() → Stopped
 - **Synchronization**: `atomic.Bool` for running state; cleanup uses channel signaling and `sync.WaitGroup` for graceful shutdown
 
 **Key Design Decisions**:
-- Rate limiting is intentionally **not** in TokenService — it belongs at the infrastructure layer (API Gateway, Ingress, Load Balancer) where per-route and per-IP policies apply globally
+- Rate limiting is intentionally **not** in TokenManager — it belongs at the infrastructure layer (API Gateway, Ingress, Load Balancer) where per-route and per-IP policies apply globally
 - All storage operations accept `context.Context` for cancellation propagation
 - Reserved JWT claims (`sub`, `iss`, `aud`, `exp`, `iat`, `jti`) cannot be overridden by custom claims
 
@@ -874,9 +935,9 @@ Catches:
 - ✅ Prometheus implementation (`PrometheusMetrics`) with 22 pre-registered metrics, 100% test coverage
 - ✅ NoOp implementation
 - ✅ gomock `MockMetrics` for dependency injection in tests
-- ✅ Wired into KeyManager, TokenService, and RefreshStore — all components fully instrumented
+- ✅ Wired into KeyManager, TokenManager, and RefreshStore — all components fully instrumented
 
-### Phase 3: TokenService ✅ (Beta)
+### Phase 3: TokenManager ✅ (Beta)
 - ✅ JWT creation with RS256 signing and custom claims
 - ✅ Access token validation (signature, expiration, issuer, audience)
 - ✅ Refresh token rotation with revocation checks
@@ -884,7 +945,7 @@ Catches:
 - ✅ Token introspection per RFC 7662
 - ✅ Lifecycle management (Start/Shutdown/IsRunning)
 - ✅ Background cleanup goroutine with configurable interval
-- ✅ Clock skew tolerance (`ClockSkew time.Duration` in `ServiceConfig` — `jwt.WithLeeway()` integration)
+- ✅ Clock skew tolerance (`ClockSkew time.Duration` in `ManagerConfig` — `jwt.WithLeeway()` integration)
 - ✅ `ValidateAccessTokenWithClaims` — returns registered claims and custom claims map after validation
 - ✅ Comprehensive test coverage (153 tests, ~87% coverage, race-detection clean)
 - ✅ RefreshStore interface with context propagation
@@ -905,7 +966,7 @@ Catches:
   - Ensures semantic equivalence across backends
   - Easy to add new implementations
 
-### Phase 5: Metrics Wiring and KeyStore Abstraction (In Progress)
+### Phase 5: Metrics Wiring and KeyStore Abstraction ✅ Complete
 - ✅ Prometheus adapter with `/metrics` endpoint (`PrometheusMetrics`)
 - ✅ `MemoryRefreshStore` and `RedisRefreshStore` fully instrumented
   - Counter + duration on every operation exit path
@@ -917,15 +978,20 @@ Catches:
   - `Manager` unit tests are now filesystem-free (use `MockKeyStore`)
   - 44 Manager specs + 38 DiskKeyStore specs (9 phases), all race-clean
   - `MockKeyStore` generated via gomock
-- ✅ Wire `PrometheusMetrics` into TokenService — deferred closure pattern with `error_type` label, context propagation
+- ✅ Wire `PrometheusMetrics` into TokenManager — deferred closure pattern with `error_type` label, context propagation
 - ✅ `RedisKeyStore` implementation — `ks:pem:<id>` / `ks:meta:<id>` Redis layout, atomic Pipeline writes, SCAN-based `LoadAll`, full metrics with `storage_backend: "redis"`
-- ⏳ StatsD integration (Datadog, Graphite compatible)
-- ⏳ CloudWatch metrics for AWS environments
+- ✅ Correlation ID logging — `CorrelationIDHandler` wraps any `slog.Handler`; `WithCorrelationID`/`GetCorrelationID` context helpers; `SlogAdapter` context-aware routing; `NewCorrelationJSONLogger`/`NewCorrelationTextLogger` convenience constructors
+- ✅ All component logging call sites forward `ctx` — correlation ID propagates through KeyManager, TokenManager, and RefreshStore without Logger interface changes
+- ✅ `KeyManager` interface extended with context on all read methods (`GetCurrentSigningKey`, `GetPublicKey`, `GetJWKS`)
+- ✅ Context cancellation guards in `GetJWKS` and `cleanupExpiredKeys` with warning log on early return
+- ✅ Redis integration tests via miniredis (`pkg/tokens/integration`) covering distributed token operations end-to-end
 
-### Phase 6: OpenTelemetry (Future)
-- ⏳ Distributed tracing
-- ⏳ Span creation across token operations
-- ⏳ Context propagation
+### Phase 6: Distributed Tracing (v0.4.0)
+- ✅ `pkg/tracing` — `Tracer` and `Span` interfaces defined; `SpanOption` functional options; `StatusCode` and `SpanKind` enumerations
+- ✅ `NoOpTracer` / `NoOpSpan` — zero-allocation implementations; 36 tests, race-detection clean
+- ✅ `MockTracer` / `MockSpan` generated via gomock for dependency injection in component tests
+- ⏳ Wire tracing into KeyManager, TokenManager, and RefreshStore
+- ⏳ OpenTelemetry adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
 
 ---
 
@@ -1022,6 +1088,6 @@ func (c *Component) Operation() error {
 
 ---
 
-**Last Updated**: April 6, 2026
-**Version**: 0.2.0-beta
-**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] stable and fully instrumented; TokenService metrics wiring in progress)
+**Last Updated**: April 14, 2026
+**Version**: 0.3.0-beta
+**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] stable and fully instrumented; Distributed Tracing interfaces scaffolded — full wiring planned for v0.4.0)

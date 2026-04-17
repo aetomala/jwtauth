@@ -1,6 +1,6 @@
 # Logging Package
 
-Shared logging interface for the JWT authentication system.
+Shared logging interface for the JWT authorization token engine.
 
 ## Overview
 
@@ -8,42 +8,42 @@ The `logging` package provides a simple, structured logging interface that all c
 
 ## Design Principles
 
-- **Simple**: Only 3 log levels (Info, Warn, Error)
+- **Simple**: Only 4 log levels (Debug, Info, Warn, Error)
 - **Structured**: Key-value pairs for machine-readable logs
 - **Flexible**: Works with any logging library via adapters
 - **Optional**: Components work without a logger (nil-safe)
 
 ## Quick Start
 
-### Production (JSON for Kubernetes)
+### Production (JSON for Kubernetes, with correlation ID)
 
 ```go
 import (
     "log/slog"
-    "os"
     "github.com/aetomala/jwtauth/pkg/logging"
     "github.com/aetomala/jwtauth/pkg/keymanager"
 )
 
 func main() {
-    // Create JSON logger for production
-    handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-        Level: slog.LevelInfo,
-    })
-    logger := logging.NewSlogAdapter(slog.New(handler))
-    
-    // Or use helper:
+    // Recommended: JSON logger with CorrelationIDHandler pre-wired.
+    // When a request context carries a correlation ID, every jwtauth log
+    // line for that request will include "correlation_id" automatically.
+    logger := logging.NewCorrelationJSONLogger(slog.LevelInfo)
+
+    // Without correlation ID support (simpler, no X-Correlation-ID tracing):
     // logger := logging.NewJSONLogger(slog.LevelInfo)
-    
+
     // Use with KeyManager
     ks, _ := keymanager.NewDiskKeyStore("/keys", 2048, logger, nil)
     manager, _ := keymanager.NewManager(keymanager.ManagerConfig{
         KeyStore: ks,
         Logger:   logger,
     })
-    
+
     manager.Start(context.Background())
     // Logs: {"time":"2025-01-07T10:30:00Z","level":"INFO","msg":"key manager started"}
+    // With a correlation ID in ctx:
+    // {"time":"...","level":"INFO","msg":"token pair issued","correlation_id":"req-001","userID":"alice"}
 }
 ```
 
@@ -117,6 +117,21 @@ logger.Error("key rotation failed",
     "error", err,
     "keyID", keyID,
     "attempt", 3)
+```
+
+### Debug
+
+Use for development and troubleshooting. Suppressed at Info level and above — safe to leave in production code and enable only when needed:
+
+- Internal state, cache hits/misses
+- Entry points on high-frequency read paths
+- Intermediate steps inside loops
+- No-op outcomes ("nothing to do")
+
+```go
+logger.Debug("public key cache hit", "keyID", keyID)
+logger.Debug("revoking token for user", "tokenID", tokenID, "userID", userID)
+logger.Debug("no expired keys found during cleanup")
 ```
 
 ## Structured Logging
@@ -217,6 +232,10 @@ func NewZapAdapter(logger *zap.SugaredLogger) *ZapAdapter {
     return &ZapAdapter{logger: logger}
 }
 
+func (z *ZapAdapter) Debug(msg string, keysAndValues ...interface{}) {
+    z.logger.Debugw(msg, keysAndValues...)
+}
+
 func (z *ZapAdapter) Info(msg string, keysAndValues ...interface{}) {
     z.logger.Infow(msg, keysAndValues...)
 }
@@ -252,6 +271,12 @@ func NewZerologAdapter(logger zerolog.Logger) *ZerologAdapter {
     return &ZerologAdapter{logger: logger}
 }
 
+func (z *ZerologAdapter) Debug(msg string, keysAndValues ...interface{}) {
+    event := z.logger.Debug()
+    z.addFields(event, keysAndValues)
+    event.Msg(msg)
+}
+
 func (z *ZerologAdapter) Info(msg string, keysAndValues ...interface{}) {
     event := z.logger.Info()
     z.addFields(event, keysAndValues)
@@ -280,6 +305,89 @@ func (z *ZerologAdapter) addFields(event *zerolog.Event, keysAndValues []interfa
     }
 }
 ```
+
+## Correlation ID
+
+Every jwtauth component passes `context.Context` through all operations. When you wire `CorrelationIDHandler` into your logger and inject a correlation ID at the request boundary, **every internal log line for that request automatically carries `correlation_id`** — from token validation to refresh store lookups — with no changes to component code.
+
+### How It Works
+
+`SlogAdapter` checks whether the first element of `keysAndValues` is a `context.Context`. If it is, the adapter routes the call through `slog.*Context()` instead of `slog.*()`, which lets `CorrelationIDHandler` extract the ID and append it to every record:
+
+```go
+// This is how jwtauth components log internally — ctx as the first kwarg:
+logger.Info("token pair issued", ctx, "userID", userID)
+
+// SlogAdapter detects ctx and calls:
+s.logger.InfoContext(ctx, "token pair issued", "userID", userID)
+
+// CorrelationIDHandler.Handle extracts and injects the field:
+// → {"msg":"token pair issued","userID":"alice","correlation_id":"req-001"}
+```
+
+### Setup
+
+```go
+// Recommended for production — CorrelationIDHandler pre-wired:
+logger := logging.NewCorrelationJSONLogger(slog.LevelInfo)
+
+// For local development:
+// logger := logging.NewCorrelationTextLogger(slog.LevelDebug)
+
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+    Logger: logger,
+    // ...
+})
+```
+
+### HTTP Middleware
+
+Inject a correlation ID once at the request boundary — jwtauth propagates it from there:
+
+```go
+func withCorrelation(next http.HandlerFunc) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        id := r.Header.Get("X-Correlation-ID")
+        if id == "" {
+            id = uuid.New().String() // generate if client did not supply one
+        }
+        ctx := logging.WithCorrelationID(r.Context(), id)
+        w.Header().Set("X-Correlation-ID", id) // echo back to client
+        next(w, r.WithContext(ctx))
+    }
+}
+
+// Handler — pass r.Context() (which now carries the ID) to all jwtauth calls:
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+    accessToken, refreshToken, err := mgr.IssueTokenPair(r.Context(), userID)
+    // All jwtauth log lines for this call will include correlation_id automatically.
+}
+```
+
+### Output
+
+```json
+{"time":"2026-04-14T10:30:00Z","level":"INFO","msg":"token pair issued","userID":"alice","correlation_id":"req-001"}
+{"time":"2026-04-14T10:30:00Z","level":"DEBUG","msg":"refresh token stored","tokenID":"tok-xyz","correlation_id":"req-001"}
+```
+
+Every line for the same request carries the same `correlation_id`. Filter in any log aggregator:
+
+```bash
+jq 'select(.correlation_id=="req-001")' app.log
+```
+
+### API Reference
+
+| Symbol | Description |
+|--------|-------------|
+| `WithCorrelationID(ctx, id)` | Returns a copy of ctx with the correlation ID attached |
+| `GetCorrelationID(ctx)` | Extracts the correlation ID from ctx; returns `""` if not set |
+| `NewCorrelationIDHandler(h)` | Wraps any `slog.Handler` to inject `correlation_id` on every record |
+| `NewCorrelationJSONLogger(level)` | JSON logger with `CorrelationIDHandler` pre-wired — recommended for production |
+| `NewCorrelationTextLogger(level)` | Text logger with `CorrelationIDHandler` pre-wired — recommended for development |
+
+See [examples/correlation-example/](../../examples/correlation-example/) for a complete runnable demonstration.
 
 ## Testing
 
@@ -334,5 +442,5 @@ The Logger interface is designed to be compatible with OpenTelemetry for unified
 ## See Also
 
 - [Metrics Package](../metrics/README.md) - For metrics/monitoring
-- [Architecture Docs](../../docs/ARCHITECTURE.md) - Overall design decisions
+- [Architecture Docs](../../doc/ARCHITECTURE.md) - Overall design decisions
 - [KeyManager Example](../../examples/keymanager/) - Complete usage examples

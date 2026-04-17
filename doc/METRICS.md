@@ -43,7 +43,7 @@ Identifies which RefreshStore or KeyStore implementation is recording the metric
 
 ---
 
-## TokenService Metrics
+## TokenManager Metrics
 
 ### `jwtauth_tokens_issued_total`
 - **Type**: Counter
@@ -79,7 +79,7 @@ Identifies which RefreshStore or KeyStore implementation is recording the metric
 - **Type**: Histogram
 - **Labels**: `operation`
 - **Buckets**: 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s
-- **Description**: End-to-end latency for TokenService operations. `operation` matches the method name (e.g. `"issue_token_pair"`, `"validate_access_token"`).
+- **Description**: End-to-end latency for TokenManager operations. `operation` matches the method name (e.g. `"issue_token_pair"`, `"validate_access_token"`).
 
 ### `jwtauth_active_tokens`
 - **Type**: Gauge
@@ -89,7 +89,7 @@ Identifies which RefreshStore or KeyStore implementation is recording the metric
 ### `jwtauth_service_running`
 - **Type**: Gauge
 - **Labels**: none
-- **Description**: `1` when the TokenService is running (after `Start()`), `0` when stopped. Alert on `== 0`.
+- **Description**: `1` when the TokenManager is running (after `Start()`), `0` when stopped. Alert on `== 0`.
 
 ---
 
@@ -171,6 +171,48 @@ Identifies which RefreshStore or KeyStore implementation is recording the metric
 - **Labels**: none
 - **Description**: Number of key versions currently loaded in the KeyManager (signing key + overlap keys). Should always be ≥ 1. Alert immediately on `== 0`.
 
+### Custom Gauges via `GetCurrentKeyInfo`
+
+The built-in metrics above cover rotation counts and operation latency. For time-based key health gauges, drive them from `GetCurrentKeyInfo` in a background collection loop:
+
+```go
+import (
+    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/prometheus/client_golang/prometheus"
+)
+
+var (
+    keyAgeSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "jwtauth_key_age_seconds",
+        Help: "Age of the current signing key in seconds.",
+    })
+    rotationScheduledSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "jwtauth_rotation_scheduled_seconds",
+        Help: "Seconds until the current signing key is scheduled to rotate.",
+    })
+    keyValid = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "jwtauth_key_valid",
+        Help: "1 if the current signing key is valid, 0 if it has expired.",
+    })
+)
+
+func collectKeyMetrics(ctx context.Context, km *keymanager.Manager) {
+    info, err := km.GetCurrentKeyInfo(ctx)
+    if err != nil {
+        return
+    }
+    keyAgeSeconds.Set(time.Since(info.CreatedAt).Seconds())
+    rotationScheduledSeconds.Set(time.Until(info.RotateAt).Seconds())
+    if info.IsValid {
+        keyValid.Set(1)
+    } else {
+        keyValid.Set(0)
+    }
+}
+```
+
+See `examples/prometheus-metrics/` for a complete runnable example.
+
 ---
 
 ## PromQL Cookbook
@@ -242,12 +284,12 @@ groups:
           severity: critical
           summary: "No active signing key — all token issuance will fail until rotation succeeds"
 
-      - alert: TokenServiceStopped
+      - alert: TokenManagerStopped
         expr: jwtauth_service_running == 0
         for: 1m
         annotations:
           severity: critical
-          summary: "TokenService is not running"
+          summary: "TokenManager is not running"
 
   - name: jwtauth.warning
     rules:

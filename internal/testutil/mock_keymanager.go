@@ -42,6 +42,21 @@ func (m *MockKeyManager) EXPECT() *MockKeyManagerMockRecorder {
 	return m.recorder
 }
 
+// GetCurrentKeyInfo mocks base method.
+func (m *MockKeyManager) GetCurrentKeyInfo(ctx context.Context) (*keymanager.KeyInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCurrentKeyInfo", ctx)
+	ret0, _ := ret[0].(*keymanager.KeyInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetCurrentKeyInfo indicates an expected call of GetCurrentKeyInfo.
+func (mr *MockKeyManagerMockRecorder) GetCurrentKeyInfo(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentKeyInfo", reflect.TypeOf((*MockKeyManager)(nil).GetCurrentKeyInfo), ctx)
+}
+
 // GetCurrentSigningKey mocks base method.
 func (m *MockKeyManager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, string, error) {
 	m.ctrl.T.Helper()
@@ -71,6 +86,21 @@ func (m *MockKeyManager) GetJWKS(ctx context.Context) (*keymanager.JWKS, error) 
 func (mr *MockKeyManagerMockRecorder) GetJWKS(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetJWKS", reflect.TypeOf((*MockKeyManager)(nil).GetJWKS), ctx)
+}
+
+// GetKeyInfo mocks base method.
+func (m *MockKeyManager) GetKeyInfo(ctx context.Context, keyID string) (*keymanager.KeyInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetKeyInfo", ctx, keyID)
+	ret0, _ := ret[0].(*keymanager.KeyInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetKeyInfo indicates an expected call of GetKeyInfo.
+func (mr *MockKeyManagerMockRecorder) GetKeyInfo(ctx, keyID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetKeyInfo", reflect.TypeOf((*MockKeyManager)(nil).GetKeyInfo), ctx, keyID)
 }
 
 // GetPublicKey mocks base method.

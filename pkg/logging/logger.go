@@ -1,7 +1,7 @@
 package logging
 
-// Logger is the standard logging interface for the JWT authentication system.
-// All components (KeyManager, TokenService, RefreshTokenStore, etc.)
+// Logger is the standard logging interface for the JWT authorization token engine.
+// All components (KeyManager, TokenManager, RefreshTokenStore, etc.)
 // use this interface for structured logging.
 //
 // Implementations must support structured logging with key-value pairs where

@@ -24,6 +24,20 @@ type KeyManager interface {
 	// Returns the context error if the context is cancelled.
 	GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKey, error)
 
+	// GetKeyInfo returns public metadata for a specific key by ID — no private key
+	// material is included. If keyID is empty, returns metadata for the current
+	// signing key. Returns ErrManagerNotRunning if the manager is not running.
+	// Returns ErrKeyNotFound if the specified key does not exist.
+	// Returns the context error if the context is cancelled.
+	GetKeyInfo(ctx context.Context, keyID string) (*KeyInfo, error)
+
+	// GetCurrentKeyInfo returns metadata for the current signing key.
+	// This is a convenience wrapper around GetKeyInfo(ctx, "").
+	// Returns ErrManagerNotRunning if the manager is not running.
+	// Returns ErrKeyNotFound if no current key exists.
+	// Returns the context error if the context is cancelled.
+	GetCurrentKeyInfo(ctx context.Context) (*KeyInfo, error)
+
 	// GetJWKS returns the JSON Web Key Set.
 	// Contains all currently valid public keys for token verification.
 	//

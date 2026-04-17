@@ -5,7 +5,7 @@ This example demonstrates how to use `jwtauth` with [Echo](https://echo.labstack
 ## Overview
 
 The example shows:
-- Creating and starting a `TokenService` with `KeyManager` and `RefreshStore`
+- Creating and starting a `TokenManager` with `KeyManager` and `RefreshStore`
 - Writing a custom authentication middleware for Echo
 - Public endpoints for login and token refresh
 - Protected endpoints that require a valid JWT token
@@ -50,7 +50,7 @@ You'll see output like:
 
 ```
 2026-03-30T12:34:56.123Z	info	KeyManager started	{"active_keys": 1, "current_key_id": "..."}
-2026-03-30T12:34:56.124Z	info	TokenService started	{"issuer": "echo-example"}
+2026-03-30T12:34:56.124Z	info	TokenManager started	{"issuer": "echo-example"}
 ⇨ http server started on [::]:8080
 ```
 
@@ -155,7 +155,7 @@ Response:
 Echo middleware follows the `func(HandlerFunc) HandlerFunc` pattern. The custom middleware in `middleware/auth.go`:
 
 1. **Extracts** the token from the `Authorization: Bearer <token>` header
-2. **Validates** the token using `svc.ValidateAccessToken()`
+2. **Validates** the token using `mgr.ValidateAccessToken()`
 3. **Attaches** the claims to the Echo context with `c.Set()`
 4. **Proceeds** to the next handler or **aborts** with 401 if validation fails
 
@@ -167,7 +167,7 @@ Echo allows organizing routes hierarchically with groups:
 
 ```go
 protected := e.Group("/api")
-protected.Use(middleware.AuthMiddleware(svc))
+protected.Use(middleware.BearerMiddleware(mgr))
 protected.GET("/profile", profileHandler)
 protected.POST("/logout", logoutHandler)
 ```
@@ -179,16 +179,16 @@ The example demonstrates proper `jwtauth` lifecycle management:
 ```go
 // Start
 km.Start(ctx)
-svc.Start(ctx)
+mgr.Start(ctx)
 
 // Use
-svc.IssueTokenPair(ctx, userID)
-svc.ValidateAccessToken(ctx, token)
-svc.RefreshAccessToken(ctx, refreshToken)
-svc.RevokeAllUserTokens(ctx, userID)
+mgr.IssueTokenPair(ctx, userID)
+mgr.ValidateAccessToken(ctx, token)
+mgr.RefreshAccessToken(ctx, refreshToken)
+mgr.RevokeAllUserTokens(ctx, userID)
 
 // Shutdown
-svc.Shutdown(shutdownCtx)
+mgr.Shutdown(shutdownCtx)
 km.Shutdown(shutdownCtx)
 ```
 
@@ -219,7 +219,7 @@ claims := map[string]interface{}{
     "tenant": "org-123",
 }
 
-token, err := svc.IssueAccessTokenWithClaims(ctx, userID, claims)
+token, err := mgr.IssueAccessTokenWithClaims(ctx, userID, claims)
 ```
 
 ### Add Authorization Middleware
@@ -228,7 +228,7 @@ Use `ValidateAccessTokenWithClaims` in your middleware to surface custom claims,
 
 ```go
 // In auth middleware — replace ValidateAccessToken with ValidateAccessTokenWithClaims
-registered, custom, err := svc.ValidateAccessTokenWithClaims(c.Request().Context(), token)
+registered, custom, err := mgr.ValidateAccessTokenWithClaims(c.Request().Context(), token)
 if err != nil {
     return c.JSON(http.StatusUnauthorized, map[string]string{"error": tokenErrorCode(err)})
 }
@@ -265,7 +265,7 @@ Replace the in-memory `RefreshStore` with your own implementation:
 // Create custom store
 store := database.NewPostgresRefreshStore(db, logger)
 
-svc, _ := tokens.NewService(tokens.ServiceConfig{
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{
     RefreshStore: store,
     // ... other config
 })
@@ -284,7 +284,7 @@ km, _ := keymanager.NewManager(keymanager.ManagerConfig{
     Logger:   logger,
 })
 
-svc, _ := tokens.NewService(tokens.ServiceConfig{
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{
     Logger: logger,
 })
 ```

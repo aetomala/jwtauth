@@ -40,10 +40,10 @@ mockKM.EXPECT().Start(gomock.Any()).Return(nil).AnyTimes()
 mockLog := testutil.NewMockLogger()
 
 // Pass to the component under test
-svc := myapp.NewService(myapp.Config{Logger: mockLog})
+mgr := myapp.NewManager(myapp.Config{Logger: mockLog})
 
 // Assert on captured output
-Expect(mockLog.HasLog("info", "service started")).To(BeTrue())
+Expect(mockLog.HasLog("info", "manager started")).To(BeTrue())
 Expect(mockLog.HasLogWithField("warn", "token expired", "tokenID")).To(BeTrue())
 Expect(mockLog.CountLogs("error")).To(Equal(0))
 
