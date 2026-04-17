@@ -27,7 +27,7 @@ func main() {
 	pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{})
 
 	// Create KeyStore and KeyManager
-	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
+	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: pm})
 	if err != nil {
 		log.Fatal("Failed to create DiskKeyStore:", err)
 	}

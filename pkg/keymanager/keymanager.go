@@ -22,7 +22,7 @@
 // Example usage:
 //
 //	// Create a KeyStore (choose based on deployment)
-//	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, metrics)
+//	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: metrics})
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
