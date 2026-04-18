@@ -13,6 +13,7 @@ import (
 
 	"github.com/aetomala/jwtauth/internal/testutil"
 	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/tracing"
 )
 
 func TestKeyManager(t *testing.T) {
@@ -100,6 +101,50 @@ var _ = Describe("Manager", func() {
 				m, err := keymanager.NewManager(cfg)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(m).NotTo(BeNil())
+			})
+		})
+
+		Context("tracer defaults and acceptance", func() {
+			It("should apply default Tracer from ConfigDefault when Tracer is nil", func() {
+				cfg := newTestConfig(mockKS)
+				cfg.Tracer = nil
+				m, err := keymanager.NewManager(cfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(m).NotTo(BeNil())
+				// Verify the manager is usable without panicking (NoOp tracer installed)
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				startCtx, startCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer startCancel()
+				Expect(m.Start(startCtx)).To(Succeed())
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer shutdownCancel()
+				Expect(m.Shutdown(shutdownCtx)).To(Succeed())
+			})
+
+			It("should accept an explicit Tracer without error", func() {
+				mockTracer := testutil.NewMockTracer(ctrl)
+				mockSpan := testutil.NewMockSpan(ctrl)
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Any(), gomock.Any()).Return(ctx, mockSpan).AnyTimes()
+				mockSpan.EXPECT().End().AnyTimes()
+				mockSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
+				mockSpan.EXPECT().SetAttribute(gomock.Any(), gomock.Any()).AnyTimes()
+				mockSpan.EXPECT().RecordError(gomock.Any()).AnyTimes()
+
+				cfg := newTestConfig(mockKS)
+				cfg.Tracer = mockTracer
+				m, err := keymanager.NewManager(cfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(m).NotTo(BeNil())
+
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				startCtx, startCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer startCancel()
+				Expect(m.Start(startCtx)).To(Succeed())
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer shutdownCancel()
+				Expect(m.Shutdown(shutdownCtx)).To(Succeed())
 			})
 		})
 
@@ -986,6 +1031,123 @@ var _ = Describe("Manager", func() {
 				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				mockKS.EXPECT().UpdateMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				Expect(func() { _ = m.RotateKeys(ctx) }).NotTo(Panic())
+			})
+		})
+	})
+
+	// ===== PHASE 11: Tracing =====
+	Describe("Phase 11: Tracing", func() {
+		var (
+			ctrl       *gomock.Controller
+			mockKS     *testutil.MockKeyStore
+			mockTracer *testutil.MockTracer
+			manager    *keymanager.Manager
+		)
+
+		BeforeEach(func() {
+			ctrl = gomock.NewController(GinkgoT())
+			mockKS = testutil.NewMockKeyStore(ctrl)
+			mockTracer = testutil.NewMockTracer(ctrl)
+		})
+
+		AfterEach(func() {
+			ctrl.Finish()
+		})
+
+		// newTracingManager starts a manager wired with mockTracer. setupSpan is
+		// returned for "KeyManager.Start" and "KeyManager.Shutdown" spans so that
+		// lifecycle calls do not interfere with the per-test span assertions.
+		// Individual tests register their own span (testSpan) for the method under test.
+		newTracingManager := func(setupSpan *testutil.MockSpan) *keymanager.Manager {
+			setupSpan.EXPECT().End().AnyTimes()
+			setupSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
+
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.Start"), gomock.Any()).Return(ctx, setupSpan)
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.Shutdown"), gomock.Any()).Return(ctx, setupSpan).AnyTimes()
+
+			existingKey := newTestKey()
+			existingID := "tracing-test-key"
+			storedKeys := []*keymanager.StoredKey{
+				{
+					KeyID:      existingID,
+					PrivateKey: existingKey,
+					Metadata:   keymanager.KeyMetadata{ID: existingID, CreatedAt: time.Now()},
+				},
+			}
+			mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
+
+			cfg := newTestConfig(mockKS)
+			cfg.Tracer = mockTracer
+			var err error
+			manager, err = keymanager.NewManager(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(manager.Start(ctx)).To(Succeed())
+			return manager
+		}
+
+		shutdownManager := func() {
+			if manager != nil && manager.IsRunning() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = manager.Shutdown(shutdownCtx)
+			}
+		}
+
+		Context("GetCurrentSigningKey success", func() {
+			It("should start a span named KeyManager.GetCurrentSigningKey, set key_id attribute, and StatusOK", func() {
+				setupSpan := testutil.NewMockSpan(ctrl)
+				testSpan := testutil.NewMockSpan(ctrl)
+				m := newTracingManager(setupSpan)
+				defer shutdownManager()
+
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.GetCurrentSigningKey"), gomock.Any()).Return(ctx, testSpan)
+				testSpan.EXPECT().SetAttribute("key_id", "tracing-test-key")
+				testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+				testSpan.EXPECT().End()
+
+				key, keyID, err := m.GetCurrentSigningKey(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(key).NotTo(BeNil())
+				Expect(keyID).To(Equal("tracing-test-key"))
+			})
+		})
+
+		Context("GetPublicKey error path", func() {
+			It("should call RecordError and StatusError when key is not found in store", func() {
+				setupSpan := testutil.NewMockSpan(ctrl)
+				testSpan := testutil.NewMockSpan(ctrl)
+				m := newTracingManager(setupSpan)
+				defer shutdownManager()
+
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.GetPublicKey"), gomock.Any()).Return(ctx, testSpan)
+				testSpan.EXPECT().SetAttribute("key_id", "ghost-key")
+				testSpan.EXPECT().RecordError(keymanager.ErrKeyNotFound)
+				testSpan.EXPECT().SetStatus(tracing.StatusError, keymanager.ErrKeyNotFound.Error())
+				testSpan.EXPECT().End()
+
+				mockKS.EXPECT().LoadKey(gomock.Any(), "ghost-key").Return(nil, nil, keymanager.ErrKeyStoreKeyNotFound)
+
+				_, err := m.GetPublicKey(ctx, "ghost-key")
+				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+			})
+		})
+
+		Context("RotateKeys success", func() {
+			It("should start and end a span for RotateKeys, set key_id attribute, and StatusOK", func() {
+				setupSpan := testutil.NewMockSpan(ctrl)
+				testSpan := testutil.NewMockSpan(ctrl)
+				m := newTracingManager(setupSpan)
+				defer shutdownManager()
+
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.RotateKeys"), gomock.Any()).Return(ctx, testSpan)
+				testSpan.EXPECT().SetAttribute("key_id", gomock.Any())
+				testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+				testSpan.EXPECT().End()
+
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockKS.EXPECT().UpdateMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+				Expect(m.RotateKeys(ctx)).To(Succeed())
 			})
 		})
 	})
