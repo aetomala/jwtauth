@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **`IssueAccessTokenWithClaims` parameter type changed** from `map[string]interface{}` to `CustomClaims` — update call sites: `map[string]interface{}{"k": v}` → `tokens.CustomClaims{"k": v}`.
+
+- **`IssueRefreshTokenWithMetadata` renamed to `IssueRefreshTokenWithClaims`** — parameter renamed from `metadata` to `claims` with type `CustomClaims`; span name updated to match. Update all call sites.
+
 - **`DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore` constructors migrated to config-struct form** — positional parameter constructors removed; update call sites:
   - `keymanager.NewDiskKeyStore(dir, keySize, logger, metrics)` → `keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: keySize, Logger: logger, Metrics: metrics})`
   - `keymanager.NewRedisKeyStore(client, logger, metrics)` → `keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client, Logger: logger, Metrics: metrics})`
@@ -23,6 +27,12 @@ All notable changes to this project will be documented in this file.
 - **`AuthMiddleware` → `BearerMiddleware`** in all example middleware packages (`examples/gin-example/middleware`, `examples/chi-example/auth`, `examples/echo-example/middleware`). Rename call sites accordingly.
 
 ### Added
+
+- **`CustomClaims` named type** (`map[string]interface{}`) in `pkg/tokens` — canonical type for caller-supplied custom claims across all `WithClaims` methods; reserved JWT field names (`sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, `jti`) are silently dropped at issuance time to prevent caller-controlled claim injection.
+
+- **`IssueTokenPairWithClaims(ctx, userID, accessClaims, refreshClaims CustomClaims)`** on `TokenManager` — issues an access+refresh pair with caller-supplied custom claims embedded in the access token and optional metadata stored with the refresh token; consistent with the established `IssueAccessToken` / `IssueAccessTokenWithClaims` pair pattern.
+
+- **`RefreshAccessTokenWithClaims(ctx, refreshToken string, claims CustomClaims)`** on `TokenManager` — rotates a refresh token and issues a new access token with caller-supplied fresh claims; resolves the stale-claims-on-refresh problem (closes #76). `RefreshAccessToken` (no claims) is preserved unchanged — callers that do not need fresh claims have no migration cost.
 
 - **Distributed tracing wired into all six components** via `pkg/tracing.Tracer` interface — every constructor accepts an optional `Tracer` field (defaults to `NoOpTracer`):
   - `DiskKeyStore` — spans for Load, Save, Delete, UpdateMetadata; attributes: `storage.backend = "disk"`, `key_id`
