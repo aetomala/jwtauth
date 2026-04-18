@@ -275,12 +275,12 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 
 			deviceRefreshTokens := make(map[string]string)
 			for deviceName, deviceID := range devices {
-				metadata := map[string]interface{}{
+				claims := tokens.CustomClaims{
 					"device_name": deviceName,
 					"device_id":   deviceID,
 					"ip_address":  "192.168.1.100",
 				}
-				token, err := mgr.IssueRefreshTokenWithMetadata(ctx, userID, metadata)
+				token, err := mgr.IssueRefreshTokenWithClaims(ctx, userID, claims)
 				Expect(err).NotTo(HaveOccurred())
 				deviceRefreshTokens[deviceName] = token
 			}
