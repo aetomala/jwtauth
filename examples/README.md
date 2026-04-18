@@ -134,7 +134,7 @@ km, _ := keymanager.NewManager(config)
 km.Start(ctx)
 
 // Create RefreshStore for token persistence
-store := storage.NewMemoryRefreshStore(logger)
+store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger})
 
 // Create TokenManager for token operations
 mgr, _ := tokens.NewManager(config)
