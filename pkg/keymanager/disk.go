@@ -118,22 +118,20 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	errorType := "error"
 	var keyCount int
 	defer func() {
-		if d.metrics != nil {
-			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
-				"operation":       "load_all",
-				"status":          status,
-				"error_type":      errorType,
+		d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
+			"operation":       "load_all",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": d.backend,
+		})
+		d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
+			"operation":       "load_all",
+			"storage_backend": d.backend,
+		})
+		if status == "success" {
+			d.metrics.SetGauge(metricKeyStoreKeysCount, float64(keyCount), map[string]string{
 				"storage_backend": d.backend,
 			})
-			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
-				"operation":       "load_all",
-				"storage_backend": d.backend,
-			})
-			if status == "success" {
-				d.metrics.SetGauge(metricKeyStoreKeysCount, float64(keyCount), map[string]string{
-					"storage_backend": d.backend,
-				})
-			}
 		}
 	}()
 
@@ -150,9 +148,7 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	pattern := filepath.Join(d.dir, "*.pem")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
-		if d.logger != nil {
-			d.logger.Error("failed to glob key files", ctx, "error", err)
-		}
+		d.logger.Error("failed to glob key files", ctx, "error", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, "glob key files failed")
 		return nil, fmt.Errorf("glob key files: %w", err)
@@ -163,31 +159,25 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	for _, file := range matches {
 		privateKey, keyID, err := d.readKeyFile(file)
 		if err != nil {
-			if d.logger != nil {
-				d.logger.Warn("skipping key file: failed to load", ctx,
-					"file", filepath.Base(file),
-					"error", err)
-			}
+			d.logger.Warn("skipping key file: failed to load", ctx,
+				"file", filepath.Base(file),
+				"error", err)
 			continue
 		}
 
 		meta, err := d.readMetadata(keyID)
 		if err != nil {
-			if d.logger != nil {
-				d.logger.Warn("skipping key: failed to load metadata", ctx,
-					"keyID", keyID,
-					"error", err)
-			}
+			d.logger.Warn("skipping key: failed to load metadata", ctx,
+				"keyID", keyID,
+				"error", err)
 			continue
 		}
 
 		// Skip already-expired keys
 		if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
-			if d.logger != nil {
-				d.logger.Info("skipping expired key", ctx,
-					"keyID", keyID,
-					"expiredAt", meta.ExpiresAt.Format(time.RFC3339))
-			}
+			d.logger.Info("skipping expired key", ctx,
+				"keyID", keyID,
+				"expiredAt", meta.ExpiresAt.Format(time.RFC3339))
 			continue
 		}
 
@@ -197,18 +187,14 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 			Metadata:   meta,
 		})
 
-		if d.logger != nil {
-			d.logger.Debug("loaded key from disk", ctx, "keyID", keyID)
-		}
+		d.logger.Debug("loaded key from disk", ctx, "keyID", keyID)
 	}
 
 	// ===== STEP 4: Log and Return =====
 	status = "success"
 	errorType = ""
 	keyCount = len(keys)
-	if d.logger != nil {
-		d.logger.Info("loaded keys from disk", ctx, "count", keyCount)
-	}
+	d.logger.Info("loaded keys from disk", ctx, "count", keyCount)
 	span.SetStatus(tracing.StatusOK, "")
 	return keys, nil
 }
@@ -225,18 +211,16 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if d.metrics != nil {
-			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
-				"operation":       "save",
-				"status":          status,
-				"error_type":      errorType,
-				"storage_backend": d.backend,
-			})
-			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
-				"operation":       "save",
-				"storage_backend": d.backend,
-			})
-		}
+		d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
+			"operation":       "save",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": d.backend,
+		})
+		d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
+			"operation":       "save",
+			"storage_backend": d.backend,
+		})
 	}()
 
 	// ===== STEP 1: Check Context =====
@@ -259,11 +243,9 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 	pemPath := filepath.Join(d.dir, keyID+".pem")
 	file, err := os.OpenFile(pemPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		if d.logger != nil {
-			d.logger.Error("failed to create key file", ctx,
-				"keyID", keyID,
-				"error", err)
-		}
+		d.logger.Error("failed to create key file", ctx,
+			"keyID", keyID,
+			"error", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, "create key file failed")
 		return fmt.Errorf("create key file: %w", err)
@@ -271,11 +253,9 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 	defer file.Close()
 
 	if err := pem.Encode(file, pemBlock); err != nil {
-		if d.logger != nil {
-			d.logger.Error("failed to write key file", ctx,
-				"keyID", keyID,
-				"error", err)
-		}
+		d.logger.Error("failed to write key file", ctx,
+			"keyID", keyID,
+			"error", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, "write key file failed")
 		return fmt.Errorf("write key file: %w", err)
@@ -285,11 +265,9 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 	if err := d.writeMetadata(keyID, meta); err != nil {
 		// Rollback: remove the PEM file to maintain consistency
 		os.Remove(pemPath)
-		if d.logger != nil {
-			d.logger.Warn("failed to save key metadata — rolling back PEM", ctx,
-				"keyID", keyID,
-				"error", err)
-		}
+		d.logger.Warn("failed to save key metadata — rolling back PEM", ctx,
+			"keyID", keyID,
+			"error", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, "save key metadata failed")
 		return fmt.Errorf("save key metadata: %w", err)
@@ -298,9 +276,7 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 	// ===== STEP 5: Log and Return =====
 	status = "success"
 	errorType = ""
-	if d.logger != nil {
-		d.logger.Info("saved key to disk", ctx, "keyID", keyID)
-	}
+	d.logger.Info("saved key to disk", ctx, "keyID", keyID)
 	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
@@ -318,18 +294,16 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if d.metrics != nil {
-			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
-				"operation":       "update_metadata",
-				"status":          status,
-				"error_type":      errorType,
-				"storage_backend": d.backend,
-			})
-			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
-				"operation":       "update_metadata",
-				"storage_backend": d.backend,
-			})
-		}
+		d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
+			"operation":       "update_metadata",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": d.backend,
+		})
+		d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
+			"operation":       "update_metadata",
+			"storage_backend": d.backend,
+		})
 	}()
 
 	// ===== STEP 1: Check Context =====
@@ -352,11 +326,9 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 
 	// ===== STEP 3: Write Updated Metadata =====
 	if err := d.writeMetadata(keyID, meta); err != nil {
-		if d.logger != nil {
-			d.logger.Error("failed to update metadata", ctx,
-				"keyID", keyID,
-				"error", err)
-		}
+		d.logger.Error("failed to update metadata", ctx,
+			"keyID", keyID,
+			"error", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, "update metadata failed")
 		return fmt.Errorf("update metadata: %w", err)
@@ -365,9 +337,7 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 	// ===== STEP 4: Log and Return =====
 	status = "success"
 	errorType = ""
-	if d.logger != nil {
-		d.logger.Info("updated key metadata", ctx, "keyID", keyID)
-	}
+	d.logger.Info("updated key metadata", ctx, "keyID", keyID)
 	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
@@ -384,18 +354,16 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if d.metrics != nil {
-			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
-				"operation":       "load_key",
-				"status":          status,
-				"error_type":      errorType,
-				"storage_backend": d.backend,
-			})
-			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
-				"operation":       "load_key",
-				"storage_backend": d.backend,
-			})
-		}
+		d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
+			"operation":       "load_key",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": d.backend,
+		})
+		d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
+			"operation":       "load_key",
+			"storage_backend": d.backend,
+		})
 	}()
 
 	// ===== STEP 1: Check Context =====
@@ -425,11 +393,9 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 			span.SetStatus(tracing.StatusError, "key not found")
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
-		if d.logger != nil {
-			d.logger.Error("failed to load key file", ctx,
-				"keyID", keyID,
-				"error", err)
-		}
+		d.logger.Error("failed to load key file", ctx,
+			"keyID", keyID,
+			"error", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, "load key file failed")
 		return nil, nil, fmt.Errorf("load key: %w", err)
@@ -438,11 +404,9 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	// ===== STEP 4: Load Metadata =====
 	meta, err := d.readMetadata(keyID)
 	if err != nil {
-		if d.logger != nil {
-			d.logger.Error("failed to load key metadata", ctx,
-				"keyID", keyID,
-				"error", err)
-		}
+		d.logger.Error("failed to load key metadata", ctx,
+			"keyID", keyID,
+			"error", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, "load metadata failed")
 		return nil, nil, fmt.Errorf("load metadata: %w", err)
@@ -451,9 +415,7 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	// ===== STEP 5: Log and Return =====
 	status = "success"
 	errorType = ""
-	if d.logger != nil {
-		d.logger.Debug("loaded key from disk", ctx, "keyID", keyID)
-	}
+	d.logger.Debug("loaded key from disk", ctx, "keyID", keyID)
 	span.SetStatus(tracing.StatusOK, "")
 	return privateKey, &meta, nil
 }
@@ -470,18 +432,16 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if d.metrics != nil {
-			d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
-				"operation":       "delete",
-				"status":          status,
-				"error_type":      errorType,
-				"storage_backend": d.backend,
-			})
-			d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
-				"operation":       "delete",
-				"storage_backend": d.backend,
-			})
-		}
+		d.metrics.IncrementCounter(metricKeyStoreOpsTotal, map[string]string{
+			"operation":       "delete",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": d.backend,
+		})
+		d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
+			"operation":       "delete",
+			"storage_backend": d.backend,
+		})
 	}()
 
 	// ===== STEP 1: Check Context =====
@@ -496,11 +456,9 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	// ===== STEP 2: Remove PEM File =====
 	pemPath := filepath.Join(d.dir, keyID+".pem")
 	if err := os.Remove(pemPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		if d.logger != nil {
-			d.logger.Error("failed to delete key file", ctx,
-				"keyID", keyID,
-				"error", err)
-		}
+		d.logger.Error("failed to delete key file", ctx,
+			"keyID", keyID,
+			"error", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, "delete key file failed")
 		return fmt.Errorf("delete key file: %w", err)
@@ -509,11 +467,9 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	// ===== STEP 3: Remove Metadata File =====
 	metaPath := filepath.Join(d.dir, keyID+".json")
 	if err := os.Remove(metaPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		if d.logger != nil {
-			d.logger.Error("failed to delete metadata file", ctx,
-				"keyID", keyID,
-				"error", err)
-		}
+		d.logger.Error("failed to delete metadata file", ctx,
+			"keyID", keyID,
+			"error", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, "delete metadata file failed")
 		return fmt.Errorf("delete metadata file: %w", err)
@@ -522,9 +478,7 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 	// ===== STEP 4: Log and Return =====
 	status = "success"
 	errorType = ""
-	if d.logger != nil {
-		d.logger.Info("deleted key from disk", ctx, "keyID", keyID)
-	}
+	d.logger.Info("deleted key from disk", ctx, "keyID", keyID)
 	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
