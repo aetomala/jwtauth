@@ -15,6 +15,7 @@ import (
 
 	"github.com/aetomala/jwtauth/internal/testutil"
 	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/tracing"
 )
 
 var _ = Describe("RedisKeyStore", func() {
@@ -34,7 +35,7 @@ var _ = Describe("RedisKeyStore", func() {
 			Addr: miniRedis.Addr(),
 		})
 
-		rs, err = keymanager.NewRedisKeyStore(client, nil, nil)
+		rs, err = keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client})
 		Expect(err).NotTo(HaveOccurred())
 
 		ctx = context.Background()
@@ -51,22 +52,46 @@ var _ = Describe("RedisKeyStore", func() {
 	Describe("Phase 1: Constructor and Initialization", func() {
 		Context("with a valid client", func() {
 			It("should create a RedisKeyStore successfully", func() {
-				store, err := keymanager.NewRedisKeyStore(client, nil, nil)
+				store, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(store).NotTo(BeNil())
 			})
 
 			It("should accept a logger and metrics without error", func() {
 				mockLogger := testutil.NewMockLogger()
-				store, err := keymanager.NewRedisKeyStore(client, mockLogger, nil)
+				store, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client, Logger: mockLogger})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(store).NotTo(BeNil())
+			})
+
+			It("should apply defaults from RedisKeyStoreConfigDefault when optional fields are nil", func() {
+				store, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client})
+				Expect(err).NotTo(HaveOccurred())
+				key := newTestKey()
+				Expect(store.Save(ctx, "defaults-key", key, keymanager.KeyMetadata{ID: "defaults-key", CreatedAt: time.Now()})).To(Succeed())
+				_, _, err = store.LoadKey(ctx, "defaults-key")
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should accept an explicit Tracer without error", func() {
+				ctrl := gomock.NewController(GinkgoT())
+				defer ctrl.Finish()
+				mockTracer := testutil.NewMockTracer(ctrl)
+				mockSpan := testutil.NewMockSpan(ctrl)
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Any(), gomock.Any()).Return(ctx, mockSpan).AnyTimes()
+				mockSpan.EXPECT().End().AnyTimes()
+				mockSpan.EXPECT().SetAttribute(gomock.Any(), gomock.Any()).AnyTimes()
+				mockSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
+				store, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client, Tracer: mockTracer})
+				Expect(err).NotTo(HaveOccurred())
+				key := newTestKey()
+				Expect(store.Save(ctx, "tracer-key", key, keymanager.KeyMetadata{ID: "tracer-key", CreatedAt: time.Now()})).To(Succeed())
 			})
 		})
 
 		Context("with a nil client", func() {
 			It("should return ErrNilRedisClient", func() {
-				_, err := keymanager.NewRedisKeyStore(nil, nil, nil)
+				_, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{})
 				Expect(err).To(MatchError(keymanager.ErrNilRedisClient))
 			})
 		})
@@ -430,7 +455,7 @@ var _ = Describe("RedisKeyStore", func() {
 		AfterEach(func() { ctrl.Finish() })
 
 		newMetricStore := func() *keymanager.RedisKeyStore {
-			store, err := keymanager.NewRedisKeyStore(client, nil, mockM)
+			store, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client, Metrics: mockM})
 			Expect(err).NotTo(HaveOccurred())
 			return store
 		}
@@ -526,6 +551,52 @@ var _ = Describe("RedisKeyStore", func() {
 					_ = rs.UpdateMetadata(ctx, "nil-metrics-key", keymanager.KeyMetadata{ID: "nil-metrics-key", CreatedAt: time.Now()})
 				}).NotTo(Panic())
 				Expect(func() { _ = rs.Delete(ctx, "nil-metrics-key") }).NotTo(Panic())
+			})
+		})
+	})
+
+	// ===== PHASE 10: Tracing =====
+	Describe("Phase 10: Tracing", func() {
+		var (
+			ctrl         *gomock.Controller
+			mockTracer   *testutil.MockTracer
+			mockSpan     *testutil.MockSpan
+			tracingStore *keymanager.RedisKeyStore
+		)
+
+		BeforeEach(func() {
+			ctrl = gomock.NewController(GinkgoT())
+			mockTracer = testutil.NewMockTracer(ctrl)
+			mockSpan = testutil.NewMockSpan(ctrl)
+			var err error
+			tracingStore, err = keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client, Tracer: mockTracer})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() { ctrl.Finish() })
+
+		Context("Save — success path", func() {
+			It("should start a span named RedisKeyStore.Save with storage.backend, key_id and StatusOK", func() {
+				mockTracer.EXPECT().Start(gomock.Any(), "RedisKeyStore.Save", gomock.Any()).Return(ctx, mockSpan)
+				mockSpan.EXPECT().SetAttribute("key_id", "trace-save-key")
+				mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+				mockSpan.EXPECT().End()
+
+				key := newTestKey()
+				Expect(tracingStore.Save(ctx, "trace-save-key", key, keymanager.KeyMetadata{ID: "trace-save-key", CreatedAt: time.Now()})).To(Succeed())
+			})
+		})
+
+		Context("LoadKey — error path", func() {
+			It("should call RecordError and StatusError when key is not found", func() {
+				mockTracer.EXPECT().Start(gomock.Any(), "RedisKeyStore.LoadKey", gomock.Any()).Return(ctx, mockSpan)
+				mockSpan.EXPECT().SetAttribute("key_id", "missing-trace-key")
+				mockSpan.EXPECT().RecordError(keymanager.ErrKeyStoreKeyNotFound)
+				mockSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
+				mockSpan.EXPECT().End()
+
+				_, _, err := tracingStore.LoadKey(ctx, "missing-trace-key")
+				Expect(err).To(MatchError(keymanager.ErrKeyStoreKeyNotFound))
 			})
 		})
 	})

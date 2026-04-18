@@ -15,7 +15,26 @@ import (
 
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
+	"github.com/aetomala/jwtauth/pkg/tracing"
 )
+
+// RedisKeyStoreConfig holds configuration for a RedisKeyStore instance.
+type RedisKeyStoreConfig struct {
+	Client  *redis.Client   // Required; must not be nil.
+	Logger  logging.Logger  // Optional; nil defaults to NoOpLogger.
+	Metrics metrics.Metrics // Optional; nil defaults to NoOpMetrics.
+	Tracer  tracing.Tracer  // Optional; nil defaults to NoOpTracer.
+}
+
+// RedisKeyStoreConfigDefault returns a RedisKeyStoreConfig with NoOp defaults
+// for all optional observability fields.
+func RedisKeyStoreConfigDefault() RedisKeyStoreConfig {
+	return RedisKeyStoreConfig{
+		Logger:  &logging.NoOpLogger{},
+		Metrics: metrics.NewNoOpMetrics(),
+		Tracer:  tracing.NewNoOpTracer(),
+	}
+}
 
 // RedisKeyStore is a thread-safe, Redis-backed implementation of KeyStore.
 // Each key pair is persisted as a PKCS#1 PEM string alongside a companion
@@ -28,33 +47,48 @@ type RedisKeyStore struct {
 	client *redis.Client // Thread-safe Redis client
 
 	// ===== Observability =====
-	logger  logging.Logger  // Optional; nil disables logging
-	metrics metrics.Metrics // Optional; nil disables metrics
+	logger  logging.Logger  // never nil; defaults to NoOpLogger
+	metrics metrics.Metrics // never nil; defaults to NoOpMetrics
+	tracer  tracing.Tracer  // never nil; defaults to NoOpTracer
 	backend string          // always "redis"
 }
 
-// NewRedisKeyStore returns a new RedisKeyStore using the provided Redis client.
-// Returns ErrNilRedisClient if client is nil. Pass a logging.Logger for
-// structured log output; pass nil to disable logging. Pass a metrics.Metrics
-// for instrumentation; pass nil to disable metrics.
-func NewRedisKeyStore(client *redis.Client, logger logging.Logger, m metrics.Metrics) (*RedisKeyStore, error) {
+// NewRedisKeyStore returns a new RedisKeyStore using the provided config.
+// Returns ErrNilRedisClient if cfg.Client is nil.
+func NewRedisKeyStore(cfg RedisKeyStoreConfig) (*RedisKeyStore, error) {
 	// ===== STEP 1: Validate Client =====
-	if client == nil {
+	if cfg.Client == nil {
 		return nil, ErrNilRedisClient
 	}
 
-	// ===== STEP 2: Return Initialized Store =====
-	r := &RedisKeyStore{
-		client:  client,
+	// ===== STEP 2: Apply Defaults =====
+	defaults := RedisKeyStoreConfigDefault()
+	if cfg.Logger == nil {
+		cfg.Logger = defaults.Logger
+	}
+	if cfg.Metrics == nil {
+		cfg.Metrics = defaults.Metrics
+	}
+	if cfg.Tracer == nil {
+		cfg.Tracer = defaults.Tracer
+	}
+
+	// ===== STEP 3: Return Initialized Store =====
+	return &RedisKeyStore{
+		client:  cfg.Client,
+		logger:  cfg.Logger,
+		metrics: cfg.Metrics,
+		tracer:  cfg.Tracer,
 		backend: "redis",
-	}
-	if logger != nil {
-		r.logger = logger
-	}
-	if m != nil {
-		r.metrics = m
-	}
-	return r, nil
+	}, nil
+}
+
+// startSpan starts a new span for the given operation name, pre-seeded with
+// the storage.backend attribute.
+func (r *RedisKeyStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
+	return r.tracer.Start(ctx, "RedisKeyStore."+operation,
+		tracing.WithAttributes(map[string]any{"storage.backend": r.backend}),
+	)
 }
 
 // LoadAll returns every valid (non-expired) key in Redis. Keys with missing or
@@ -62,6 +96,9 @@ func NewRedisKeyStore(client *redis.Client, logger logging.Logger, m metrics.Met
 // valid keys exist — this is not an error. Returns the context error if the
 // context is cancelled before completion.
 func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
+	ctx, span := r.startSpan(ctx, "LoadAll")
+	defer span.End()
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
@@ -90,6 +127,8 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, err
 	}
 
@@ -168,6 +207,8 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		if r.logger != nil {
 			r.logger.Error("failed to scan redis keys", ctx, "error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, fmt.Errorf("scan redis keys: %w", err)
 	}
 
@@ -178,6 +219,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	if r.logger != nil {
 		r.logger.Info("loaded keys from redis", ctx, "count", keyCount)
 	}
+	span.SetStatus(tracing.StatusOK, "")
 	return keys, nil
 }
 
@@ -185,6 +227,10 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 // Both the PEM and metadata are written together — if either fails, neither is
 // stored. Returns the context error if the context is cancelled.
 func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta KeyMetadata) error {
+	ctx, span := r.startSpan(ctx, "Save")
+	defer span.End()
+	span.SetAttribute("key_id", keyID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
@@ -207,6 +253,8 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return err
 	}
 
@@ -221,6 +269,8 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return fmt.Errorf("marshal key metadata: %w", err)
 	}
 
@@ -235,6 +285,8 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return fmt.Errorf("save key to redis: %w", err)
 	}
 
@@ -244,6 +296,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 	if r.logger != nil {
 		r.logger.Info("saved key to redis", ctx, "keyID", keyID)
 	}
+	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
 
@@ -252,6 +305,10 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 // Returns ErrKeyStoreKeyNotFound if no PEM key exists for keyID in Redis.
 // Returns the context error if the context is cancelled.
 func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta KeyMetadata) error {
+	ctx, span := r.startSpan(ctx, "UpdateMetadata")
+	defer span.End()
+	span.SetAttribute("key_id", keyID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
@@ -274,6 +331,8 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return err
 	}
 
@@ -285,11 +344,15 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return fmt.Errorf("check key existence: %w", err)
 	}
 	if exists == 0 {
 		status = "not_found"
 		errorType = "not_found"
+		span.RecordError(ErrKeyStoreKeyNotFound)
+		span.SetStatus(tracing.StatusError, ErrKeyStoreKeyNotFound.Error())
 		return ErrKeyStoreKeyNotFound
 	}
 
@@ -301,6 +364,8 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return fmt.Errorf("marshal key metadata: %w", err)
 	}
 
@@ -310,6 +375,8 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return fmt.Errorf("update metadata: %w", err)
 	}
 
@@ -319,6 +386,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	if r.logger != nil {
 		r.logger.Info("updated key metadata", ctx, "keyID", keyID)
 	}
+	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
 
@@ -327,6 +395,10 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 // empty or whitespace-only, ErrKeyStoreKeyNotFound if the key does not exist
 // in Redis. Returns the context error if the context is cancelled.
 func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *KeyMetadata, error) {
+	ctx, span := r.startSpan(ctx, "LoadKey")
+	defer span.End()
+	span.SetAttribute("key_id", keyID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
@@ -349,6 +421,8 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, nil, err
 	}
 
@@ -356,6 +430,8 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	if strings.TrimSpace(keyID) == "" {
 		status = "not_found"
 		errorType = "not_found"
+		span.RecordError(ErrKeyStoreInvalidKeyID)
+		span.SetStatus(tracing.StatusError, ErrKeyStoreInvalidKeyID.Error())
 		return nil, nil, ErrKeyStoreInvalidKeyID
 	}
 
@@ -365,6 +441,8 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 		if errors.Is(err, redis.Nil) {
 			status = "not_found"
 			errorType = "not_found"
+			span.RecordError(ErrKeyStoreKeyNotFound)
+			span.SetStatus(tracing.StatusError, ErrKeyStoreKeyNotFound.Error())
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if r.logger != nil {
@@ -372,6 +450,8 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, nil, fmt.Errorf("load key: %w", err)
 	}
 
@@ -382,6 +462,8 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, nil, fmt.Errorf("parse key PEM: %w", err)
 	}
 
@@ -391,6 +473,8 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 		if errors.Is(err, redis.Nil) {
 			status = "not_found"
 			errorType = "not_found"
+			span.RecordError(ErrKeyStoreKeyNotFound)
+			span.SetStatus(tracing.StatusError, ErrKeyStoreKeyNotFound.Error())
 			return nil, nil, ErrKeyStoreKeyNotFound
 		}
 		if r.logger != nil {
@@ -398,6 +482,8 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, nil, fmt.Errorf("load metadata: %w", err)
 	}
 
@@ -408,6 +494,8 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, nil, fmt.Errorf("parse metadata: %w", err)
 	}
 
@@ -417,6 +505,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	if r.logger != nil {
 		r.logger.Debug("loaded key from redis", ctx, "keyID", keyID)
 	}
+	span.SetStatus(tracing.StatusOK, "")
 	return privateKey, &meta, nil
 }
 
@@ -424,6 +513,10 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 // If the key does not exist, no error is returned — the call is idempotent.
 // Returns the context error if the context is cancelled.
 func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
+	ctx, span := r.startSpan(ctx, "Delete")
+	defer span.End()
+	span.SetAttribute("key_id", keyID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
@@ -446,6 +539,8 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return err
 	}
 
@@ -456,6 +551,8 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 				"keyID", keyID,
 				"error", err)
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return fmt.Errorf("delete key from redis: %w", err)
 	}
 
@@ -465,6 +562,7 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 	if r.logger != nil {
 		r.logger.Info("deleted key from redis", ctx, "keyID", keyID)
 	}
+	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
 

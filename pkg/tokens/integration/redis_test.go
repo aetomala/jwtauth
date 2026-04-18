@@ -55,7 +55,7 @@ func init() {
 			// because both TokenManagers read from the same Redis refresh store.
 
 			// Instance A — own KeyManager, own TokenManager, shared Redis backend
-			ksA, err := keymanager.NewRedisKeyStore(client, nil, nil)
+			ksA, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
 			kmA, err := keymanager.NewManager(keymanager.ManagerConfig{
@@ -83,7 +83,7 @@ func init() {
 			})
 
 			// Instance B — own KeyManager (loads A's keys from Redis), own TokenManager, shared refresh store
-			ksB, err := keymanager.NewRedisKeyStore(client, nil, nil)
+			ksB, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
 			kmB, err := keymanager.NewManager(keymanager.ManagerConfig{
@@ -138,7 +138,7 @@ func init() {
 			// Instance B starts fresh (new Manager, same Redis key store) and must be able
 			// to validate tokens signed by both the pre- and post-rotation keys of instance A.
 
-			ksA, err := keymanager.NewRedisKeyStore(client, nil, nil)
+			ksA, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
 			kmA, err := keymanager.NewManager(keymanager.ManagerConfig{
@@ -179,7 +179,7 @@ func init() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Instance B starts with the same Redis key store — loads all keys on Start
-			ksB, err := keymanager.NewRedisKeyStore(client, nil, nil)
+			ksB, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
 			kmB, err := keymanager.NewManager(keymanager.ManagerConfig{
@@ -226,7 +226,7 @@ func redisFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keymanager.Manage
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
-	ks, err := keymanager.NewRedisKeyStore(client, nil, nil)
+	ks, err := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client})
 	Expect(err).NotTo(HaveOccurred())
 
 	km, err := keymanager.NewManager(keymanager.ManagerConfig{
