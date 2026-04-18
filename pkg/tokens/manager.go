@@ -1880,6 +1880,161 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	return newAccessToken, nil
 }
 
+// RefreshAccessTokenWithClaims exchanges a valid refresh token for a new access
+// token, embedding caller-supplied custom claims into the issued token. It
+// retrieves the refresh token from storage, checks expiration and revocation
+// status, then calls IssueAccessTokenWithClaims for the token's owner. Reserved
+// JWT field names (sub, iss, aud, exp, nbf, iat, jti) in claims are silently
+// dropped to prevent caller-controlled claim injection.
+//
+// Returns ErrManagerNotRunning, ErrInvalidRefreshToken, ErrRefreshTokenExpired,
+// ErrTokenRevoked, or the context error.
+func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken string, claims CustomClaims) (string, error) {
+	ctx, span := m.startSpan(ctx, "RefreshAccessTokenWithClaims")
+	defer span.End()
+
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensRefreshedTotal, map[string]string{
+				"status":     status,
+				"error_type": errorType,
+			})
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "refresh_access_token",
+			})
+		}
+	}()
+
+	// ===== STEP 1: Service State Check =====
+	if !m.isRunning.Load() {
+		status = "not_running"
+		errorType = "not_running"
+		if m.logger != nil {
+			m.logger.Warn("attempted to refresh while service was stopped", ctx)
+		}
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
+		return "", ErrManagerNotRunning
+	}
+
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
+		if m.logger != nil {
+			m.logger.Info("context cancelled during token refresh", ctx)
+		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return "", err
+	}
+
+	if m.logger != nil {
+		m.logger.Debug("attempting token refresh with claims", ctx)
+	}
+
+	// ===== STEP 3: Input Validation =====
+	if refreshToken == "" {
+		status = "invalid_input"
+		errorType = "invalid_input"
+		if m.logger != nil {
+			m.logger.Warn("empty refresh token provided", ctx)
+		}
+		span.RecordError(ErrInvalidRefreshToken)
+		span.SetStatus(tracing.StatusError, ErrInvalidRefreshToken.Error())
+		return "", ErrInvalidRefreshToken
+	}
+
+	span.SetAttribute("token_id", refreshToken)
+
+	// ===== STEP 4: Lookup Refresh Token =====
+	token, err := m.refreshStore.Retrieve(ctx, refreshToken)
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Warn("refresh token not found in store", ctx,
+				"error", err)
+		}
+		// Propagate specific errors, default to invalid token for generic errors
+		if errors.Is(err, storage.ErrTokenRevoked) {
+			status = "revoked"
+			errorType = "revoked"
+			span.RecordError(ErrTokenRevoked)
+			span.SetStatus(tracing.StatusError, ErrTokenRevoked.Error())
+			return "", ErrTokenRevoked
+		}
+		status = "not_found"
+		errorType = "not_found"
+		span.RecordError(ErrInvalidRefreshToken)
+		span.SetStatus(tracing.StatusError, ErrInvalidRefreshToken.Error())
+		return "", ErrInvalidRefreshToken
+	}
+
+	if m.logger != nil {
+		m.logger.Debug("refresh token retrieved from store", ctx,
+			"userID", token.UserID,
+			"tokenID", token.TokenID)
+	}
+
+	// ===== STEP 5: Check Expiration =====
+	if token.ExpiresAt.Before(time.Now()) {
+		status = "expired"
+		errorType = "expired"
+		if m.logger != nil {
+			m.logger.Warn("refresh token has expired", ctx,
+				"tokenID", refreshToken,
+				"expiredAt", token.ExpiresAt)
+		}
+
+		// Clean up expired token (ignore error — we're returning ErrRefreshTokenExpired anyway)
+		_ = m.refreshStore.Revoke(ctx, refreshToken)
+
+		span.RecordError(ErrRefreshTokenExpired)
+		span.SetStatus(tracing.StatusError, ErrRefreshTokenExpired.Error())
+		return "", ErrRefreshTokenExpired
+	}
+
+	// ===== STEP 6: Check If Revoked =====
+	if token.Revoked {
+		status = "revoked"
+		errorType = "revoked"
+		if m.logger != nil {
+			m.logger.Warn("refresh token has been revoked", ctx,
+				"tokenID", refreshToken)
+		}
+		span.RecordError(ErrTokenRevoked)
+		span.SetStatus(tracing.StatusError, ErrTokenRevoked.Error())
+		return "", ErrTokenRevoked
+	}
+
+	// ===== STEP 7: Issue New Access Token With Claims =====
+	newAccessToken, err := m.IssueAccessTokenWithClaims(ctx, token.UserID, claims)
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to issue new access token", ctx,
+				"userID", token.UserID,
+				"error", err)
+		}
+		wrapped := fmt.Errorf("failed to issue access token: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return "", wrapped
+	}
+
+	// ===== STEP 9: Record Success and Log =====
+	status = "success"
+	errorType = ""
+	if m.logger != nil {
+		m.logger.Info("access token refreshed with claims", ctx,
+			"userID", token.UserID,
+			"tokenID", refreshToken)
+	}
+	span.SetStatus(tracing.StatusOK, "")
+	return newAccessToken, nil
+}
+
 // RevokeRefreshToken marks a single refresh token as revoked in the RefreshStore.
 // Subsequent calls to RefreshAccessToken or IntrospectToken will see the token
 // as inactive.
