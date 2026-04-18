@@ -266,10 +266,10 @@ You've already verified identity and need **production-grade token machinery** f
 - **Comprehensive test coverage** with race detection
 
 **TokenManager** (Beta)
-- **Access token issuance** (IssueAccessToken, IssueAccessTokenWithClaims, IssueTokenPair)
-- **Refresh token issuance** (IssueRefreshToken, IssueRefreshTokenWithMetadata)
+- **Access token issuance** (IssueAccessToken, IssueAccessTokenWithClaims, IssueTokenPair, IssueTokenPairWithClaims)
+- **Refresh token issuance** (IssueRefreshToken, IssueRefreshTokenWithClaims)
 - **Access token validation** with registered and custom claims extraction (ValidateAccessToken, ValidateAccessTokenWithClaims)
-- **Token refresh flow** (RefreshAccessToken) with expiration and revocation checks
+- **Token refresh flow** (RefreshAccessToken, RefreshAccessTokenWithClaims) with expiration and revocation checks
 - **Token revocation** (RevokeRefreshToken, RevokeAllUserTokens) for logout and security scenarios
 - **Token introspection** (IntrospectToken) per RFC 7662 — returns active/inactive status with metadata
 - **Manual token cleanup** (CleanupExpiredTokens) for on-demand expiration sweeps
@@ -558,7 +558,7 @@ func main() {
     defer mgr.Shutdown(ctx)
 
     // Issue access token with custom claims
-    token, err := mgr.IssueAccessTokenWithClaims(ctx, "user-123", map[string]interface{}{
+    token, err := mgr.IssueAccessTokenWithClaims(ctx, "user-123", tokens.CustomClaims{
         "role": "admin",
         "tenant": "org-456",
     })
