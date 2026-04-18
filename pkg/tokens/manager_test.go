@@ -661,6 +661,144 @@ var _ = Describe("TokenManager", func() {
 	})
 
 	// ========================================================================
+	// ISSUE TOKEN PAIR WITH CLAIMS TESTS
+	// ========================================================================
+
+	Describe("IssueTokenPairWithClaims", func() {
+		BeforeEach(func() {
+			service = createService()
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		Context("with valid user ID and claims", func() {
+			It("should issue both tokens successfully", func() {
+				accessClaims := tokens.CustomClaims{"role": "admin"}
+				refreshClaims := tokens.CustomClaims{"ip": "192.168.1.1"}
+
+				gomock.InOrder(
+					mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil),
+					mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), refreshClaims).Return(nil),
+				)
+
+				accessToken, refreshToken, err := service.IssueTokenPairWithClaims(ctx, testUserID, accessClaims, refreshClaims)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(accessToken).NotTo(BeEmpty())
+				Expect(refreshToken).NotTo(BeEmpty())
+				Expect(accessToken).NotTo(Equal(refreshToken))
+			})
+
+			It("should embed access claims into the access token", func() {
+				accessClaims := tokens.CustomClaims{"role": "editor", "tenant": "org-456"}
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+				accessToken, _, err := service.IssueTokenPairWithClaims(ctx, testUserID, accessClaims, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				parsed := parseToken(accessToken)
+				Expect(parsed.Custom["role"]).To(Equal("editor"))
+				Expect(parsed.Custom["tenant"]).To(Equal("org-456"))
+			})
+
+			It("should pass refresh claims to the store", func() {
+				refreshClaims := tokens.CustomClaims{"device_id": "device-001"}
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().
+					Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), refreshClaims).
+					Return(nil)
+
+				service.IssueTokenPairWithClaims(ctx, testUserID, nil, refreshClaims)
+			})
+
+			It("should not override reserved claims in the access token", func() {
+				accessClaims := tokens.CustomClaims{"sub": "hacker", "role": "admin"}
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+				accessToken, _, err := service.IssueTokenPairWithClaims(ctx, testUserID, accessClaims, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				parsed, _ := jwt.ParseWithClaims(accessToken, &jwt.MapClaims{}, func(t *jwt.Token) (interface{}, error) {
+					return &testKey.PublicKey, nil
+				})
+				claims := *parsed.Claims.(*jwt.MapClaims)
+				Expect(claims["sub"]).To(Equal(testUserID))
+				Expect(claims["role"]).To(Equal("admin"))
+			})
+
+			It("should behave like IssueTokenPair when both claims are nil", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), nil).Return(nil)
+
+				accessToken, refreshToken, err := service.IssueTokenPairWithClaims(ctx, testUserID, nil, nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(accessToken).NotTo(BeEmpty())
+				Expect(refreshToken).NotTo(BeEmpty())
+			})
+
+			It("should log token pair issuance", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+				service.IssueTokenPairWithClaims(ctx, testUserID, nil, nil)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("info", "token pair with claims issued")
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("when access token signing fails", func() {
+			It("should not store refresh token", func() {
+				mockKM.EXPECT().
+					GetCurrentSigningKey(gomock.Any()).
+					Return(nil, "", errors.New("key error"))
+
+				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+
+				_, _, err := service.IssueTokenPairWithClaims(ctx, testUserID, nil, nil)
+
+				Expect(err).To(HaveOccurred())
+			})
+		})
+
+		Context("when refresh token storage fails", func() {
+			It("should return error", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().
+					Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(errors.New("storage error"))
+
+				_, _, err := service.IssueTokenPairWithClaims(ctx, testUserID, nil, nil)
+
+				Expect(err).To(HaveOccurred())
+			})
+		})
+
+		Context("guard conditions", func() {
+			It("should return ErrManagerNotRunning", func() {
+				mgr := createService()
+				_, _, err := mgr.IssueTokenPairWithClaims(ctx, "user-123", nil, nil)
+				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
+			})
+
+			It("should return context error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				_, _, err := service.IssueTokenPairWithClaims(cancelledCtx, "user-123", nil, nil)
+				Expect(err).To(Equal(context.Canceled))
+			})
+
+			It("should return ErrInvalidUserID for whitespace-only userID", func() {
+				_, _, err := service.IssueTokenPairWithClaims(ctx, "   ", nil, nil)
+				Expect(err).To(Equal(tokens.ErrInvalidUserID))
+			})
+		})
+	})
+
+	// ========================================================================
 	// ACCESS TOKEN VALIDATION
 	// ========================================================================
 
@@ -1893,6 +2031,44 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 
 			_, err := manager.ValidateAccessToken(ctx, "not-a-valid-jwt")
 			Expect(err).To(MatchError(tokens.ErrInvalidToken))
+		})
+	})
+
+	Context("IssueTokenPairWithClaims — success path", func() {
+		It("should start a span with user_id and token_id attributes and StatusOK", func() {
+			newTracingManager()
+
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueTokenPairWithClaims"), gomock.Any()).Return(ctx, testSpan)
+			testSpan.EXPECT().SetAttribute("user_id", "tracing-user")
+			testSpan.EXPECT().SetAttribute("token_id", gomock.Any())
+			testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+			testSpan.EXPECT().End()
+
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+			mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+			_, _, err := manager.IssueTokenPairWithClaims(ctx, "tracing-user", nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("IssueTokenPairWithClaims — error path (not running)", func() {
+		It("should call RecordError and StatusError when service is not running", func() {
+			newTracingManager()
+
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
+			Expect(manager.Shutdown(shutdownCtx)).To(Succeed())
+
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueTokenPairWithClaims"), gomock.Any()).Return(ctx, testSpan)
+			testSpan.EXPECT().SetAttribute("user_id", "stopped-user")
+			testSpan.EXPECT().RecordError(tokens.ErrManagerNotRunning)
+			testSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
+			testSpan.EXPECT().End()
+
+			_, _, err := manager.IssueTokenPairWithClaims(ctx, "stopped-user", nil, nil)
+			Expect(err).To(MatchError(tokens.ErrManagerNotRunning))
 		})
 	})
 })

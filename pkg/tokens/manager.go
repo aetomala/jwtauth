@@ -1224,6 +1224,211 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string) (string, st
 	return signedToken, refreshToken, nil
 }
 
+// IssueTokenPairWithClaims issues an access token and a refresh token in a single
+// operation, embedding caller-supplied custom claims into the access token and
+// optionally attaching metadata to the refresh token. Reserved JWT field names
+// (sub, iss, aud, exp, nbf, iat, jti) in accessClaims are silently dropped to
+// prevent caller-controlled claim injection.
+//
+// Returns (accessToken, refreshToken, error). Returns ErrManagerNotRunning if
+// the manager has not been started, ErrInvalidUserID if userID is empty or
+// whitespace-only, or the context error if the context is cancelled before
+// issuance completes.
+func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, accessClaims CustomClaims, refreshClaims CustomClaims) (string, string, error) {
+	ctx, span := m.startSpan(ctx, "IssueTokenPairWithClaims")
+	defer span.End()
+
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		if m.metrics != nil {
+			m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
+				"status":     status,
+				"error_type": errorType,
+			})
+			m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+				"operation": "issue_token_pair",
+			})
+		}
+	}()
+
+	// ===== STEP 1: Validate User ID =====
+	if len(strings.TrimSpace(userID)) == 0 {
+		status = "invalid_input"
+		errorType = "invalid_input"
+		if m.logger != nil {
+			m.logger.Warn("attempted to get token with empty userID", ctx)
+		}
+		span.RecordError(ErrInvalidUserID)
+		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
+		return "", "", ErrInvalidUserID
+	}
+
+	span.SetAttribute("user_id", userID)
+
+	// ===== STEP 2: Service State Check =====
+	if !m.IsRunning() {
+		status = "not_running"
+		errorType = "not_running"
+		if m.logger != nil {
+			m.logger.Warn("service not running", ctx)
+		}
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
+		return "", "", ErrManagerNotRunning
+	}
+
+	// ===== STEP 3: Context Check =====
+	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
+		if m.logger != nil {
+			m.logger.Warn("context cancelled during token issuance", ctx,
+				"userID", userID,
+				"error", err)
+		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return "", "", err
+	}
+
+	if m.logger != nil {
+		m.logger.Debug("issuing token pair with claims", ctx, "userID", userID)
+	}
+
+	// ===== STEP 4: Get Signing Key =====
+	privateKey, keyID, err := m.keyManager.GetCurrentSigningKey(ctx)
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to get signing key", ctx,
+				"userID", userID,
+				"error", err)
+		}
+		wrapped := fmt.Errorf("failed to get signing key: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return "", "", wrapped
+	}
+
+	// ===== STEP 5: Create JWT Claims =====
+	now := time.Now()
+	expiresAt := now.Add(m.accessTokenDuration)
+	tokenID, err := generateTokenID()
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to generate token ID", ctx,
+				"userID", userID,
+				"error", err)
+		}
+		wrapped := fmt.Errorf("failed to generate token ID: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return "", "", wrapped
+	}
+
+	jwtClaims := jwt.MapClaims{
+		"sub": userID,
+		"iss": m.issuer,
+		"aud": m.audience,
+		"exp": expiresAt.Unix(),
+		"iat": now.Unix(),
+		"nbf": now.Unix(),
+		"jti": tokenID,
+	}
+
+	// Merge access claims — reserved keys are silently dropped.
+	reservedClaims := map[string]bool{
+		"sub": true, "iss": true, "exp": true,
+		"iat": true, "nbf": true, "jti": true,
+	}
+
+	customClaimsCount := 0
+	for key, value := range accessClaims {
+		if !reservedClaims[key] {
+			jwtClaims[key] = value
+			customClaimsCount++
+		} else {
+			if m.logger != nil {
+				m.logger.Warn("attempted to override reserved claim", ctx,
+					"userID", userID,
+					"claim", key)
+			}
+		}
+	}
+
+	// ===== STEP 6: Sign Token =====
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwtClaims)
+	token.Header["kid"] = keyID
+
+	signedToken, err := token.SignedString(privateKey)
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to sign token", ctx,
+				"userID", userID,
+				"keyID", keyID,
+				"error", err)
+		}
+		wrapped := fmt.Errorf("failed to sign token: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return "", "", wrapped
+	}
+
+	// ===== STEP 8: Generate Refresh Token =====
+	refreshToken, err := generateRefreshToken()
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to generate refresh token", ctx,
+				"userID", userID,
+				"error", err)
+		}
+		wrapped := fmt.Errorf("failed to generate refresh token: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return "", "", wrapped
+	}
+
+	span.SetAttribute("token_id", refreshToken)
+
+	// ===== STEP 9: Calculate Refresh Token Expiration =====
+	now = time.Now()
+	expiresAt = now.Add(m.refreshTokenDuration)
+
+	// ===== STEP 10: Store Refresh Token =====
+	err = m.refreshStore.Store(
+		ctx,
+		refreshToken,
+		userID,
+		expiresAt,
+		refreshClaims,
+	)
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to store refresh token", ctx,
+				"userID", userID,
+				"error", err)
+		}
+		wrapped := fmt.Errorf("failed to store refresh token: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return "", "", wrapped
+	}
+
+	// ===== STEP 11: Record Success and Log =====
+	status = "success"
+	errorType = ""
+	if m.logger != nil {
+		m.logger.Info("token pair with claims issued", ctx,
+			"userID", userID,
+			"tokenID", refreshToken,
+			"expiresAt", expiresAt,
+			"customClaimsCount", customClaimsCount)
+	}
+	span.SetStatus(tracing.StatusOK, "")
+	return signedToken, refreshToken, nil
+}
+
 // ValidateAccessToken parses and validates a signed JWT access token string.
 // It verifies the RS256 signature using the public key identified by the token's
 // "kid" header, then checks expiration, issuer, and audience claims.
