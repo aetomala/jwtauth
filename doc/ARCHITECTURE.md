@@ -198,7 +198,7 @@ github.com/aetomala/jwtauth/
 │     User's Observability Stack               │
 │  ┌─────────┐  ┌────────────┐  ┌──────────┐ │
 │  │  slog   │  │Prometheus  │  │   OTel   │ │
-│  │  Zap    │  │  StatsD    │  │  (Future)│ │
+│  │  Zap    │  │  StatsD    │  │  Jaeger  │ │
 │  │ Zerolog │  │CloudWatch  │  │          │ │
 │  └─────────┘  └────────────┘  └──────────┘ │
 └─────────────────────────────────────────────┘
@@ -380,6 +380,66 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
             time.Since(start), map[string]string{"operation": "rotate"})
     }
     
+    return nil
+}
+```
+
+### Distributed Tracing
+
+**Interface**: `pkg/tracing/Tracer`
+
+**Design Decisions**:
+- **Thin abstraction** — `Tracer` and `Span` interfaces wrap OTel concepts without importing the OTel SDK in the core library
+- **Always non-nil** — every constructor applies `NoOpTracer` as default; no nil checks required in method bodies
+- **`startSpan` helper per component** — encapsulates span naming prefix so all spans follow `<TypeName>.<MethodName>` convention without repetition
+
+**Interface**:
+```go
+type Tracer interface {
+    Start(ctx context.Context, name string, opts ...SpanOption) (context.Context, Span)
+}
+
+type Span interface {
+    End()
+    SetAttribute(key string, value any)
+    SetStatus(code StatusCode, description string)
+    RecordError(err error)
+}
+```
+
+**Implementations**:
+- `NoOpTracer` / `NoOpSpan` — zero-allocation, race-detection clean; used as default in all constructors
+- `OtelTracer` — bridges `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`; initialized with `tracing.NewOtelTracer("scope")`
+
+**Span naming convention**: `<TypeName>.<MethodName>` — e.g., `TokenManager.IssueAccessToken`, `DiskKeyStore.Save`
+
+**Span attributes by layer**:
+
+| Component | Attributes |
+|-----------|-----------|
+| `DiskKeyStore` / `RedisKeyStore` | `storage.backend` (`"disk"` / `"redis"`), `key_id` |
+| `MemoryRefreshStore` / `RedisRefreshStore` | `storage.backend` (`"memory"` / `"redis"`), `token_id` |
+| `KeyManager` | `key_id` |
+| `TokenManager` | `user_id`, `token_id`, `active` (IntrospectToken), `deleted_count` (CleanupExpiredTokens) |
+
+**Status conventions**: `StatusOK` on all success paths; `RecordError(err)` + `StatusError` on all error paths. Wrapped errors (via `fmt.Errorf("...: %w", err)`) are passed to `RecordError` so the full message propagates to the trace backend.
+
+**Integration Pattern** — every component follows the same shape:
+```go
+type DiskKeyStore struct {
+    tracer tracing.Tracer // never nil; defaults to NoOpTracer
+}
+
+func (d *DiskKeyStore) startSpan(ctx context.Context, op string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
+    return d.tracer.Start(ctx, "DiskKeyStore."+op, opts...)
+}
+
+func (d *DiskKeyStore) Save(ctx context.Context, key *KeyInfo) error {
+    ctx, span := d.startSpan(ctx, "Save")
+    defer span.End()
+    // ...
+    span.SetAttribute("key_id", key.ID)
+    span.SetStatus(tracing.StatusOK, "")
     return nil
 }
 ```
@@ -986,12 +1046,13 @@ Catches:
 - ✅ Context cancellation guards in `GetJWKS` and `cleanupExpiredKeys` with warning log on early return
 - ✅ Redis integration tests via miniredis (`pkg/tokens/integration`) covering distributed token operations end-to-end
 
-### Phase 6: Distributed Tracing (v0.4.0)
+### Phase 6: Distributed Tracing (v0.4.0 — In Progress)
 - ✅ `pkg/tracing` — `Tracer` and `Span` interfaces defined; `SpanOption` functional options; `StatusCode` and `SpanKind` enumerations
 - ✅ `NoOpTracer` / `NoOpSpan` — zero-allocation implementations; 36 tests, race-detection clean
 - ✅ `MockTracer` / `MockSpan` generated via gomock for dependency injection in component tests
-- ⏳ Wire tracing into KeyManager, TokenManager, and RefreshStore
-- ⏳ OpenTelemetry adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
+- ✅ Tracing wired into all six components — `DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore`, `KeyManager`, `TokenManager`
+- ✅ `OtelTracer` adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
+- 🚧 Additional v0.4.0 items in progress
 
 ---
 
@@ -1090,4 +1151,4 @@ func (c *Component) Operation() error {
 
 **Last Updated**: April 14, 2026
 **Version**: 0.3.0-beta
-**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] stable and fully instrumented; Distributed Tracing interfaces scaffolded — full wiring planned for v0.4.0)
+**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] + Distributed Tracing stable and fully instrumented; v0.4.0 in progress)

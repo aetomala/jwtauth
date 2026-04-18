@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **`DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore` constructors migrated to config-struct form** — positional parameter constructors removed; update call sites:
+  - `keymanager.NewDiskKeyStore(dir, keySize, logger, metrics)` → `keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: keySize, Logger: logger, Metrics: metrics})`
+  - `keymanager.NewRedisKeyStore(client, logger, metrics)` → `keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client, Logger: logger, Metrics: metrics})`
+  - `storage.NewMemoryRefreshStore(logger, metrics)` → `storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: metrics})`
+  - `storage.NewRedisRefreshStore(client, logger, metrics)` → `storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client, Logger: logger, Metrics: metrics})`
+
 - **`tokens.Service` → `tokens.Manager`** — The core token lifecycle type is renamed. Update all call sites:
   - `tokens.NewService(tokens.ServiceConfig{...})` → `tokens.NewManager(tokens.ManagerConfig{...})`
   - `tokens.ConfigDefault()` → `tokens.DefaultManagerConfig()`
@@ -17,6 +23,14 @@ All notable changes to this project will be documented in this file.
 - **`AuthMiddleware` → `BearerMiddleware`** in all example middleware packages (`examples/gin-example/middleware`, `examples/chi-example/auth`, `examples/echo-example/middleware`). Rename call sites accordingly.
 
 ### Added
+
+- **Distributed tracing wired into all six components** via `pkg/tracing.Tracer` interface — every constructor accepts an optional `Tracer` field (defaults to `NoOpTracer`):
+  - `DiskKeyStore` — spans for Load, Save, Delete, UpdateMetadata; attributes: `storage.backend = "disk"`, `key_id`
+  - `RedisKeyStore` — same operations; `storage.backend = "redis"`
+  - `MemoryRefreshStore` — spans for Store, Retrieve, Revoke, RevokeAllForUser, Cleanup; attribute: `token_id`
+  - `RedisRefreshStore` — same operations; `storage.backend = "redis"`
+  - `KeyManager` — spans for Start, Shutdown, and all key operations; attribute: `key_id`
+  - `TokenManager` — spans for all 14 public methods; attributes: `user_id`, `token_id`, `active` (IntrospectToken), `deleted_count` (CleanupExpiredTokens)
 
 - **`KeyInfo` struct** — public metadata type in `pkg/keymanager` exposing `KeyID`, `CreatedAt`, `RotateAt` (estimated, current key only), `ExpiresAt`, `KeySizeBits`, `Algorithm`, `IsCurrent`, and `IsValid`. Contains no private key material — safe to serve from health check or admin endpoints.
 

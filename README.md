@@ -304,7 +304,7 @@ You've already verified identity and need **production-grade token machinery** f
 
 ### 🚧 In Development (v0.4.0)
 
-- **OpenTelemetry / Distributed Tracing**: `pkg/tracing` interfaces (`Tracer`, `Span`) and `NoOpTracer` are scaffolded. Full wiring into KeyManager, TokenManager, and RefreshStore — with an OpenTelemetry adapter — is planned for v0.4.0.
+- **OpenTelemetry / Distributed Tracing**: Tracing is now wired into all six components (`DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore`, `KeyManager`, `TokenManager`). Every constructor accepts an optional `Tracer` field — defaults to `NoOpTracer` for zero-config operation. `OtelTracer` is available for production use via `tracing.NewOtelTracer("scope")`. v0.4.0 is still in progress.
 
 ## Architecture Highlights
 
@@ -317,9 +317,13 @@ import (
     "github.com/aetomala/jwtauth/pkg/keymanager"
     "github.com/aetomala/jwtauth/pkg/logging"
     "github.com/aetomala/jwtauth/pkg/metrics"
+    "github.com/aetomala/jwtauth/pkg/tracing"
 )
 
-ks, _ := keymanager.NewDiskKeyStore("/var/keys", 2048, nil, nil)
+ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{
+    Dir:    "/var/keys",
+    Logger: logging.NewJSONLogger(slog.LevelInfo),
+})
 config := keymanager.ManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour, // 30 days
@@ -332,6 +336,9 @@ config := keymanager.ManagerConfig{
     Metrics: metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
         Namespace: "myapp",
     }),
+
+    // Optional: Bring your own tracer (defaults to NoOpTracer)
+    Tracer: tracing.NewOtelTracer("jwtauth"),
 }
 ```
 
@@ -398,7 +405,7 @@ import (
 
 func main() {
     // Create DiskKeyStore for key persistence
-    ks, err := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
+    ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys"})
     if err != nil {
         log.Fatal(err)
     }
@@ -479,7 +486,7 @@ func main() {
     logger := logging.NewJSONLogger(slog.LevelInfo)
     pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{})
 
-    ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
+    ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", Logger: logger, Metrics: pm})
     if err != nil {
         log.Fatal(err)
     }
@@ -734,7 +741,10 @@ and your `RefreshStore` to handle the complete authentication flow.
 
 **Production (single-instance)**:
 ```go
-ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
+ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{
+    Dir:    "./keys",
+    Logger: logging.NewJSONLogger(slog.LevelInfo),
+})
 config := keymanager.ManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour,  // 30 days
@@ -746,7 +756,7 @@ config := keymanager.ManagerConfig{
 **Production (distributed / multi-instance)**:
 ```go
 client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
-ks, _ := keymanager.NewRedisKeyStore(client, logger, nil)
+ks, _ := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client, Logger: logger})
 config := keymanager.ManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour,
@@ -757,7 +767,10 @@ config := keymanager.ManagerConfig{
 
 **Development**:
 ```go
-ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
+ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{
+    Dir:    "./keys",
+    Logger: logging.NewTextLogger(slog.LevelDebug),
+})
 config := keymanager.ManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 24 * time.Hour,        // 1 day (faster testing)
@@ -914,9 +927,9 @@ pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
 http.Handle("/metrics", pm.Handler())
 
 // Pass pm to every constructor that accepts it
-ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
+ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", Logger: logger, Metrics: pm})
 km, _ := keymanager.NewManager(keymanager.ManagerConfig{KeyStore: ks, Metrics: pm})
-store := storage.NewMemoryRefreshStore(logger, pm)
+store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: pm})
 mgr, _ := tokens.NewManager(tokens.ManagerConfig{
     KeyManager:   km,
     RefreshStore: store,
@@ -982,6 +995,54 @@ For the full operator reference including Grafana dashboard guidance and label c
 - StatsD (for Datadog, Graphite)
 - CloudWatch (for AWS environments)
 
+### Distributed Tracing
+
+Every component emits OpenTelemetry-compatible spans. Tracing is opt-in — all constructors default to `NoOpTracer` so existing code requires no changes.
+
+**Quick start**:
+
+```go
+import (
+    "go.opentelemetry.io/otel"
+    "github.com/aetomala/jwtauth/pkg/tracing"
+    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/storage"
+    "github.com/aetomala/jwtauth/pkg/tokens"
+)
+
+// Wire your OTel TracerProvider (OTLP, Jaeger, Tempo, etc.) then:
+tracer := tracing.NewOtelTracer("jwtauth")
+
+ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{
+    Dir:    "./keys",
+    Tracer: tracer,
+})
+km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+    KeyStore: ks,
+    Tracer:   tracer,
+})
+store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Tracer: tracer})
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+    KeyManager:   km,
+    RefreshStore: store,
+    Tracer:       tracer,
+})
+```
+
+**Span naming**: `<TypeName>.<MethodName>` — e.g., `TokenManager.IssueAccessToken`, `DiskKeyStore.Save`.
+
+**Span attributes by component**:
+
+| Component | Attributes |
+|-----------|-----------|
+| `DiskKeyStore` / `RedisKeyStore` | `storage.backend` (`"disk"` / `"redis"`), `key_id` |
+| `MemoryRefreshStore` / `RedisRefreshStore` | `storage.backend` (`"memory"` / `"redis"`), `token_id` |
+| `KeyManager` | `key_id` |
+| `TokenManager` | `user_id`, `token_id`, `active` (IntrospectToken), `deleted_count` (CleanupExpiredTokens) |
+
+All spans set `StatusOK` on success and `RecordError` + `StatusError` on failure. For deployment setup and `TracerProvider` configuration, see [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
+
+
 ## Project Structure
 
 ```
@@ -1007,8 +1068,8 @@ github.com/aetomala/jwtauth/
 │   │   ├── redis.go              # RedisKeyStore — Redis-backed KeyStore for distributed deployments
 │   │   ├── observability.go      # Metric name constants (KeyStore + Manager)
 │   │   ├── keymanager_test.go    # 9-phase Manager tests (52 specs, MockKeyStore)
-│   │   ├── disk_test.go          # 9-phase DiskKeyStore tests (38 specs)
-│   │   └── redis_test.go         # 9-phase RedisKeyStore tests (35 specs, miniredis)
+│   │   ├── disk_test.go          # 10-phase DiskKeyStore tests (42 specs)
+│   │   └── redis_test.go         # 10-phase RedisKeyStore tests (39 specs, miniredis)
 │   ├── tokens/                   # JWT operations (Beta) 🟡
 │   │   ├── manager.go            # TokenManager implementation
 │   │   ├── claims.go             # Claims management
@@ -1058,11 +1119,11 @@ github.com/aetomala/jwtauth/
   - RotateKeys: Save + UpdateMetadata calls, currentKeyID update
   - Shutdown: scheduler stop, idempotency, context timeout
   - Metrics recording: rotation counter/duration, signing/validation counters, active-versions gauge
-- **9-phase DiskKeyStore tests** (38 specs, real tmp directory):
+- **10-phase DiskKeyStore tests** (42 specs, real tmp directory):
   - Constructor, Save (0600 permissions, companion JSON), LoadAll
   - LoadKey (key size validation), UpdateMetadata, Delete (idempotent)
-  - Error handling, concurrency, metrics recording (storage_backend: "disk")
-- **9-phase RedisKeyStore tests** (35 specs, miniredis):
+  - Error handling, concurrency, metrics recording (storage_backend: "disk"), tracing
+- **10-phase RedisKeyStore tests** (39 specs, miniredis):
   - Constructor (nil client returns ErrNilRedisClient), Save round-trip, LoadAll (skip expired)
   - LoadKey, UpdateMetadata, Delete (idempotent)
   - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
@@ -1171,12 +1232,13 @@ Tests follow **progressive phase-based development**:
 - ✅ Context cancellation guards in `GetJWKS` and `cleanupExpiredKeys`
 - ✅ Redis integration tests via miniredis covering distributed token operations end-to-end
 
-### v0.4.0 (Next)
+### v0.4.0 (In Progress)
 - ✅ `pkg/tracing` interfaces scaffolded — `Tracer`, `Span`, `SpanOption`, `StatusCode`, `SpanKind`
 - ✅ `NoOpTracer` / `NoOpSpan` implementations (36 tests, race-detection clean)
 - ✅ `MockTracer` / `MockSpan` generated for dependency injection in component tests
-- 🚧 Wire tracing into KeyManager, TokenManager, and RefreshStore
-- 🚧 OpenTelemetry adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
+- ✅ Tracing wired into all six components — `DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore`, `KeyManager`, `TokenManager`
+- ✅ `OtelTracer` adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
+- 🚧 Additional v0.4.0 items in progress
 
 ### v1.0.0 (Stable)
 - API stability guarantee

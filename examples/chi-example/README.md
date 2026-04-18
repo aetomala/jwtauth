@@ -312,7 +312,7 @@ Enable debug logging:
 ```go
 logger := logging.NewTextLogger(slog.LevelDebug)
 
-ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, logger, nil)
+ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", Logger: logger})
 km, _ := keymanager.NewManager(keymanager.ManagerConfig{
     KeyStore: ks,
     Logger:   logger,

@@ -159,6 +159,78 @@ For the complete metric reference — all 22 metrics with label values and PromQ
 
 ---
 
+## Distributed Tracing
+
+jwtauth emits OpenTelemetry-compatible spans via `pkg/tracing`. By default every component uses `NoOpTracer` — no setup required for local development. For production, initialize a `TracerProvider` and pass `tracing.NewOtelTracer("jwtauth")` into each config.
+
+### OTel SDK Setup
+
+```go
+import (
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+    "go.opentelemetry.io/otel/sdk/trace"
+    "github.com/aetomala/jwtauth/pkg/tracing"
+    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/storage"
+    "github.com/aetomala/jwtauth/pkg/tokens"
+)
+
+// 1. Create an OTLP exporter (Jaeger, Tempo, or any OTLP-compatible backend)
+exporter, err := otlptracehttp.New(ctx,
+    otlptracehttp.WithEndpoint("http://localhost:4318"),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+// 2. Build a TracerProvider with your preferred sampler
+tp := trace.NewTracerProvider(
+    trace.WithBatcher(exporter),
+    trace.WithSampler(trace.AlwaysSample()), // adjust for production
+)
+otel.SetTracerProvider(tp)
+defer tp.Shutdown(ctx)
+
+// 3. Create a jwtauth tracer and pass it to every component
+tracer := tracing.NewOtelTracer("jwtauth")
+
+ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{
+    Dir:    "./keys",
+    Tracer: tracer,
+})
+km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+    KeyStore: ks,
+    Tracer:   tracer,
+})
+store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Tracer: tracer})
+mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+    KeyManager:   km,
+    RefreshStore: store,
+    Tracer:       tracer,
+})
+```
+
+### Sampler Recommendations
+
+| Environment | Sampler | Rationale |
+|-------------|---------|-----------|
+| Development | `AlwaysSample` | Capture every span for debugging |
+| Staging | `TraceIDRatioBased(0.1)` | 10% sample — enough to verify instrumentation |
+| Production | `ParentBased(TraceIDRatioBased(0.01))` | 1% sample; respect upstream sampling decisions |
+
+Sampling is the caller's responsibility — jwtauth defers entirely to the OTel SDK.
+
+### Endpoint Environment Variables (OTLP)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP HTTP exporter endpoint |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | Override for traces only |
+| `OTEL_SERVICE_NAME` | — | Service name tag applied to all spans |
+
+---
+
 ## Graceful Shutdown
 
 Shut down in reverse start order — `TokenManager` first, then `KeyManager`. Always use a deadline:
