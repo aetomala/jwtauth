@@ -18,6 +18,7 @@ import (
 	"github.com/aetomala/jwtauth/pkg/keymanager"
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tokens"
+	"github.com/aetomala/jwtauth/pkg/tracing"
 )
 
 func TestTokens(t *testing.T) {
@@ -199,6 +200,37 @@ var _ = Describe("TokenManager", func() {
 
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("ClockSkew"))
+			})
+		})
+
+		Context("tracer defaults and acceptance", func() {
+			It("should apply default Tracer from DefaultManagerConfig when Tracer is nil", func() {
+				mgr, err := tokens.NewManager(tokens.ManagerConfig{
+					KeyManager:   mockKM,
+					RefreshStore: mockStore,
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(mgr).NotTo(BeNil())
+			})
+
+			It("should accept an explicit Tracer without error", func() {
+				ctrl2 := gomock.NewController(GinkgoT())
+				defer ctrl2.Finish()
+				mockT := testutil.NewMockTracer(ctrl2)
+				mockSp := testutil.NewMockSpan(ctrl2)
+				mockT.EXPECT().Start(gomock.Any(), gomock.Any(), gomock.Any()).Return(context.Background(), mockSp).AnyTimes()
+				mockSp.EXPECT().End().AnyTimes()
+				mockSp.EXPECT().SetAttribute(gomock.Any(), gomock.Any()).AnyTimes()
+				mockSp.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
+				mockSp.EXPECT().RecordError(gomock.Any()).AnyTimes()
+
+				mgr, err := tokens.NewManager(tokens.ManagerConfig{
+					KeyManager:   mockKM,
+					RefreshStore: mockStore,
+					Tracer:       mockT,
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(mgr).NotTo(BeNil())
 			})
 		})
 	})
@@ -1718,6 +1750,152 @@ func createRecentlyExpiredToken(key *rsa.PrivateKey, keyID, userID string, expir
 
 	return signedToken
 }
+
+// ============================================================================
+// Phase N: Tracing
+// ============================================================================
+
+var _ = Describe("TokenManager — Phase N: Tracing", func() {
+	var (
+		ctrl       *gomock.Controller
+		mockTracer *testutil.MockTracer
+		setupSpan  *testutil.MockSpan
+		testSpan   *testutil.MockSpan
+		mockKM     *testutil.MockKeyManager
+		mockStore  *testutil.MockRefreshStore
+		manager    *tokens.Manager
+		ctx        context.Context
+		testKey    *rsa.PrivateKey
+		testKeyID  string
+	)
+
+	newTracingManager := func() {
+		var err error
+		testKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		Expect(err).NotTo(HaveOccurred())
+		testKeyID = "tracing-key-id"
+
+		manager, err = tokens.NewManager(tokens.ManagerConfig{
+			KeyManager:           mockKM,
+			RefreshStore:         mockStore,
+			Tracer:               mockTracer,
+			AccessTokenDuration:  15 * time.Minute,
+			RefreshTokenDuration: 30 * 24 * time.Hour,
+			CleanupInterval:      100 * time.Millisecond,
+			Issuer:               "test-issuer",
+			Audience:             []string{"test-audience"},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		// Route Start/Shutdown spans to setupSpan; all other spans go to testSpan.
+		mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.Start"), gomock.Any()).Return(ctx, setupSpan).AnyTimes()
+		mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.Shutdown"), gomock.Any()).Return(ctx, setupSpan).AnyTimes()
+		setupSpan.EXPECT().End().AnyTimes()
+		setupSpan.EXPECT().SetAttribute(gomock.Any(), gomock.Any()).AnyTimes()
+		setupSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
+		setupSpan.EXPECT().RecordError(gomock.Any()).AnyTimes()
+
+		mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+		Expect(manager.Start(ctx)).To(Succeed())
+	}
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		ctrl = gomock.NewController(GinkgoT())
+		mockTracer = testutil.NewMockTracer(ctrl)
+		setupSpan = testutil.NewMockSpan(ctrl)
+		testSpan = testutil.NewMockSpan(ctrl)
+		mockKM = testutil.NewMockKeyManager(ctrl)
+		mockStore = testutil.NewMockRefreshStore(ctrl)
+	})
+
+	AfterEach(func() {
+		if manager != nil && manager.IsRunning() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil).AnyTimes()
+			_ = manager.Shutdown(shutdownCtx)
+		}
+		ctrl.Finish()
+	})
+
+	Context("IssueAccessToken — success path", func() {
+		It("should start a span named TokenManager.IssueAccessToken with user_id and StatusOK", func() {
+			newTracingManager()
+
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueAccessToken"), gomock.Any()).Return(ctx, testSpan)
+			testSpan.EXPECT().SetAttribute("user_id", "tracing-user")
+			testSpan.EXPECT().SetAttribute("token_id", gomock.Any())
+			testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+			testSpan.EXPECT().End()
+
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+			_, err := manager.IssueAccessToken(ctx, "tracing-user")
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("IssueAccessToken — error path (not running)", func() {
+		It("should call RecordError and StatusError when service is not running", func() {
+			newTracingManager()
+
+			// Stop the manager first; AfterEach will see it stopped and skip.
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
+			Expect(manager.Shutdown(shutdownCtx)).To(Succeed())
+
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueAccessToken"), gomock.Any()).Return(ctx, testSpan)
+			testSpan.EXPECT().SetAttribute("user_id", "stopped-user")
+			testSpan.EXPECT().RecordError(tokens.ErrManagerNotRunning)
+			testSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
+			testSpan.EXPECT().End()
+
+			_, err := manager.IssueAccessToken(ctx, "stopped-user")
+			Expect(err).To(MatchError(tokens.ErrManagerNotRunning))
+		})
+	})
+
+	Context("RefreshAccessToken — success path", func() {
+		It("should start a span with token_id attribute and StatusOK", func() {
+			newTracingManager()
+
+			refreshTok := "refresh-token-xyz"
+			record := &storage.RefreshToken{
+				TokenID:   refreshTok,
+				UserID:    "refresh-user",
+				ExpiresAt: time.Now().Add(time.Hour),
+				Revoked:   false,
+			}
+			mockStore.EXPECT().Retrieve(gomock.Any(), refreshTok).Return(record, nil)
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.RefreshAccessToken"), gomock.Any()).Return(ctx, testSpan)
+			// IssueAccessToken is called internally — route to setupSpan to avoid expectation conflicts.
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueAccessToken"), gomock.Any()).Return(ctx, setupSpan)
+			testSpan.EXPECT().SetAttribute("token_id", refreshTok)
+			testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+			testSpan.EXPECT().End()
+
+			_, err := manager.RefreshAccessToken(ctx, refreshTok)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("ValidateAccessToken — error path", func() {
+		It("should call RecordError and StatusError for an invalid token", func() {
+			newTracingManager()
+
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.ValidateAccessToken"), gomock.Any()).Return(ctx, testSpan)
+			testSpan.EXPECT().RecordError(tokens.ErrInvalidToken)
+			testSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
+			testSpan.EXPECT().End()
+
+			_, err := manager.ValidateAccessToken(ctx, "not-a-valid-jwt")
+			Expect(err).To(MatchError(tokens.ErrInvalidToken))
+		})
+	})
+})
 
 func createExpiredToken(key *rsa.PrivateKey, keyID, userID string) string {
 	// Create a token with past expiration
