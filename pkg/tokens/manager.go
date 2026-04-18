@@ -572,11 +572,11 @@ func (m *Manager) IssueAccessToken(ctx context.Context, userID string) (string, 
 
 // IssueAccessTokenWithClaims creates a signed RS256 JWT access token with
 // additional custom claims merged into the payload. Reserved claims (sub, iss,
-// exp, iat, nbf, jti) cannot be overridden; any attempt is silently dropped
+// exp, iat, nbf, jti) cannot be overridden — any attempt is silently dropped
 // and logged as a warning.
 //
 // Returns the same errors as IssueAccessToken.
-func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string, customClaims map[string]interface{}) (string, error) {
+func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string, claims CustomClaims) (string, error) {
 	ctx, span := m.startSpan(ctx, "IssueAccessTokenWithClaims")
 	defer span.End()
 
@@ -672,7 +672,7 @@ func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	span.SetAttribute("token_id", tokenID)
 
 	// Create map claims to support both standard and custom claims
-	claims := jwt.MapClaims{
+	jwtClaims := jwt.MapClaims{
 		"sub": userID,
 		"iss": m.issuer,
 		"aud": m.audience,
@@ -682,17 +682,16 @@ func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 		"jti": tokenID,
 	}
 
-	// Merge custom claims
-	// Custom claims can override standard claims except sub, iss, exp, iat, nbf, jti
+	// Merge custom claims — reserved keys are silently dropped.
 	reservedClaims := map[string]bool{
 		"sub": true, "iss": true, "exp": true,
 		"iat": true, "nbf": true, "jti": true,
 	}
 
 	customClaimsCount := 0
-	for key, value := range customClaims {
+	for key, value := range claims {
 		if !reservedClaims[key] {
-			claims[key] = value
+			jwtClaims[key] = value
 			customClaimsCount++
 		} else {
 			if m.logger != nil {
@@ -711,7 +710,7 @@ func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	}
 
 	// Sign token
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwtClaims)
 	token.Header["kid"] = keyID
 
 	signedToken, err := token.SignedString(privateKey)
@@ -740,7 +739,7 @@ func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 			"userID", userID,
 			"tokenID", tokenID,
 			"keyID", keyID,
-			"customClaims", len(customClaims),
+			"customClaims", len(claims),
 			"expiresAt", expiresAt)
 	}
 	span.SetStatus(tracing.StatusOK, "")
@@ -855,7 +854,7 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string) (string,
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
 		expiresAt,    // When it expires
-		nil,          // No metadata (use IssueRefreshTokenWithMetadata for metadata)
+		nil,          // No claims (use IssueRefreshTokenWithClaims to attach claims)
 	)
 	if err != nil {
 		if m.logger != nil {
@@ -887,13 +886,13 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string) (string,
 	return refreshToken, nil
 }
 
-// IssueRefreshTokenWithMetadata behaves like IssueRefreshToken but stores
-// arbitrary metadata alongside the token (e.g. device ID, IP address, session
-// tags). The metadata is retrievable via IntrospectToken.
+// IssueRefreshTokenWithClaims behaves like IssueRefreshToken but stores
+// arbitrary claims alongside the token (e.g. device ID, IP address, session
+// tags). The claims are retrievable via IntrospectToken.
 //
 // Returns the same errors as IssueAccessToken.
-func (m *Manager) IssueRefreshTokenWithMetadata(ctx context.Context, userID string, metadata map[string]interface{}) (string, error) {
-	ctx, span := m.startSpan(ctx, "IssueRefreshTokenWithMetadata")
+func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string, claims CustomClaims) (string, error) {
+	ctx, span := m.startSpan(ctx, "IssueRefreshTokenWithClaims")
 	defer span.End()
 
 	start := time.Now()
@@ -954,7 +953,7 @@ func (m *Manager) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	}
 
 	if m.logger != nil {
-		m.logger.Debug("issuing refresh token with metadata", ctx, "userID", userID)
+		m.logger.Debug("issuing refresh token with claims", ctx, "userID", userID)
 	}
 
 	// ===== STEP 4: Generate Refresh Token =====
@@ -995,23 +994,23 @@ func (m *Manager) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
 		expiresAt,    // When it expires
-		metadata,     // Custom metadata
+		claims,       // Custom claims
 	)
 	if err != nil {
 		if m.logger != nil {
-			m.logger.Error("failed to store refresh token with metadata", ctx,
+			m.logger.Error("failed to store refresh token with claims", ctx,
 				"userID", userID,
 				"error", err)
 		}
-		wrapped := fmt.Errorf("failed to store refresh token with metadata: %w", err)
+		wrapped := fmt.Errorf("failed to store refresh token with claims: %w", err)
 		span.RecordError(wrapped)
 		span.SetStatus(tracing.StatusError, wrapped.Error())
 		return "", wrapped
 	}
 	if m.logger != nil {
-		m.logger.Debug("refresh token with metadata stored", ctx,
+		m.logger.Debug("refresh token with claims stored", ctx,
 			"userID", userID,
-			"metadataKeys", len(metadata),
+			"claimsKeys", len(claims),
 			"expiresAt", expiresAt)
 	}
 
@@ -1019,11 +1018,11 @@ func (m *Manager) IssueRefreshTokenWithMetadata(ctx context.Context, userID stri
 	status = "success"
 	errorType = ""
 	if m.logger != nil {
-		m.logger.Info("refresh token with metadata issued", ctx,
+		m.logger.Info("refresh token with claims issued", ctx,
 			"userID", userID,
 			"tokenID", refreshToken,
 			"expiresAt", expiresAt,
-			"metadataKeys", getMapKeys(metadata))
+			"claimsKeys", getMapKeys(claims))
 	}
 	span.SetStatus(tracing.StatusOK, "")
 	return refreshToken, nil
@@ -1198,7 +1197,7 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string) (string, st
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
 		expiresAt,    // When it expires
-		nil,          // No metadata (use IssueRefreshTokenWithMetadata for metadata)
+		nil,          // No claims (use IssueRefreshTokenWithClaims to attach claims)
 	)
 	if err != nil {
 		if m.logger != nil {
@@ -2105,8 +2104,8 @@ func generateRefreshToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// getMapKeys returns the keys of a map (for logging).
-func getMapKeys(m map[string]interface{}) []string {
+// getMapKeys returns the keys of a CustomClaims map (for logging).
+func getMapKeys(m CustomClaims) []string {
 	if m == nil {
 		return nil
 	}

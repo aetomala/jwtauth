@@ -275,7 +275,7 @@ var _ = Describe("TokenManager", func() {
 		It("should include custom claims issuance if provided", func() {
 			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
 
-			customClaims := map[string]interface{}{
+			customClaims := tokens.CustomClaims{
 				"role":   "admin",
 				"tenant": "org-123",
 			}
@@ -380,7 +380,7 @@ var _ = Describe("TokenManager", func() {
 
 			It("should not override reserved claim sub", func() {
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
-				customClaims := map[string]interface{}{"sub": "hacker", "role": "admin"}
+				customClaims := tokens.CustomClaims{"sub": "hacker", "role": "admin"}
 				tokenStr, err := service.IssueAccessTokenWithClaims(ctx, testUserID, customClaims)
 				Expect(err).NotTo(HaveOccurred())
 				parsed, _ := jwt.ParseWithClaims(tokenStr, &jwt.MapClaims{}, func(t *jwt.Token) (interface{}, error) {
@@ -441,18 +441,18 @@ var _ = Describe("TokenManager", func() {
 				}).Should(BeTrue())
 			})
 
-			It("should store metadata when provided", func() {
-				metadata := map[string]interface{}{
+			It("should store claims when provided", func() {
+				claims := tokens.CustomClaims{
 					"ip":        "192.168.1.1",
 					"userAgent": "Mozilla/5.0",
 				}
 
-				// Verify metadata is passed to Store
+				// Verify claims are passed to Store
 				mockStore.EXPECT().
-					Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), metadata).
+					Store(gomock.Any(), gomock.Any(), testUserID, gomock.Any(), claims).
 					Return(nil)
 
-				service.IssueRefreshTokenWithMetadata(ctx, testUserID, metadata)
+				service.IssueRefreshTokenWithClaims(ctx, testUserID, claims)
 			})
 
 			It("should set correct expiration time", func() {
@@ -522,11 +522,11 @@ var _ = Describe("TokenManager", func() {
 			})
 		})
 
-		Context("IssueRefreshTokenWithMetadata guards", func() {
+		Context("IssueRefreshTokenWithClaims guards", func() {
 			It("should return error when service is not running", func() {
 				stoppedService := createService()
 
-				_, err := stoppedService.IssueRefreshTokenWithMetadata(ctx, testUserID, nil)
+				_, err := stoppedService.IssueRefreshTokenWithClaims(ctx, testUserID, nil)
 
 				Expect(err).To(MatchError(tokens.ErrManagerNotRunning))
 			})
@@ -535,7 +535,7 @@ var _ = Describe("TokenManager", func() {
 				cancelledCtx, cancel := context.WithCancel(ctx)
 				cancel()
 
-				_, err := service.IssueRefreshTokenWithMetadata(cancelledCtx, testUserID, nil)
+				_, err := service.IssueRefreshTokenWithClaims(cancelledCtx, testUserID, nil)
 
 				Expect(err).To(MatchError(context.Canceled))
 			})
@@ -544,7 +544,7 @@ var _ = Describe("TokenManager", func() {
 				mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(errors.New("storage failure"))
 
-				_, err := service.IssueRefreshTokenWithMetadata(ctx, testUserID, nil)
+				_, err := service.IssueRefreshTokenWithClaims(ctx, testUserID, nil)
 
 				Expect(err).To(HaveOccurred())
 			})
@@ -845,7 +845,7 @@ var _ = Describe("TokenManager", func() {
 			Context("with custom claims embedded at issuance", func() {
 				It("should return custom claims alongside registered claims", func() {
 					mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
-					customClaims := map[string]interface{}{
+					customClaims := tokens.CustomClaims{
 						"role":   "admin",
 						"tenant": "org-123",
 					}

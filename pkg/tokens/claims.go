@@ -122,6 +122,14 @@ type Claims struct {
 // 5. Scopes (OAuth2-style):
 //    "scope": "read:users write:posts"
 
+// CustomClaims holds application-defined key-value pairs embedded into a JWT
+// access token or stored alongside a refresh token. Reserved JWT field names
+// (sub, iss, aud, exp, nbf, iat, jti) are silently dropped at issuance time
+// to prevent caller-controlled claim injection. All methods are safe for
+// concurrent use when the map is not mutated after being passed to an issuance
+// method.
+type CustomClaims map[string]interface{}
+
 // ============================================================================
 // HELPER TYPES
 // ============================================================================
