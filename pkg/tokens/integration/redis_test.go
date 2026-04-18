@@ -65,7 +65,9 @@ func init() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			storeA := storage.NewRedisRefreshStore(client, nil, nil)
+			storeA, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+			Expect(err).NotTo(HaveOccurred())
+
 			mgrA, err := tokens.NewManager(tokens.ManagerConfig{
 				KeyManager:           kmA,
 				RefreshStore:         storeA,
@@ -93,7 +95,9 @@ func init() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			storeB := storage.NewRedisRefreshStore(client, nil, nil)
+			storeB, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+			Expect(err).NotTo(HaveOccurred())
+
 			mgrB, err := tokens.NewManager(tokens.ManagerConfig{
 				KeyManager:           kmB,
 				RefreshStore:         storeB,
@@ -148,7 +152,9 @@ func init() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			storeA := storage.NewRedisRefreshStore(client, nil, nil)
+			storeA, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+			Expect(err).NotTo(HaveOccurred())
+
 			mgrA, err := tokens.NewManager(tokens.ManagerConfig{
 				KeyManager:           kmA,
 				RefreshStore:         storeA,
@@ -189,7 +195,9 @@ func init() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			storeB := storage.NewRedisRefreshStore(client, nil, nil)
+			storeB, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+			Expect(err).NotTo(HaveOccurred())
+
 			mgrB, err := tokens.NewManager(tokens.ManagerConfig{
 				KeyManager:           kmB,
 				RefreshStore:         storeB,
@@ -237,7 +245,10 @@ func redisFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keymanager.Manage
 	Expect(err).NotTo(HaveOccurred())
 
 	cfg.KeyManager = km
-	cfg.RefreshStore = storage.NewRedisRefreshStore(client, nil, nil)
+
+	refreshStore, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+	Expect(err).NotTo(HaveOccurred())
+	cfg.RefreshStore = refreshStore
 
 	mgr, err := tokens.NewManager(cfg)
 	Expect(err).NotTo(HaveOccurred())
