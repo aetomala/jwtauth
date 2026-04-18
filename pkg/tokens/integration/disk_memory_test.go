@@ -35,7 +35,7 @@ func diskMemoryFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keymanager.M
 	Expect(err).NotTo(HaveOccurred())
 
 	cfg.KeyManager = km
-	cfg.RefreshStore = storage.NewMemoryRefreshStore(nil, nil)
+	cfg.RefreshStore = storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{})
 
 	mgr, err := tokens.NewManager(cfg)
 	Expect(err).NotTo(HaveOccurred())

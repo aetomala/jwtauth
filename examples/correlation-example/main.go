@@ -45,7 +45,7 @@ func main() {
 	}
 
 	// ===== TokenManager =====
-	store := storage.NewMemoryRefreshStore(logger, nil)
+	store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger})
 	mgr, err := tokens.NewManager(tokens.ManagerConfig{
 		KeyManager:           km,
 		RefreshStore:         store,

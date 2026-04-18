@@ -8,7 +8,26 @@ import (
 
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
+	"github.com/aetomala/jwtauth/pkg/tracing"
 )
+
+// MemoryRefreshStoreConfig holds configuration for a MemoryRefreshStore instance.
+type MemoryRefreshStoreConfig struct {
+	Logger  logging.Logger  // Optional; nil defaults to NoOpLogger.
+	Metrics metrics.Metrics // Optional; nil defaults to NoOpMetrics.
+	Tracer  tracing.Tracer  // Optional; nil defaults to NoOpTracer.
+}
+
+// MemoryRefreshStoreConfigDefault returns a MemoryRefreshStoreConfig with
+// sensible defaults. NewMemoryRefreshStore applies these automatically for any
+// nil fields.
+func MemoryRefreshStoreConfigDefault() MemoryRefreshStoreConfig {
+	return MemoryRefreshStoreConfig{
+		Logger:  &logging.NoOpLogger{},
+		Metrics: metrics.NewNoOpMetrics(),
+		Tracer:  tracing.NewNoOpTracer(),
+	}
+}
 
 // MemoryRefreshStore is a thread-safe, in-memory implementation of the
 // RefreshStore interface. It is suitable for single-instance deployments and
@@ -25,27 +44,44 @@ type MemoryRefreshStore struct {
 	userTokens map[string][]string      // userID  -> []tokenID
 
 	// ===== Observability =====
-	logger  logging.Logger  // Optional; nil disables logging
-	metrics metrics.Metrics // Optional; nil disables metrics
+	logger  logging.Logger  // never nil; defaults to NoOpLogger
+	metrics metrics.Metrics // never nil; defaults to NoOpMetrics
+	tracer  tracing.Tracer  // never nil; defaults to NoOpTracer
 	backend string          // storage_backend label value; always "memory"
 }
 
-// NewMemoryRefreshStore returns a new empty MemoryRefreshStore. Pass a
-// logging.Logger for structured log output; pass nil to disable logging. Pass
-// a metrics.Metrics for instrumentation; pass nil to disable metrics.
-func NewMemoryRefreshStore(logger logging.Logger, m metrics.Metrics) *MemoryRefreshStore {
-	store := &MemoryRefreshStore{
+// NewMemoryRefreshStore returns a new empty MemoryRefreshStore using cfg.
+// Zero-value and nil fields are filled with defaults from
+// MemoryRefreshStoreConfigDefault.
+func NewMemoryRefreshStore(cfg MemoryRefreshStoreConfig) *MemoryRefreshStore {
+	// ===== Apply Defaults =====
+	defaults := MemoryRefreshStoreConfigDefault()
+	if cfg.Logger == nil {
+		cfg.Logger = defaults.Logger
+	}
+	if cfg.Metrics == nil {
+		cfg.Metrics = defaults.Metrics
+	}
+	if cfg.Tracer == nil {
+		cfg.Tracer = defaults.Tracer
+	}
+
+	return &MemoryRefreshStore{
 		tokens:     make(map[string]*RefreshToken),
 		userTokens: make(map[string][]string),
+		logger:     cfg.Logger,
+		metrics:    cfg.Metrics,
+		tracer:     cfg.Tracer,
 		backend:    "memory",
 	}
-	if logger != nil {
-		store.logger = logger
-	}
-	if m != nil {
-		store.metrics = m
-	}
-	return store
+}
+
+// startSpan starts a new span for the given operation name, pre-seeded with
+// the storage.backend attribute.
+func (m *MemoryRefreshStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
+	return m.tracer.Start(ctx, "MemoryRefreshStore."+operation,
+		tracing.WithAttributes(map[string]any{"storage.backend": m.backend}),
+	)
 }
 
 // Store persists a new refresh token. Returns ErrInvalidTokenID if tokenID is
@@ -56,27 +92,29 @@ func NewMemoryRefreshStore(logger logging.Logger, m metrics.Metrics) *MemoryRefr
 // A defensive copy of metadata is made so later mutations to the caller's map
 // do not affect the stored token.
 func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error {
+	ctx, span := m.startSpan(ctx, "Store")
+	defer span.End()
+	span.SetAttribute("token_id", tokenID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	tokenCount := 0
 	defer func() {
-		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
-				"operation":       "store",
-				"status":          status,
-				"error_type":      errorType,
+		m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+			"operation":       "store",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": m.backend,
+		})
+		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
+			"operation":       "store",
+			"storage_backend": m.backend,
+		})
+		if status == "success" {
+			m.metrics.SetGauge(metricStorageTokensCount, float64(tokenCount), map[string]string{
 				"storage_backend": m.backend,
 			})
-			m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
-				"operation":       "store",
-				"storage_backend": m.backend,
-			})
-			if status == "success" {
-				m.metrics.SetGauge(metricStorageTokensCount, float64(tokenCount), map[string]string{
-					"storage_backend": m.backend,
-				})
-			}
 		}
 	}()
 
@@ -84,10 +122,10 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if m.logger != nil {
-			m.logger.Warn("store aborted: context cancelled", ctx,
-				"reason", err)
-		}
+		m.logger.Warn("store aborted: context cancelled", ctx,
+			"reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return err
 	}
 
@@ -95,32 +133,32 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	if len(strings.TrimSpace(tokenID)) == 0 {
 		status = "validation_error"
 		errorType = "validation_error"
-		if m.logger != nil {
-			m.logger.Warn("store rejected: tokenID is empty or whitespace", ctx,
-				"userID", userID)
-		}
+		m.logger.Warn("store rejected: tokenID is empty or whitespace", ctx,
+			"userID", userID)
+		span.RecordError(ErrInvalidTokenID)
+		span.SetStatus(tracing.StatusError, ErrInvalidTokenID.Error())
 		return ErrInvalidTokenID
 	}
 
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "validation_error"
 		errorType = "validation_error"
-		if m.logger != nil {
-			m.logger.Warn("store rejected: userID is empty or whitespace", ctx,
-				"tokenID", tokenID)
-		}
+		m.logger.Warn("store rejected: userID is empty or whitespace", ctx,
+			"tokenID", tokenID)
+		span.RecordError(ErrInvalidUserID)
+		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
 		return ErrInvalidUserID
 	}
 
 	if expiresAt.Before(time.Now()) {
 		status = "validation_error"
 		errorType = "validation_error"
-		if m.logger != nil {
-			m.logger.Warn("store rejected: token is already expired", ctx,
-				"tokenID", tokenID,
-				"userID", userID,
-				"expiresAt", expiresAt)
-		}
+		m.logger.Warn("store rejected: token is already expired", ctx,
+			"tokenID", tokenID,
+			"userID", userID,
+			"expiresAt", expiresAt)
+		span.RecordError(ErrTokenExpired)
+		span.SetStatus(tracing.StatusError, ErrTokenExpired.Error())
 		return ErrTokenExpired
 	}
 
@@ -137,11 +175,9 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.logger != nil {
-		m.logger.Debug("storing token in memory", ctx,
-			"tokenID", tokenID,
-			"userID", userID)
-	}
+	m.logger.Debug("storing token in memory", ctx,
+		"tokenID", tokenID,
+		"userID", userID)
 
 	// ===== STEP 5: Build and Store Token =====
 	token := &RefreshToken{
@@ -159,12 +195,11 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	// ===== STEP 6: Log Success =====
 	status = "success"
 	errorType = ""
-	if m.logger != nil {
-		m.logger.Info("refresh token stored", ctx,
-			"tokenID", tokenID,
-			"userID", userID,
-			"expiresAt", expiresAt)
-	}
+	m.logger.Info("refresh token stored", ctx,
+		"tokenID", tokenID,
+		"userID", userID,
+		"expiresAt", expiresAt)
+	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
 
@@ -176,33 +211,35 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 // The returned *RefreshToken is a deep copy — mutations to it do not affect
 // the stored record.
 func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*RefreshToken, error) {
+	ctx, span := m.startSpan(ctx, "Retrieve")
+	defer span.End()
+	span.SetAttribute("token_id", tokenID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
-				"operation":       "retrieve",
-				"status":          status,
-				"error_type":      errorType,
-				"storage_backend": m.backend,
-			})
-			m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
-				"operation":       "retrieve",
-				"storage_backend": m.backend,
-			})
-		}
+		m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+			"operation":       "retrieve",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": m.backend,
+		})
+		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
+			"operation":       "retrieve",
+			"storage_backend": m.backend,
+		})
 	}()
 
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if m.logger != nil {
-			m.logger.Warn("retrieve aborted: context cancelled", ctx,
-				"tokenID", tokenID,
-				"reason", err)
-		}
+		m.logger.Warn("retrieve aborted: context cancelled", ctx,
+			"tokenID", tokenID,
+			"reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, err
 	}
 
@@ -210,9 +247,9 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	if len(strings.TrimSpace(tokenID)) == 0 {
 		status = "validation_error"
 		errorType = "validation_error"
-		if m.logger != nil {
-			m.logger.Warn("retrieve rejected: tokenID is empty or whitespace", ctx)
-		}
+		m.logger.Warn("retrieve rejected: tokenID is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidTokenID)
+		span.SetStatus(tracing.StatusError, ErrInvalidTokenID.Error())
 		return nil, ErrInvalidTokenID
 	}
 
@@ -220,20 +257,18 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if m.logger != nil {
-		m.logger.Debug("looking up token in memory", ctx,
-			"tokenID", tokenID)
-	}
+	m.logger.Debug("looking up token in memory", ctx,
+		"tokenID", tokenID)
 
 	// ===== STEP 4: Look Up Token =====
 	token, found := m.tokens[tokenID]
 	if !found {
 		status = "not_found"
 		errorType = "not_found"
-		if m.logger != nil {
-			m.logger.Warn("retrieve: token not found", ctx,
-				"tokenID", tokenID)
-		}
+		m.logger.Warn("retrieve: token not found", ctx,
+			"tokenID", tokenID)
+		span.RecordError(ErrTokenNotFound)
+		span.SetStatus(tracing.StatusError, ErrTokenNotFound.Error())
 		return nil, ErrTokenNotFound
 	}
 
@@ -241,11 +276,11 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	if token.Revoked {
 		status = "revoked"
 		errorType = "revoked"
-		if m.logger != nil {
-			m.logger.Warn("retrieve: token has been revoked", ctx,
-				"tokenID", tokenID,
-				"userID", token.UserID)
-		}
+		m.logger.Warn("retrieve: token has been revoked", ctx,
+			"tokenID", tokenID,
+			"userID", token.UserID)
+		span.RecordError(ErrTokenRevoked)
+		span.SetStatus(tracing.StatusError, ErrTokenRevoked.Error())
 		return nil, ErrTokenRevoked
 	}
 
@@ -253,11 +288,11 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	if token.ExpiresAt.Before(time.Now()) {
 		status = "expired"
 		errorType = "expired"
-		if m.logger != nil {
-			m.logger.Warn("retrieve: token has expired", ctx,
-				"tokenID", tokenID,
-				"expiredAt", token.ExpiresAt)
-		}
+		m.logger.Warn("retrieve: token has expired", ctx,
+			"tokenID", tokenID,
+			"expiredAt", token.ExpiresAt)
+		span.RecordError(ErrTokenExpired)
+		span.SetStatus(tracing.StatusError, ErrTokenExpired.Error())
 		return nil, ErrTokenExpired
 	}
 
@@ -280,10 +315,9 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	// ===== STEP 8: Log Success =====
 	status = "success"
 	errorType = ""
-	if m.logger != nil {
-		m.logger.Info("retrieve: token retrieved successfully", ctx,
-			"tokenID", tokenID)
-	}
+	m.logger.Info("retrieve: token retrieved successfully", ctx,
+		"tokenID", tokenID)
+	span.SetStatus(tracing.StatusOK, "")
 
 	return safeToken, nil
 }
@@ -292,32 +326,34 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 // does not exist, no error is returned. Returns ErrInvalidTokenID if tokenID
 // is empty, or the context error if the context is cancelled.
 func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
+	ctx, span := m.startSpan(ctx, "Revoke")
+	defer span.End()
+	span.SetAttribute("token_id", tokenID)
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
-				"operation":       "revoke",
-				"status":          status,
-				"error_type":      errorType,
-				"storage_backend": m.backend,
-			})
-			m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
-				"operation":       "revoke",
-				"storage_backend": m.backend,
-			})
-		}
+		m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+			"operation":       "revoke",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": m.backend,
+		})
+		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
+			"operation":       "revoke",
+			"storage_backend": m.backend,
+		})
 	}()
 
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if m.logger != nil {
-			m.logger.Warn("revoke aborted: context cancelled", ctx,
-				"tokenID", tokenID)
-		}
+		m.logger.Warn("revoke aborted: context cancelled", ctx,
+			"tokenID", tokenID)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return ctx.Err()
 	}
 
@@ -325,9 +361,9 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	if len(strings.TrimSpace(tokenID)) == 0 {
 		status = "validation_error"
 		errorType = "validation_error"
-		if m.logger != nil {
-			m.logger.Warn("revoke rejected: tokenID is empty or whitespace", ctx)
-		}
+		m.logger.Warn("revoke rejected: tokenID is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidTokenID)
+		span.SetStatus(tracing.StatusError, ErrInvalidTokenID.Error())
 		return ErrInvalidTokenID
 	}
 
@@ -340,10 +376,9 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	if !found {
 		status = "success" // idempotent: not-found is not an error
 		errorType = ""
-		if m.logger != nil {
-			m.logger.Warn("revoke: token not found", ctx,
-				"tokenID", tokenID)
-		}
+		m.logger.Warn("revoke: token not found", ctx,
+			"tokenID", tokenID)
+		span.SetStatus(tracing.StatusOK, "")
 		return nil
 	}
 
@@ -353,10 +388,9 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	// ===== STEP 6: Log Success =====
 	status = "success"
 	errorType = ""
-	if m.logger != nil {
-		m.logger.Info("revoke: successfully revoked", ctx,
-			"tokenID", tokenID)
-	}
+	m.logger.Info("revoke: successfully revoked", ctx,
+		"tokenID", tokenID)
+	span.SetStatus(tracing.StatusOK, "")
 
 	return nil
 }
@@ -366,33 +400,34 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 // ErrInvalidUserID if userID is empty, or the context error if the context is
 // cancelled.
 func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string) error {
+	ctx, span := m.startSpan(ctx, "RevokeAllForUser")
+	defer span.End()
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
-				"operation":       "revoke_all",
-				"status":          status,
-				"error_type":      errorType,
-				"storage_backend": m.backend,
-			})
-			m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
-				"operation":       "revoke_all",
-				"storage_backend": m.backend,
-			})
-		}
+		m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+			"operation":       "revoke_all",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": m.backend,
+		})
+		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
+			"operation":       "revoke_all",
+			"storage_backend": m.backend,
+		})
 	}()
 
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if m.logger != nil {
-			m.logger.Warn("revokeAllForUser aborted: context cancelled", ctx,
-				"userID", userID,
-				"reason", err)
-		}
+		m.logger.Warn("revokeAllForUser aborted: context cancelled", ctx,
+			"userID", userID,
+			"reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return err
 	}
 
@@ -400,9 +435,9 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 	if len(strings.TrimSpace(userID)) == 0 {
 		status = "validation_error"
 		errorType = "validation_error"
-		if m.logger != nil {
-			m.logger.Warn("revokeAllForUser rejected: userID is empty or whitespace", ctx)
-		}
+		m.logger.Warn("revokeAllForUser rejected: userID is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidUserID)
+		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
 		return ErrInvalidUserID
 	}
 
@@ -414,11 +449,9 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 	tokensIDs := m.userTokens[userID]
 	for _, tokenID := range tokensIDs {
 		if token, exists := m.tokens[tokenID]; exists {
-			if m.logger != nil {
-				m.logger.Debug("revoking token for user", ctx,
-					"tokenID", tokenID,
-					"userID", userID)
-			}
+			m.logger.Debug("revoking token for user", ctx,
+				"tokenID", tokenID,
+				"userID", userID)
 			token.Revoked = true
 		}
 	}
@@ -426,11 +459,10 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 	// ===== STEP 5: Log Success =====
 	status = "success"
 	errorType = ""
-	if m.logger != nil {
-		m.logger.Info("revokeAllForUser: all tokens revoked", ctx,
-			"userID", userID,
-			"count", len(tokensIDs))
-	}
+	m.logger.Info("revokeAllForUser: all tokens revoked", ctx,
+		"userID", userID,
+		"count", len(tokensIDs))
+	span.SetStatus(tracing.StatusOK, "")
 
 	return nil
 }
@@ -440,31 +472,32 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 // typically invoked on a background ticker. Returns the context error if the
 // context is cancelled.
 func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
+	ctx, span := m.startSpan(ctx, "Cleanup")
+	defer span.End()
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	removed := 0
 	remaining := 0
 	defer func() {
-		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
-				"operation":       "cleanup",
-				"status":          status,
-				"error_type":      errorType,
+		m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+			"operation":       "cleanup",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": m.backend,
+		})
+		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
+			"operation":       "cleanup",
+			"storage_backend": m.backend,
+		})
+		if status == "success" {
+			m.metrics.AddCounter(metricStorageRemovedTotal, float64(removed), map[string]string{
 				"storage_backend": m.backend,
 			})
-			m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
-				"operation":       "cleanup",
+			m.metrics.SetGauge(metricStorageTokensCount, float64(remaining), map[string]string{
 				"storage_backend": m.backend,
 			})
-			if status == "success" {
-				m.metrics.AddCounter(metricStorageRemovedTotal, float64(removed), map[string]string{
-					"storage_backend": m.backend,
-				})
-				m.metrics.SetGauge(metricStorageTokensCount, float64(remaining), map[string]string{
-					"storage_backend": m.backend,
-				})
-			}
 		}
 	}()
 
@@ -472,9 +505,9 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		if m.logger != nil {
-			m.logger.Warn("cleanup aborted: context cancelled", ctx)
-		}
+		m.logger.Warn("cleanup aborted: context cancelled", ctx)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return 0, err
 	}
 
@@ -487,11 +520,9 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	// ===== STEP 3: Sweep and Remove Expired Tokens =====
 	for tokenID, token := range m.tokens {
 		if token.ExpiresAt.Before(now) || token.ExpiresAt.Equal(now) {
-			if m.logger != nil {
-				m.logger.Debug("removing expired token", ctx,
-					"tokenID", token.TokenID,
-					"expiredAt", token.ExpiresAt)
-			}
+			m.logger.Debug("removing expired token", ctx,
+				"tokenID", token.TokenID,
+				"expiredAt", token.ExpiresAt)
 			delete(m.tokens, token.TokenID)
 			m.removeFromUserTokens(token.UserID, tokenID)
 			count++
@@ -503,10 +534,9 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	// ===== STEP 4: Log Success =====
 	status = "success"
 	errorType = ""
-	if m.logger != nil {
-		m.logger.Info("cleanup: successful", ctx,
-			"count", count)
-	}
+	m.logger.Info("cleanup: successful", ctx,
+		"count", count)
+	span.SetStatus(tracing.StatusOK, "")
 
 	return count, nil
 }

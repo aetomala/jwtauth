@@ -53,7 +53,7 @@ func main() {
 	}()
 
 	// Create RefreshStore
-	store := storage.NewMemoryRefreshStore(logger, pm)
+	store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: pm})
 
 	// Create TokenService
 	mgr, err := tokens.NewManager(tokens.ManagerConfig{
