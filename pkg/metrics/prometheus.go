@@ -17,7 +17,7 @@ import (
 type PrometheusMetrics struct {
 	// ===== Observability =====
 	registry *prometheus.Registry
-	logger   logging.Logger // Optional; nil disables logging
+	logger   logging.Logger // never nil; defaults to NoOpLogger
 
 	// ===== Counters =====
 	counters   map[string]*prometheus.CounterVec
@@ -35,9 +35,9 @@ type PrometheusMetrics struct {
 // PrometheusConfig holds configuration for a PrometheusMetrics instance.
 // All fields have sensible defaults and may be left at their zero values.
 type PrometheusConfig struct {
-	Namespace string             // Prepended to all metric names. Defaults to "jwtauth".
+	Namespace string               // Prepended to all metric names. Defaults to "jwtauth".
 	Registry  *prometheus.Registry // Registry to register metrics into. If nil, a new isolated registry is created.
-	Logger    logging.Logger     // Optional; nil disables logging.
+	Logger    logging.Logger       // Optional; nil defaults to NoOpLogger.
 }
 
 // NewPrometheusMetrics returns a new PrometheusMetrics with all metrics
@@ -49,9 +49,11 @@ func NewPrometheusMetrics(config PrometheusConfig) *PrometheusMetrics {
 	if config.Namespace == "" {
 		config.Namespace = "jwtauth"
 	}
-
 	if config.Registry == nil {
 		config.Registry = prometheus.NewRegistry()
+	}
+	if config.Logger == nil {
+		config.Logger = &logging.NoOpLogger{}
 	}
 
 	// ===== STEP 2: Construct =====
@@ -241,18 +243,14 @@ func (pm *PrometheusMetrics) AddCounter(name string, value float64, labels map[s
 	pm.countersMu.RUnlock()
 
 	if !exists {
-		if pm.logger != nil {
-			pm.logger.Warn("counter metric not registered - skipping", "metric", name, "value", value)
-		}
+		pm.logger.Warn("counter metric not registered - skipping", "metric", name, "value", value)
 		return
 	}
 
 	// ===== STEP 2: Resolve Label Set =====
 	c, err := counter.GetMetricWith(labels)
 	if err != nil {
-		if pm.logger != nil {
-			pm.logger.Warn("invalid labels for counter - skipping", "metric", name, "error", err)
-		}
+		pm.logger.Warn("invalid labels for counter - skipping", "metric", name, "error", err)
 		return
 	}
 
@@ -271,18 +269,14 @@ func (pm *PrometheusMetrics) SetGauge(name string, value float64, labels map[str
 	pm.gaugesMu.RUnlock()
 
 	if !exists {
-		if pm.logger != nil {
-			pm.logger.Warn("gauge metric not registered - skipping", "metric", name)
-		}
+		pm.logger.Warn("gauge metric not registered - skipping", "metric", name)
 		return
 	}
 
 	// ===== STEP 2: Resolve Label Set =====
 	g, err := gauge.GetMetricWith(labels)
 	if err != nil {
-		if pm.logger != nil {
-			pm.logger.Warn("invalid labels for gauge - skipping", "metric", name, "error", err)
-		}
+		pm.logger.Warn("invalid labels for gauge - skipping", "metric", name, "error", err)
 		return
 	}
 
@@ -302,18 +296,14 @@ func (pm *PrometheusMetrics) RecordHistogram(name string, value float64, labels 
 	pm.histogramsMu.RUnlock()
 
 	if !exists {
-		if pm.logger != nil {
-			pm.logger.Warn("histogram metric not registered - skipping", "metric", name)
-		}
+		pm.logger.Warn("histogram metric not registered - skipping", "metric", name)
 		return
 	}
 
 	// ===== STEP 2: Resolve Label Set =====
 	h, err := histogram.GetMetricWith(labels)
 	if err != nil {
-		if pm.logger != nil {
-			pm.logger.Warn("invalid labels for histogram - skipping", "metric", name, "error", err)
-		}
+		pm.logger.Warn("invalid labels for histogram - skipping", "metric", name, "error", err)
 		return
 	}
 
