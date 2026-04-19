@@ -719,8 +719,8 @@ and your `RefreshStore` to handle the complete authentication flow.
 | `KeyStore` | `KeyStore` | Yes | - | Key persistence backend — use `NewDiskKeyStore` for single-instance or a custom implementation for distributed deployments |
 | `KeyRotationInterval` | `time.Duration` | Yes | - | How often to rotate keys (e.g., 30 days) |
 | `KeyOverlapDuration` | `time.Duration` | Yes | - | Overlap period for zero-downtime rotation |
-| `Logger` | `logging.Logger` | No | `nil` | Optional structured logger |
-| `Metrics` | `metrics.Metrics` | No | `nil` | Optional metrics collector |
+| `Logger` | `logging.Logger` | No | `NoOpLogger` | Structured logger; defaults to no-op if nil |
+| `Metrics` | `metrics.Metrics` | No | `NoOpMetrics` | Metrics collector; defaults to no-op if nil |
 
 ### ManagerConfig
 
@@ -728,8 +728,8 @@ and your `RefreshStore` to handle the complete authentication flow.
 |-------|------|----------|---------|-------------|
 | `KeyManager` | `keymanager.KeyManager` | Yes | — | Signs and validates tokens |
 | `RefreshStore` | `storage.RefreshStore` | Yes | — | Persists refresh tokens |
-| `Logger` | `logging.Logger` | No | `nil` | Optional structured logger |
-| `Metrics` | `metrics.Metrics` | No | `nil` | Optional metrics collector |
+| `Logger` | `logging.Logger` | No | `NoOpLogger` | Structured logger; defaults to no-op if nil |
+| `Metrics` | `metrics.Metrics` | No | `NoOpMetrics` | Metrics collector; defaults to no-op if nil |
 | `AccessTokenDuration` | `time.Duration` | No | `15m` | Access token TTL |
 | `RefreshTokenDuration` | `time.Duration` | No | `30d` | Refresh token TTL |
 | `CleanupInterval` | `time.Duration` | No | `1h` | How often expired tokens are purged |
@@ -1052,14 +1052,21 @@ github.com/aetomala/jwtauth/
 │   │   ├── logger.go             # Logger interface (4 methods: Debug, Info, Warn, Error)
 │   │   ├── slog_adapter.go       # Standard library adapter
 │   │   ├── noop.go               # NoOp implementation
-│   │   └── logger_test.go        # Logging tests (76 specs)
+│   │   ├── logger_test.go        # Logging tests (76 specs)
+│   │   └── README.md             # Usage documentation
 │   ├── metrics/                  # Metrics abstraction and implementations
 │   │   ├── interface.go          # Metrics interface
 │   │   ├── noop.go               # NoOp implementation
 │   │   ├── prometheus.go         # Prometheus implementation
 │   │   ├── metrics_suite_test.go # Ginkgo bootstrap
-│   │   ├── prometheus_test.go    # 9-phase Prometheus test suite
+│   │   ├── prometheus_test.go    # 9-phase Prometheus test suite (66 specs)
 │   │   └── noop_test.go          # NoOp tests
+│   ├── tracing/                  # Distributed tracing abstraction ✅
+│   │   ├── interface.go          # Tracer and Span interfaces
+│   │   ├── noop.go               # NoOpTracer / NoOpSpan implementations
+│   │   ├── noop_test.go          # NoOp tests (36 specs)
+│   │   ├── otel.go               # OtelTracer adapter (go.opentelemetry.io/otel)
+│   │   └── otel_test.go          # OtelTracer tests
 │   ├── keymanager/               # Key rotation and management ✅
 │   │   ├── keymanager.go         # Manager: lifecycle, rotation, JWKS generation
 │   │   ├── interface.go          # Manager interface
@@ -1094,14 +1101,26 @@ github.com/aetomala/jwtauth/
 │       ├── mock_keystore.go      # gomock-generated MockKeyStore
 │       ├── mock_logger.go        # Reusable MockLogger
 │       ├── mock_metrics.go       # gomock-generated MockMetrics
-│       └── mock_refreshstore.go  # gomock-generated MockRefreshStore
+│       ├── mock_refreshstore.go  # gomock-generated MockRefreshStore
+│       └── mock_tracing.go       # gomock-generated MockTracer / MockSpan
 ├── doc/                          # Documentation
 │   ├── ARCHITECTURE.md           # Design decisions and patterns
-│   └── DEPLOYMENT.md             # Deployment guide
+│   ├── DEPLOYMENT.md             # Deployment guide
+│   ├── METRICS.md                # Metrics reference
+│   ├── MIGRATION.md              # Migration guides from golang-jwt, gin-jwt, jwx
+│   └── adr/                      # Architecture Decision Records
+│       ├── README.md             # ADR index
+│       ├── 001-no-rate-limiting.md
+│       ├── 002-stateful-refresh-tokens.md
+│       └── 003-rs256-only.md
 ├── examples/                     # Framework usage examples
+│   ├── README.md                 # Examples overview
 │   ├── gin-example/              # Gin HTTP framework
 │   ├── echo-example/             # Echo HTTP framework
-│   └── chi-example/              # Chi HTTP router
+│   ├── chi-example/              # Chi HTTP router
+│   ├── correlation-example/      # End-to-end correlation ID with stdlib net/http
+│   ├── health-check/             # Health check endpoint with KeyInfo
+│   └── prometheus-metrics/       # Prometheus metrics endpoint wiring
 └── jwtauth_suite_test.go         # Root Ginkgo suite bootstrap
 ```
 
@@ -1260,6 +1279,14 @@ This library follows SOLID principles and clean architecture patterns. For detai
 - Strategy Pattern (swap implementations via interfaces)
 - Template Method (consistent patterns across components)
 
+**Architecture Decision Records** — major design decisions are captured in [`doc/adr/`](doc/adr/):
+
+| ADR | Decision | Date |
+|-----|----------|------|
+| [ADR-001](doc/adr/001-no-rate-limiting.md) | No rate limiting — belongs at API Gateway / infrastructure layer | 2026-03-11 |
+| [ADR-002](doc/adr/002-stateful-refresh-tokens.md) | Stateful refresh tokens — opaque UUIDs for instant revocation | 2026-03-18 |
+| [ADR-003](doc/adr/003-rs256-only.md) | RS256 only — prevents algorithm confusion attacks | 2026-04-01 |
+
 ## Rate Limiting
 
 `jwtauth` does not provide rate limiting. Rate limiting is a deployment concern — the right layer depends on your environment, scale, and infrastructure.
@@ -1334,8 +1361,8 @@ Built by a Senior Platform Engineer with 28 years of experience in distributed s
 
 ---
 
-**Status**: Beta (Active Development)
-**Version**: 0.3.0-beta
-**Components**: KeyManager ✅ | TokenManager (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing (scaffold) 🚧
+**Status**: Beta (Active Development — v0.4.0 in progress)
+**Version**: v0.4.0-dev
+**Components**: KeyManager ✅ | TokenManager (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
 **Test Coverage**: 605 tests (KeyManager ~90%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%), all passing, race-detection enabled
-**Last Updated**: April 14, 2026
+**Last Updated**: April 18, 2026

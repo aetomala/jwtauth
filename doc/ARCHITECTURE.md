@@ -57,6 +57,7 @@ Each package has one clear responsibility:
 - `pkg/keymanager` - RSA key generation, rotation, and management
 - `pkg/logging` - Logging abstraction and adapters
 - `pkg/metrics` - Metrics abstraction and implementations
+- `pkg/tracing` - Distributed tracing abstraction and OTel adapter
 - `pkg/tokens` - JWT token creation, validation, and lifecycle management
 - `pkg/storage` - Refresh token persistence (memory, Redis, extensible)
 
@@ -101,6 +102,12 @@ github.com/aetomala/jwtauth/
 │   │   ├── metrics_suite_test.go  # Ginkgo bootstrap
 │   │   ├── prometheus_test.go     # 9-phase Prometheus test suite (66 specs)
 │   │   └── noop_test.go           # NoOp tests
+│   ├── tracing/                   # Distributed tracing abstraction ✅
+│   │   ├── interface.go           # Tracer and Span interfaces
+│   │   ├── noop.go                # NoOpTracer / NoOpSpan implementations
+│   │   ├── noop_test.go           # NoOp tests (36 specs)
+│   │   ├── otel.go                # OtelTracer adapter (go.opentelemetry.io/otel)
+│   │   └── otel_test.go           # OtelTracer tests
 │   ├── keymanager/                # Key rotation and management ✅
 │   │   ├── keymanager.go          # Manager: lifecycle, rotation, JWKS generation
 │   │   ├── interface.go           # Manager interface
@@ -109,9 +116,9 @@ github.com/aetomala/jwtauth/
 │   │   ├── redis.go               # RedisKeyStore — Redis-backed KeyStore for distributed deployments
 │   │   ├── observability.go       # Metric name constants (KeyStore + Manager)
 │   │   ├── keymanager_test.go     # 9-phase Manager tests (52 specs, MockKeyStore)
-│   │   ├── disk_test.go           # 9-phase DiskKeyStore tests (38 specs)
-│   │   └── redis_test.go          # 9-phase RedisKeyStore tests (35 specs, miniredis)
-│   ├── tokens/                    # JWT token operations (Beta)
+│   │   ├── disk_test.go           # 10-phase DiskKeyStore tests (42 specs)
+│   │   └── redis_test.go          # 10-phase RedisKeyStore tests (39 specs, miniredis)
+│   ├── tokens/                    # JWT token operations (Beta) 🟡
 │   │   ├── manager.go             # TokenManager implementation
 │   │   ├── claims.go              # Claims management
 │   │   ├── manager_test.go        # Token operations tests
@@ -135,15 +142,27 @@ github.com/aetomala/jwtauth/
 │       ├── mock_keystore.go       # gomock-generated MockKeyStore
 │       ├── mock_logger.go         # Reusable MockLogger
 │       ├── mock_metrics.go        # gomock-generated MockMetrics
-│       └── mock_refreshstore.go   # gomock-generated MockRefreshStore
+│       ├── mock_refreshstore.go   # gomock-generated MockRefreshStore
+│       ├── mock_tracing.go        # gomock-generated MockTracer / MockSpan
+│       └── README.md              # Testutil usage guide
 ├── doc/                           # Documentation
 │   ├── ARCHITECTURE.md            # This file
-│   └── DEPLOYMENT.md              # Deployment guide
+│   ├── DEPLOYMENT.md              # Deployment guide
+│   ├── METRICS.md                 # Metrics reference
+│   ├── MIGRATION.md               # Migration guides from golang-jwt, gin-jwt, jwx
+│   └── adr/                       # Architecture Decision Records
+│       ├── README.md              # ADR index
+│       ├── 001-no-rate-limiting.md
+│       ├── 002-stateful-refresh-tokens.md
+│       └── 003-rs256-only.md
 ├── examples/                      # Framework usage examples
+│   ├── README.md                  # Examples overview
 │   ├── gin-example/               # Gin HTTP framework
 │   ├── echo-example/              # Echo HTTP framework
 │   ├── chi-example/               # Chi HTTP router
-│   └── correlation-example/       # End-to-end correlation ID with stdlib net/http
+│   ├── correlation-example/       # End-to-end correlation ID with stdlib net/http
+│   ├── health-check/              # Health check endpoint with KeyInfo
+│   └── prometheus-metrics/        # Prometheus metrics endpoint wiring
 └── jwtauth_suite_test.go          # Root Ginkgo suite bootstrap
 ```
 
@@ -185,7 +204,7 @@ github.com/aetomala/jwtauth/
 ├─────────────────────────────────────────────┤
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
 │  │ Logging  │  │ Metrics  │  │ Tracing  │  │
-│  │Interface │  │Interface │  │(Future)  │  │
+│  │Interface │  │Interface │  │Interface │  │
 │  └──────────┘  └──────────┘  └──────────┘  │
 ├─────────────────────────────────────────────┤
 │         Component Layer                      │
@@ -211,7 +230,7 @@ github.com/aetomala/jwtauth/
 **Design Decisions**:
 - **4 levels** (Debug, Info, Warn, Error) - stratified by use case
 - **Structured** (key-value pairs) - machine-readable
-- **Optional** (nil-safe) - works without logger
+- **Optional** — pass `nil` to default to `NoOpLogger`; call sites invoke unconditionally
 - **stdlib adapter** (slog) - no external dependencies
 
 **Log Levels by Purpose**:
@@ -226,21 +245,15 @@ github.com/aetomala/jwtauth/
 **Debug Usage Pattern**:
 ```go
 // High-frequency read operations (cache lookups, token validation entry)
-if m.config.Logger != nil {
-    m.config.Logger.Debug("public key cache hit", "keyID", keyID)
-}
+m.config.Logger.Debug("public key cache hit", "keyID", keyID)
 
 // Intermediate steps in loops (per-token operations)
-if m.logger != nil {
-    m.logger.Debug("revoking token for user",
-        "tokenID", tokenID,
-        "userID", userID)
-}
+m.logger.Debug("revoking token for user",
+    "tokenID", tokenID,
+    "userID", userID)
 
 // No-op outcomes (nothing to do during cleanup)
-if m.logger != nil {
-    m.logger.Debug("no expired keys found during cleanup")
-}
+m.logger.Debug("no expired keys found during cleanup")
 ```
 
 **Flow**:
@@ -294,7 +307,7 @@ See `examples/correlation-example/` for a complete working demonstration.
 
 **Design Decisions**:
 - **Generic primitives** (counters, gauges, histograms, durations) with label maps — backend-agnostic
-- **Optional** (nil-safe) — works without metrics
+- **Optional** — pass `nil` to default to `NoOpMetrics`; call sites invoke unconditionally
 - **Pre-registration at construction** — naming conflicts caught early, not at observation time
 - **Graceful label handling** — wrong or missing labels log a warning and skip rather than panic
 
@@ -674,8 +687,8 @@ type MemoryRefreshStore struct {
     mu         sync.RWMutex             // Thread safety
     tokens     map[string]*RefreshToken // tokenID → token
     userTokens map[string][]string      // userID → []tokenID (for bulk ops)
-    logger     logging.Logger           // Optional; nil disables logging
-    metrics    metrics.Metrics          // Optional; nil disables metrics
+    logger     logging.Logger           // never nil; defaults to NoOpLogger
+    metrics    metrics.Metrics          // never nil; defaults to NoOpMetrics
     backend    string                   // storage_backend label value; always "memory"
 }
 ```
@@ -698,8 +711,8 @@ type MemoryRefreshStore struct {
 ```go
 type RedisRefreshStore struct {
     client  *redis.Client   // go-redis/v9 client (internally thread-safe)
-    logger  logging.Logger  // Optional; nil disables logging
-    metrics metrics.Metrics // Optional; nil disables metrics
+    logger  logging.Logger  // never nil; defaults to NoOpLogger
+    metrics metrics.Metrics // never nil; defaults to NoOpMetrics
     backend string          // storage_backend label value; always "redis"
 }
 ```
@@ -777,12 +790,10 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, ...) error {
     start := time.Now()
     status := "error"          // default; overwritten at each return point
     defer func() {
-        if m.metrics != nil {
-            m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
-                "operation": "store", "status": status, "storage_backend": m.backend,
-            })
-            m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), ...)
-        }
+        m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+            "operation": "store", "status": status, "storage_backend": m.backend,
+        })
+        m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), ...)
     }()
     // ...
     status = "validation_error"
@@ -1046,7 +1057,7 @@ Catches:
 - ✅ Context cancellation guards in `GetJWKS` and `cleanupExpiredKeys` with warning log on early return
 - ✅ Redis integration tests via miniredis (`pkg/tokens/integration`) covering distributed token operations end-to-end
 
-### Phase 6: Distributed Tracing (v0.4.0 — In Progress)
+### Phase 6: Distributed Tracing (v0.4.0)
 - ✅ `pkg/tracing` — `Tracer` and `Span` interfaces defined; `SpanOption` functional options; `StatusCode` and `SpanKind` enumerations
 - ✅ `NoOpTracer` / `NoOpSpan` — zero-allocation implementations; 36 tests, race-detection clean
 - ✅ `MockTracer` / `MockSpan` generated via gomock for dependency injection in component tests
@@ -1102,8 +1113,8 @@ func (c *Component) Operation() error {
     // 1. Check state
     // 2. Acquire lock
     // 3. Do work
-    // 4. Log result (if logger present)
-    // 5. Record metric (if metrics present)
+    // 4. Log result (unconditional — no-op assigned at construction)
+    // 5. Record metric (unconditional — no-op assigned at construction)
 }
 ```
 
@@ -1124,8 +1135,8 @@ func (c *Component) Operation() error {
 ### Adding Observability
 
 1. Identify what to log/measure
-2. Add calls at appropriate points
-3. Always check for nil (optional feature)
+2. Assign `NoOpLogger` / `NoOpMetrics` / `NoOpTracer` at construction when caller passes `nil`
+3. Add unconditional calls at appropriate points — no nil guards at call sites
 4. Write tests verifying logs/metrics
 5. Update documentation
 
@@ -1139,6 +1150,18 @@ func (c *Component) Operation() error {
 
 ---
 
+## Architecture Decision Records
+
+Key design decisions are captured in `doc/adr/`. Each ADR documents the context, the decision made, and the consequences.
+
+| ADR | Title | Date |
+|-----|-------|------|
+| [001](adr/001-no-rate-limiting.md) | No Rate Limiting in Library | 2026-03-11 |
+| [002](adr/002-stateful-refresh-tokens.md) | Stateful Refresh Tokens | 2026-03-18 |
+| [003](adr/003-rs256-only.md) | RS256 Only (No Algorithm Flexibility) | 2026-04-01 |
+
+---
+
 ## References
 
 - [SOLID Principles](https://en.wikipedia.org/wiki/SOLID)
@@ -1149,6 +1172,6 @@ func (c *Component) Operation() error {
 
 ---
 
-**Last Updated**: April 14, 2026
-**Version**: 0.3.0-beta
-**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] + Distributed Tracing stable and fully instrumented; v0.4.0 in progress)
+**Last Updated**: April 18, 2026
+**Version**: v0.4.0 (in progress)
+**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] + Distributed Tracing — all stable and fully instrumented; TokenManager in beta)

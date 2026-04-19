@@ -1,7 +1,7 @@
 # ADR-002: Stateful Refresh Tokens
 
 **Status**: Accepted  
-**Date**: 2024-04-01  
+**Date**: 2026-03-18  
 **Deciders**: Architecture Team
 
 ## Context

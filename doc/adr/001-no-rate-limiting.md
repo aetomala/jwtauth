@@ -1,7 +1,7 @@
 # ADR-001: No Rate Limiting in Library
 
 **Status**: Accepted  
-**Date**: 2024-04-01  
+**Date**: 2026-03-11  
 **Deciders**: Architecture Team
 
 ## Context
