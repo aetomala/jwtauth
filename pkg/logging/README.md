@@ -11,7 +11,7 @@ The `logging` package provides a simple, structured logging interface that all c
 - **Simple**: Only 4 log levels (Debug, Info, Warn, Error)
 - **Structured**: Key-value pairs for machine-readable logs
 - **Flexible**: Works with any logging library via adapters
-- **Optional**: Components work without a logger (nil-safe)
+- **Optional**: Pass `nil` to default to `NoOpLogger` — components call unconditionally
 
 ## Quick Start
 
@@ -420,12 +420,14 @@ func TestMyComponent(t *testing.T) {
 - **Include context** in every log (IDs, durations, errors)
 - **Log at appropriate levels** (Info for success, Warn for issues, Error for failures)
 - **Use JSON in production** for log aggregators
-- **Make logger optional** (handle nil gracefully)
+- **Assign no-op at construction** — default to `&logging.NoOpLogger{}` when caller passes `nil`; call sites are then unconditional
 
 ```go
-if m.config.Logger != nil {
-    m.config.Logger.Info("operation complete", "duration", elapsed)
+if config.Logger == nil {
+    config.Logger = &logging.NoOpLogger{}
 }
+// Now call unconditionally everywhere:
+m.logger.Info("operation complete", ctx, "duration", elapsed)
 ```
 
 ### DON'T ❌
@@ -433,7 +435,7 @@ if m.config.Logger != nil {
 - **Don't log sensitive data** (passwords, tokens, PII)
 - **Don't use string formatting in messages** (use key-value pairs instead)
 - **Don't log excessively** (avoid noisy logs)
-- **Don't assume logger is not nil** (always check or use helper)
+- **Don't guard every call site** — assign `NoOpLogger` at construction instead of repeating `if m.logger != nil` throughout method bodies
 
 ## Future: OpenTelemetry
 

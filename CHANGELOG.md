@@ -26,6 +26,8 @@ All notable changes to this project will be documented in this file.
 
 - **`AuthMiddleware` → `BearerMiddleware`** in all example middleware packages (`examples/gin-example/middleware`, `examples/chi-example/auth`, `examples/echo-example/middleware`). Rename call sites accordingly.
 
+- **Nil logger/metrics guards eliminated** across all five components — `Logger` and `Metrics` fields are now assigned `&logging.NoOpLogger{}` / `metrics.NewNoOpMetrics()` at construction when `nil` is passed; every call site in `pkg/keymanager/`, `pkg/metrics/prometheus.go`, and `pkg/tokens/` invokes `m.logger` and `m.metrics` unconditionally. Passing `nil` continues to work — it silently activates the no-op. Previously 217 call-site guards were scattered across five files.
+
 ### Added
 
 - **`CustomClaims` named type** (`map[string]interface{}`) in `pkg/tokens` — canonical type for caller-supplied custom claims across all `WithClaims` methods; reserved JWT field names (`sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, `jti`) are silently dropped at issuance time to prevent caller-controlled claim injection.
