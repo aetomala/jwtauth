@@ -15,7 +15,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/aetomala/jwtauth/internal/testutil"
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 	"github.com/aetomala/jwtauth/pkg/tracing"
@@ -1076,7 +1076,7 @@ var _ = Describe("TokenManager", func() {
 			It("should return ErrInvalidToken", func() {
 				mockKM.EXPECT().
 					GetPublicKey(gomock.Any(), gomock.Any()).
-					Return(nil, keymanager.ErrKeyNotFound)
+					Return(nil, keys.ErrKeyNotFound)
 
 				_, err := service.ValidateAccessToken(ctx, validToken)
 

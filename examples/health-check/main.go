@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/logging"
 )
 
@@ -17,12 +17,12 @@ func main() {
 	logger := logging.NewTextLogger(slog.LevelInfo)
 
 	// ===== STEP 1: Create KeyManager =====
-	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger})
+	ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger})
 	if err != nil {
 		log.Fatal("Failed to create DiskKeyStore:", err)
 	}
 
-	km, err := keymanager.NewManager(keymanager.ManagerConfig{
+	km, err := keys.NewManager(keys.KeyManagerConfig{
 		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		Logger:              logger,
@@ -69,7 +69,7 @@ type KeyHealthResponse struct {
 // keyHealthHandler returns the current signing key metadata via GetCurrentKeyInfo.
 // Returns 200 with status "healthy" when the key is valid, "degraded" when expired,
 // and 503 if the KeyManager is unavailable.
-func keyHealthHandler(km *keymanager.Manager) http.HandlerFunc {
+func keyHealthHandler(km *keys.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// ===== STEP 1: Fetch Key Info =====
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)

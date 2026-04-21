@@ -8,7 +8,7 @@ import (
 
 	. "github.com/onsi/gomega"
 
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
@@ -20,14 +20,14 @@ func init() {
 	)
 }
 
-func diskMemoryFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keymanager.Manager, func()) {
+func diskMemoryFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keys.Manager, func()) {
 	tmpDir, err := os.MkdirTemp("", "integration-disk-*")
 	Expect(err).NotTo(HaveOccurred())
 
-	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: tmpDir, KeySize: 2048})
+	ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: tmpDir, KeySize: 2048})
 	Expect(err).NotTo(HaveOccurred())
 
-	km, err := keymanager.NewManager(keymanager.ManagerConfig{
+	km, err := keys.NewManager(keys.KeyManagerConfig{
 		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		KeySize:             2048,

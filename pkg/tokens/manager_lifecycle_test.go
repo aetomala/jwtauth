@@ -171,11 +171,11 @@ var _ = Describe("TokenManager", func() {
 		It("should fail if KeyManager fails to start", func() {
 			mockKM.EXPECT().
 				Start(gomock.Any()).
-				Return(errors.New("keymanager start failed"))
+				Return(errors.New("key manager start failed"))
 
 			err := service.Start(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("keymanager start failed"))
+			Expect(err.Error()).To(ContainSubstring("key manager start failed"))
 			Expect(service.IsRunning()).To(BeFalse())
 		})
 
@@ -335,11 +335,11 @@ var _ = Describe("TokenManager", func() {
 		It("should return error if KeyManager fails to shutdown", func() {
 			mockKM.EXPECT().
 				Shutdown(gomock.Any()).
-				Return(errors.New("keymanager shutdown failed"))
+				Return(errors.New("key manager shutdown failed"))
 
 			err := service.Shutdown(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("keymanager shutdown failed"))
+			Expect(err.Error()).To(ContainSubstring("key manager shutdown failed"))
 		})
 	})
 

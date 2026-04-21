@@ -79,7 +79,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/storage"
@@ -93,7 +93,7 @@ import (
 // default to production-safe values via DefaultManagerConfig if left at zero.
 type ManagerConfig struct {
 	// Required dependencies
-	KeyManager   keymanager.KeyManager // Signs and validates tokens
+	KeyManager   keys.KeyManager // Signs and validates tokens
 	RefreshStore storage.RefreshStore  // Persists refresh tokens
 
 	// Optional
@@ -121,7 +121,7 @@ type ManagerConfig struct {
 // All public methods are safe for concurrent use.
 type Manager struct {
 	// ===== Dependencies (Interfaces) =====
-	keyManager   keymanager.KeyManager // Crypto operations
+	keyManager   keys.KeyManager // Crypto operations
 	refreshStore storage.RefreshStore  // Token storage
 	logger       logging.Logger        // never nil; defaults to NoOpLogger
 	metrics      metrics.Metrics       // never nil; defaults to NoOpMetrics
@@ -275,7 +275,7 @@ func (m *Manager) Start(ctx context.Context) error {
 
 		m.logger.Error("failed to start token service", ctx,
 			"error", err)
-		wrapped := fmt.Errorf("failed to start keymanager: %w", err)
+		wrapped := fmt.Errorf("failed to start key manager: %w", err)
 		span.RecordError(wrapped)
 		span.SetStatus(tracing.StatusError, wrapped.Error())
 		return wrapped
@@ -364,9 +364,9 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 	// ===== STEP 5: Shutdown KeyManager =====
 	if err := m.keyManager.Shutdown(ctx); err != nil {
-		m.logger.Error("failed to shutdown keymanager", ctx,
+		m.logger.Error("failed to shutdown key manager", ctx,
 			"error", err)
-		wrapped := fmt.Errorf("failed to shutdown keymanager: %w", err)
+		wrapped := fmt.Errorf("failed to shutdown key manager: %w", err)
 		span.RecordError(wrapped)
 		span.SetStatus(tracing.StatusError, wrapped.Error())
 		return wrapped
@@ -1383,7 +1383,7 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 			span.SetStatus(tracing.StatusError, ErrTokenNotYetValid.Error())
 			return nil, ErrTokenNotYetValid
 		}
-		if errors.Is(err, keymanager.ErrKeyNotFound) {
+		if errors.Is(err, keys.ErrKeyNotFound) {
 			status = "error"
 			errorType = "key_not_found"
 			m.logger.Warn("token references unknown key ID", ctx)

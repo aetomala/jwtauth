@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -37,12 +37,12 @@ func main() {
 	logger := logging.NewTextLogger(slog.LevelInfo)
 
 	// ===== STEP 1: Create KeyManager =====
-	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger})
+	ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger})
 	if err != nil {
 		log.Fatal("Failed to create DiskKeyStore:", err)
 	}
 
-	km, err := keymanager.NewManager(keymanager.ManagerConfig{
+	km, err := keys.NewManager(keys.KeyManagerConfig{
 		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		Logger:              logger,
@@ -94,7 +94,7 @@ func main() {
 // collectKeyMetrics fetches current signing key metadata and updates the three gauges.
 // If GetCurrentKeyInfo returns an error (e.g. context cancelled or manager not running),
 // the gauges are left at their last known values.
-func collectKeyMetrics(ctx context.Context, km *keymanager.Manager) {
+func collectKeyMetrics(ctx context.Context, km *keys.Manager) {
 	// ===== STEP 1: Fetch Key Info =====
 	collectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

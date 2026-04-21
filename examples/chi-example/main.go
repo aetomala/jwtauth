@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/aetomala/jwtauth/examples/chi-example/auth"
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/storage"
@@ -27,12 +27,12 @@ func main() {
 	pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{})
 
 	// Create KeyStore and KeyManager
-	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: pm})
+	ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: pm})
 	if err != nil {
 		log.Fatal("Failed to create DiskKeyStore:", err)
 	}
 
-	km, err := keymanager.NewManager(keymanager.ManagerConfig{
+	km, err := keys.NewManager(keys.KeyManagerConfig{
 		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		Logger:              logger,
@@ -245,7 +245,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 
 // keyStatusHandler returns the current signing key metadata via GetCurrentKeyInfo.
 // No private key material is included — safe to expose via an admin endpoint.
-func keyStatusHandler(km *keymanager.Manager) http.HandlerFunc {
+func keyStatusHandler(km *keys.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()

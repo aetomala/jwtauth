@@ -6,13 +6,13 @@ package logging
 //
 // Example Usage:
 //
-//	config := keymanager.ManagerConfig{
+//	config := keys.KeyManagerConfig{
 //	    Logger: &logging.NoOpLogger{}, // Silent operation
 //	}
 //
 // Or simply use nil (components handle nil loggers gracefully):
 //
-//	config := keymanager.ManagerConfig{
+//	config := keys.KeyManagerConfig{
 //	    Logger: nil, // No logging
 //	}
 type NoOpLogger struct{}
