@@ -56,7 +56,7 @@ km, _ := keys.NewManager(keys.KeyManagerConfig{
 refreshStore := storage.NewMemoryRefreshStore(nil, nil)
 
 // Step 3: Create TokenManager (coordinates everything)
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     KeyManager:           km,
     RefreshStore:         refreshStore,
     AccessTokenDuration:  15 * time.Minute,

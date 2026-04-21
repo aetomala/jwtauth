@@ -107,7 +107,7 @@ pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
 ks, _   := keys.NewDiskKeyStore("./keys", 2048, logger, pm)
 km, _   := keys.NewManager(keys.KeyManagerConfig{KeyStore: ks, Metrics: pm})
 store   := storage.NewMemoryRefreshStore(logger, pm)
-mgr, _  := tokens.NewManager(tokens.ManagerConfig{
+mgr, _  := tokens.NewManager(tokens.TokenManagerConfig{
     KeyManager:   km,
     RefreshStore: store,
     Metrics:      pm,
@@ -204,7 +204,7 @@ km, _ := keys.NewManager(keys.KeyManagerConfig{
     Tracer:   tracer,
 })
 store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Tracer: tracer})
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     KeyManager:   km,
     RefreshStore: store,
     Tracer:       tracer,
@@ -302,7 +302,7 @@ store := storage.NewRedisRefreshStore(redisClient, logger, pm)
 In distributed deployments, servers may have slight clock drift. `ClockSkew` adds leeway to `exp` and `nbf` validation without inflating token lifetimes:
 
 ```go
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     // ...
     ClockSkew: 30 * time.Second,  // Accept tokens up to 30s past expiry
 })

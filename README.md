@@ -111,7 +111,7 @@ km, _ := keys.NewManager(keys.KeyManagerConfig{
 | Refresh token storage and lookup | `MemoryRefreshStore` / `RedisRefreshStore` |
 | Revocation (single token, all user sessions) | `RevokeRefreshToken`, `RevokeAllUserTokens` |
 | Custom claims round-trip without re-parsing | `IssueAccessTokenWithClaims` + `ValidateAccessTokenWithClaims` |
-| Clock skew tolerance for distributed deployments | `ManagerConfig.ClockSkew` |
+| Clock skew tolerance for distributed deployments | `TokenManagerConfig.ClockSkew` |
 | 22 Prometheus metrics across all operations | Pre-registered, zero config |
 | 10 typed sentinel errors for middleware logic | `ErrTokenExpired`, `ErrTokenRevoked`, `ErrInvalidAudience`, … |
 
@@ -532,7 +532,7 @@ import (
 
 func main() {
     // Create TokenManager with storage
-    config := tokens.ManagerConfig{
+    config := tokens.TokenManagerConfig{
         KeyManager:           keyManager,      // from KeyManager above
         RefreshStore:         refreshStore,    // RefreshStore implementation
         Logger:               logger,          // Optional
@@ -722,7 +722,7 @@ and your `RefreshStore` to handle the complete authentication flow.
 | `Logger` | `logging.Logger` | No | `NoOpLogger` | Structured logger; defaults to no-op if nil |
 | `Metrics` | `metrics.Metrics` | No | `NoOpMetrics` | Metrics collector; defaults to no-op if nil |
 
-### ManagerConfig
+### TokenManagerConfig
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
@@ -930,7 +930,7 @@ http.Handle("/metrics", pm.Handler())
 ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", Logger: logger, Metrics: pm})
 km, _ := keys.NewManager(keys.KeyManagerConfig{KeyStore: ks, Metrics: pm})
 store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: pm})
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     KeyManager:   km,
     RefreshStore: store,
     Metrics:      pm,
@@ -1022,7 +1022,7 @@ km, _ := keys.NewManager(keys.KeyManagerConfig{
     Tracer:   tracer,
 })
 store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Tracer: tracer})
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     KeyManager:   km,
     RefreshStore: store,
     Tracer:       tracer,

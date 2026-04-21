@@ -334,7 +334,7 @@ logger := logging.NewCorrelationJSONLogger(slog.LevelInfo)
 // For local development:
 // logger := logging.NewCorrelationTextLogger(slog.LevelDebug)
 
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     Logger: logger,
     // ...
 })

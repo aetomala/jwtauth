@@ -289,7 +289,7 @@ Wire it at application startup:
 // NewCorrelationJSONLogger wraps slog.NewJSONHandler with CorrelationIDHandler.
 logger := logging.NewCorrelationJSONLogger(slog.LevelInfo)
 
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{Logger: logger, ...})
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{Logger: logger, ...})
 ```
 
 Inject the ID once at the HTTP request boundary — it propagates to all jwtauth calls for that request:
@@ -1016,7 +1016,7 @@ Catches:
 - ✅ Token introspection per RFC 7662
 - ✅ Lifecycle management (Start/Shutdown/IsRunning)
 - ✅ Background cleanup goroutine with configurable interval
-- ✅ Clock skew tolerance (`ClockSkew time.Duration` in `ManagerConfig` — `jwt.WithLeeway()` integration)
+- ✅ Clock skew tolerance (`ClockSkew time.Duration` in `TokenManagerConfig` — `jwt.WithLeeway()` integration)
 - ✅ `ValidateAccessTokenWithClaims` — returns registered claims and custom claims map after validation
 - ✅ Comprehensive test coverage (153 tests, ~87% coverage, race-detection clean)
 - ✅ RefreshStore interface with context propagation

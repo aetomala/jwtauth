@@ -260,7 +260,7 @@ func (s *PostgresRefreshStore) Store(ctx context.Context, tokenID, userID string
 
 // Use it in the manager
 store := &PostgresRefreshStore{db: db}
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     RefreshStore: store,
 })
 ```
