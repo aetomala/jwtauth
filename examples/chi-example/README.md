@@ -299,7 +299,7 @@ Replace the in-memory `RefreshStore` with your own implementation:
 // Create custom store
 store := database.NewPostgresRefreshStore(db, logger)
 
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     RefreshStore: store,
     // ... other config
 })
@@ -318,7 +318,7 @@ km, _ := keys.NewManager(keys.KeyManagerConfig{
     Logger:   logger,
 })
 
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     Logger: logger,
 })
 ```

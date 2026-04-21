@@ -19,14 +19,39 @@ All notable changes to this project will be documented in this file.
   - `storage.NewRedisRefreshStore(client, logger, metrics)` → `storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client, Logger: logger, Metrics: metrics})`
 
 - **`tokens.Service` → `tokens.Manager`** — The core token lifecycle type is renamed. Update all call sites:
-  - `tokens.NewService(tokens.ServiceConfig{...})` → `tokens.NewManager(tokens.ManagerConfig{...})`
-  - `tokens.ConfigDefault()` → `tokens.DefaultManagerConfig()`
+  - `tokens.NewService(tokens.ServiceConfig{...})` → `tokens.NewManager(tokens.TokenManagerConfig{...})`
+  - `tokens.ConfigDefault()` → `tokens.DefaultTokenManagerConfig()`
   - `tokens.ErrServiceNotRunning` → `tokens.ErrManagerNotRunning`
   - `*tokens.Service` type references → `*tokens.Manager`
 
 - **`AuthMiddleware` → `BearerMiddleware`** in all example middleware packages (`examples/gin-example/middleware`, `examples/chi-example/auth`, `examples/echo-example/middleware`). Rename call sites accordingly.
 
 - **Nil logger/metrics guards eliminated** across all five components — `Logger` and `Metrics` fields are now assigned `&logging.NoOpLogger{}` / `metrics.NewNoOpMetrics()` at construction when `nil` is passed; every call site in `pkg/keys/`, `pkg/metrics/prometheus.go`, and `pkg/tokens/` invokes `m.logger` and `m.metrics` unconditionally. Passing `nil` continues to work — it silently activates the no-op. Previously 217 call-site guards were scattered across five files.
+
+- **`pkg/keymanager` renamed to `pkg/keys`** — update all import paths from
+  `github.com/aetomala/jwtauth/pkg/keymanager` → `github.com/aetomala/jwtauth/pkg/keys`;
+  update qualifier `keymanager.` → `keys.` at all call sites.
+
+- **`keys.ManagerConfig` → `keys.KeyManagerConfig`** — config struct renamed for
+  unambiguous identification when both managers appear side by side.
+
+- **`keys.ConfigDefault()` → `keys.DefaultKeyManagerConfig()`** — constructor
+  renamed to match the config struct name.
+
+- **`tokens.ManagerConfig` → `tokens.TokenManagerConfig`** — config struct renamed
+  for consistency with `keys.KeyManagerConfig`; update all call sites.
+
+- **`tokens.DefaultManagerConfig()` → `tokens.DefaultTokenManagerConfig()`** —
+  constructor renamed to match the config struct name.
+
+- **`pkg/logging` file renames** — `logger.go` → `interface.go`,
+  `slog_adapter.go` → `slog.go`; file-level references in documentation updated
+  accordingly. No API changes.
+
+- **`TokenError` struct and `NewTokenError()` removed** — sentinel errors in
+  `pkg/tokens` (`ErrTokenExpired`, `ErrTokenNotYetValid`, `ErrInvalidAudience`,
+  `ErrInvalidIssuer`) are now plain `errors.New()` values. Any code that type-asserts
+  to `*tokens.TokenError` must be updated; `errors.Is()` behavior is unchanged.
 
 ### Added
 
@@ -101,7 +126,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **`ManagerConfig.ClockSkew time.Duration`** — leeway applied to `exp` and `nbf` validation via `jwt.WithLeeway()`. Zero (the default) means strict validation. Negative values are rejected with `ErrInvalidConfig` at construction time.
+- **`TokenManagerConfig.ClockSkew time.Duration`** — leeway applied to `exp` and `nbf` validation via `jwt.WithLeeway()`. Zero (the default) means strict validation. Negative values are rejected with `ErrInvalidConfig` at construction time.
 
 - **`Manager.ValidateAccessTokenWithClaims(ctx, token)`** — validates an access token and returns both the registered claims (`*jwt.RegisteredClaims`) and application-defined custom claims (`map[string]interface{}`). Reserved JWT fields (`sub`, `exp`, `nbf`, `iat`, `jti`, `iss`, `aud`) are excluded from the custom map. Uses `ParseUnverified` after signature verification — no second key-manager round-trip.
 
