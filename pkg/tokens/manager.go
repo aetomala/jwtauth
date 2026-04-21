@@ -1591,7 +1591,9 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	if err != nil {
 		m.logger.Warn("refresh token not found in store", ctx,
 			"error", err)
-		// Propagate specific errors, default to invalid token for generic errors
+		// storage.ErrTokenRevoked is translated to tokens.ErrTokenRevoked so that
+		// callers only ever see tokens-package sentinels and have no dependency on
+		// the storage package. All other storage errors map to ErrInvalidRefreshToken.
 		if errors.Is(err, storage.ErrTokenRevoked) {
 			status = "revoked"
 			errorType = "revoked"
@@ -1724,7 +1726,9 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 	if err != nil {
 		m.logger.Warn("refresh token not found in store", ctx,
 			"error", err)
-		// Propagate specific errors, default to invalid token for generic errors
+		// storage.ErrTokenRevoked is translated to tokens.ErrTokenRevoked so that
+		// callers only ever see tokens-package sentinels and have no dependency on
+		// the storage package. All other storage errors map to ErrInvalidRefreshToken.
 		if errors.Is(err, storage.ErrTokenRevoked) {
 			status = "revoked"
 			errorType = "revoked"
@@ -1915,6 +1919,8 @@ func (m *Manager) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	span.SetAttribute("user_id", userID)
 
 	// ===== STEP 4: Revoke All Tokens For User =====
+	// storage.ErrInvalidUserID cannot surface here — userID is validated above
+	// before this call, so storage never receives an empty value.
 	err := m.refreshStore.RevokeAllForUser(ctx, userID)
 	if err != nil {
 		m.logger.Error("failed to revoke all user tokens", ctx,
