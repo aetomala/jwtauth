@@ -90,9 +90,9 @@ Build what's needed now:
 github.com/aetomala/jwtauth/
 ├── pkg/                           # Public API packages
 │   ├── logging/                   # Logging abstraction
-│   │   ├── logger.go              # Logger interface
+│   │   ├── interface.go           # Logger interface
 │   │   ├── noop.go                # NoOp implementation
-│   │   ├── slog_adapter.go        # Standard library adapter
+│   │   ├── slog.go                # Standard library adapter
 │   │   ├── logger_test.go         # Logging tests (76 specs)
 │   │   └── README.md              # Usage documentation
 │   ├── metrics/                   # Metrics abstraction and implementations
