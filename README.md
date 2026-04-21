@@ -93,7 +93,7 @@ During the **overlap period** (configurable, default 1 hour):
 
 Configuration:
 ```go
-km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+km, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyRotationInterval: 30 * 24 * time.Hour,  // Rotate every 30 days
     KeyOverlapDuration:  1 * time.Hour,        // Keep old key valid for 1 hour
 })
@@ -314,17 +314,17 @@ Every component accepts optional logging and metrics interfaces:
 
 ```go
 import (
-    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/keys"
     "github.com/aetomala/jwtauth/pkg/logging"
     "github.com/aetomala/jwtauth/pkg/metrics"
     "github.com/aetomala/jwtauth/pkg/tracing"
 )
 
-ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{
     Dir:    "/var/keys",
     Logger: logging.NewJSONLogger(slog.LevelInfo),
 })
-config := keymanager.ManagerConfig{
+config := keys.KeyManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour, // 30 days
     KeyOverlapDuration:  1 * time.Hour,        // 1 hour overlap
@@ -360,7 +360,7 @@ Components depend on abstractions, not concrete implementations:
 
 ```go
 // ✅ KeyManager depends on interfaces
-type ManagerConfig struct {
+type KeyManagerConfig struct {
     KeyStore KeyStore         // Interface, not *DiskKeyStore
     Logger   logging.Logger  // Interface, not *slog.Logger
     Metrics  metrics.Metrics // Interface, not *PrometheusMetrics
@@ -400,18 +400,18 @@ import (
     "log"
     "time"
     
-    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/keys"
 )
 
 func main() {
     // Create DiskKeyStore for key persistence
-    ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys"})
+    ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys"})
     if err != nil {
         log.Fatal(err)
     }
 
     // Create KeyManager
-    manager, err := keymanager.NewManager(keymanager.ManagerConfig{
+    manager, err := keys.NewManager(keys.KeyManagerConfig{
         KeyStore:            ks,
         KeyRotationInterval: 30 * 24 * time.Hour,
         KeyOverlapDuration:  1 * time.Hour,
@@ -477,7 +477,7 @@ import (
     "log/slog"
     "os"
     
-    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/keys"
     "github.com/aetomala/jwtauth/pkg/logging"
 )
 
@@ -486,12 +486,12 @@ func main() {
     logger := logging.NewJSONLogger(slog.LevelInfo)
     pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{})
 
-    ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", Logger: logger, Metrics: pm})
+    ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", Logger: logger, Metrics: pm})
     if err != nil {
         log.Fatal(err)
     }
 
-    manager, err := keymanager.NewManager(keymanager.ManagerConfig{
+    manager, err := keys.NewManager(keys.KeyManagerConfig{
         KeyStore:            ks,
         KeyRotationInterval: 30 * 24 * time.Hour,
         KeyOverlapDuration:  1 * time.Hour,
@@ -601,9 +601,9 @@ graph TB
     end
 
     subgraph "Application Layer (Stateless)"
-        API1[API Instance 1<br/>tokens.Manager<br/>keymanager.Manager]
-        API2[API Instance 2<br/>tokens.Manager<br/>keymanager.Manager]
-        API3[API Instance 3<br/>tokens.Manager<br/>keymanager.Manager]
+        API1[API Instance 1<br/>tokens.Manager<br/>keys.Manager]
+        API2[API Instance 2<br/>tokens.Manager<br/>keys.Manager]
+        API3[API Instance 3<br/>tokens.Manager<br/>keys.Manager]
     end
 
     subgraph "Shared Storage Layer"
@@ -656,7 +656,7 @@ sequenceDiagram
     participant Client
     participant API
     participant Manager as tokens.Manager
-    participant KeyMgr as keymanager.Manager
+    participant KeyMgr as keys.Manager
     participant Redis as RefreshStore (Redis)
 
     Note over Client,Redis: Login & Token Issuance
@@ -707,12 +707,12 @@ sequenceDiagram
     API-->>Client: 200 OK
 ```
 
-The sequence shows how `tokens.Manager` coordinates with `keymanager.Manager` 
+The sequence shows how `tokens.Manager` coordinates with `keys.Manager` 
 and your `RefreshStore` to handle the complete authentication flow.
 
 ## Configuration
 
-### ManagerConfig
+### KeyManagerConfig
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
@@ -726,7 +726,7 @@ and your `RefreshStore` to handle the complete authentication flow.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `KeyManager` | `keymanager.KeyManager` | Yes | — | Signs and validates tokens |
+| `KeyManager` | `keys.KeyManager` | Yes | — | Signs and validates tokens |
 | `RefreshStore` | `storage.RefreshStore` | Yes | — | Persists refresh tokens |
 | `Logger` | `logging.Logger` | No | `NoOpLogger` | Structured logger; defaults to no-op if nil |
 | `Metrics` | `metrics.Metrics` | No | `NoOpMetrics` | Metrics collector; defaults to no-op if nil |
@@ -741,11 +741,11 @@ and your `RefreshStore` to handle the complete authentication flow.
 
 **Production (single-instance)**:
 ```go
-ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{
     Dir:    "./keys",
     Logger: logging.NewJSONLogger(slog.LevelInfo),
 })
-config := keymanager.ManagerConfig{
+config := keys.KeyManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour,  // 30 days
     KeyOverlapDuration:  1 * time.Hour,         // 1 hour
@@ -756,8 +756,8 @@ config := keymanager.ManagerConfig{
 **Production (distributed / multi-instance)**:
 ```go
 client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
-ks, _ := keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client, Logger: logger})
-config := keymanager.ManagerConfig{
+ks, _ := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client, Logger: logger})
+config := keys.KeyManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour,
     KeyOverlapDuration:  1 * time.Hour,
@@ -767,11 +767,11 @@ config := keymanager.ManagerConfig{
 
 **Development**:
 ```go
-ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{
     Dir:    "./keys",
     Logger: logging.NewTextLogger(slog.LevelDebug),
 })
-config := keymanager.ManagerConfig{
+config := keys.KeyManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 24 * time.Hour,        // 1 day (faster testing)
     KeyOverlapDuration:  5 * time.Minute,        // 5 minutes
@@ -927,8 +927,8 @@ pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
 http.Handle("/metrics", pm.Handler())
 
 // Pass pm to every constructor that accepts it
-ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", Logger: logger, Metrics: pm})
-km, _ := keymanager.NewManager(keymanager.ManagerConfig{KeyStore: ks, Metrics: pm})
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", Logger: logger, Metrics: pm})
+km, _ := keys.NewManager(keys.KeyManagerConfig{KeyStore: ks, Metrics: pm})
 store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: pm})
 mgr, _ := tokens.NewManager(tokens.ManagerConfig{
     KeyManager:   km,
@@ -1005,7 +1005,7 @@ Every component emits OpenTelemetry-compatible spans. Tracing is opt-in — all 
 import (
     "go.opentelemetry.io/otel"
     "github.com/aetomala/jwtauth/pkg/tracing"
-    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/keys"
     "github.com/aetomala/jwtauth/pkg/storage"
     "github.com/aetomala/jwtauth/pkg/tokens"
 )
@@ -1013,11 +1013,11 @@ import (
 // Wire your OTel TracerProvider (OTLP, Jaeger, Tempo, etc.) then:
 tracer := tracing.NewOtelTracer("jwtauth")
 
-ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{
     Dir:    "./keys",
     Tracer: tracer,
 })
-km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+km, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyStore: ks,
     Tracer:   tracer,
 })
@@ -1067,14 +1067,14 @@ github.com/aetomala/jwtauth/
 │   │   ├── noop_test.go          # NoOp tests (36 specs)
 │   │   ├── otel.go               # OtelTracer adapter (go.opentelemetry.io/otel)
 │   │   └── otel_test.go          # OtelTracer tests
-│   ├── keymanager/               # Key rotation and management ✅
-│   │   ├── keymanager.go         # Manager: lifecycle, rotation, JWKS generation
+│   ├── keys/               # Key rotation and management ✅
+│   │   ├── manager.go         # Manager: lifecycle, rotation, JWKS generation
 │   │   ├── interface.go          # Manager interface
 │   │   ├── keystore.go           # KeyStore interface, StoredKey type, sentinel errors
 │   │   ├── disk.go               # DiskKeyStore — filesystem-backed KeyStore
 │   │   ├── redis.go              # RedisKeyStore — Redis-backed KeyStore for distributed deployments
 │   │   ├── observability.go      # Metric name constants (KeyStore + Manager)
-│   │   ├── keymanager_test.go    # 9-phase Manager tests (52 specs, MockKeyStore)
+│   │   ├── manager_test.go    # 9-phase Manager tests (52 specs, MockKeyStore)
 │   │   ├── disk_test.go          # 10-phase DiskKeyStore tests (42 specs)
 │   │   └── redis_test.go         # 10-phase RedisKeyStore tests (39 specs, miniredis)
 │   ├── tokens/                   # JWT operations (Beta) 🟡
@@ -1097,7 +1097,7 @@ github.com/aetomala/jwtauth/
 ├── internal/                     # Private packages
 │   └── testutil/                 # Shared test utilities
 │       ├── errors.go             # Shared test error helpers
-│       ├── mock_keymanager.go    # gomock-generated MockKeyManager
+│       ├── mock_keys.go    # gomock-generated MockKeyManager
 │       ├── mock_keystore.go      # gomock-generated MockKeyStore
 │       ├── mock_logger.go        # Reusable MockLogger
 │       ├── mock_metrics.go       # gomock-generated MockMetrics
@@ -1205,7 +1205,7 @@ go install github.com/onsi/ginkgo/v2/ginkgo@latest
 ginkgo -v -race ./...
 
 # Specific package
-go test -v -race ./pkg/keymanager
+go test -v -race ./pkg/keys
 ```
 
 ### Test Philosophy

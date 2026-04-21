@@ -21,7 +21,7 @@ The `logging` package provides a simple, structured logging interface that all c
 import (
     "log/slog"
     "github.com/aetomala/jwtauth/pkg/logging"
-    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/keys"
 )
 
 func main() {
@@ -34,8 +34,8 @@ func main() {
     // logger := logging.NewJSONLogger(slog.LevelInfo)
 
     // Use with KeyManager
-    ks, _ := keymanager.NewDiskKeyStore("/keys", 2048, logger, nil)
-    manager, _ := keymanager.NewManager(keymanager.ManagerConfig{
+    ks, _ := keys.NewDiskKeyStore("/keys", 2048, logger, nil)
+    manager, _ := keys.NewManager(keys.KeyManagerConfig{
         KeyStore: ks,
         Logger:   logger,
     })
@@ -66,12 +66,12 @@ logger := logging.NewSlogAdapter(slog.New(handler))
 
 ```go
 // Option 1: Use NoOpLogger
-config := keymanager.ManagerConfig{
+config := keys.KeyManagerConfig{
     Logger: &logging.NoOpLogger{},
 }
 
 // Option 2: Use nil (components handle nil gracefully)
-config := keymanager.ManagerConfig{
+config := keys.KeyManagerConfig{
     Logger: nil,
 }
 ```
@@ -445,4 +445,4 @@ The Logger interface is designed to be compatible with OpenTelemetry for unified
 
 - [Metrics Package](../metrics/README.md) - For metrics/monitoring
 - [Architecture Docs](../../doc/ARCHITECTURE.md) - Overall design decisions
-- [KeyManager Example](../../examples/keymanager/) - Complete usage examples
+- [Examples](../../examples/README.md) - Complete usage examples

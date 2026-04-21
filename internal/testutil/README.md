@@ -6,8 +6,8 @@ Mock implementations for testing components that depend on external interfaces. 
 
 | Mock | Source interface | File | Generation |
 |------|-----------------|------|------------|
-| **MockKeyManager** | `keymanager.KeyManager` | mock_keymanager.go | Auto-generated (mockgen) |
-| **MockKeyStore** | `keymanager.KeyStore` | mock_keystore.go | Auto-generated (mockgen) |
+| **MockKeyManager** | `keys.KeyManager` | mock_keys.go | Auto-generated (mockgen) |
+| **MockKeyStore** | `keys.KeyStore` | mock_keystore.go | Auto-generated (mockgen) |
 | **MockRefreshStore** | `storage.RefreshStore` | mock_refreshstore.go | Auto-generated (mockgen) |
 | **MockMetrics** | `metrics.Metrics` | mock_metrics.go | Auto-generated (mockgen) |
 | **MockLogger** | `logging.Logger` | mock_logger.go | Custom implementation |
@@ -75,7 +75,7 @@ mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any()
 ctrl := gomock.NewController(GinkgoT())
 mockKS := testutil.NewMockKeyStore(ctrl)
 
-mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
 mockKS.EXPECT().Save(gomock.Any(), "key-1", gomock.Any(), gomock.Any()).Return(nil)
 ```
 
@@ -114,7 +114,7 @@ Each mock file contains the exact `mockgen` command used to generate it in its h
 
 ## Files
 
-- **[mock_keymanager.go](./mock_keymanager.go)** — `KeyManager` interface (key signing, rotation, lifecycle)
+- **[mock_keys.go](./mock_keys.go)** — `KeyManager` interface (key signing, rotation, lifecycle)
 - **[mock_keystore.go](./mock_keystore.go)** — `KeyStore` interface (key persistence: LoadAll, Save, UpdateMetadata, LoadKey, Delete)
 - **[mock_refreshstore.go](./mock_refreshstore.go)** — `RefreshStore` interface (token persistence: Store, Retrieve, Revoke, Cleanup)
 - **[mock_metrics.go](./mock_metrics.go)** — `Metrics` interface (counters, gauges, histograms, durations)

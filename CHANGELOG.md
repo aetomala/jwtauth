@@ -13,8 +13,8 @@ All notable changes to this project will be documented in this file.
 - **`IssueRefreshTokenWithMetadata` renamed to `IssueRefreshTokenWithClaims`** — parameter renamed from `metadata` to `claims` with type `CustomClaims`; span name updated to match. Update all call sites.
 
 - **`DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore` constructors migrated to config-struct form** — positional parameter constructors removed; update call sites:
-  - `keymanager.NewDiskKeyStore(dir, keySize, logger, metrics)` → `keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: dir, KeySize: keySize, Logger: logger, Metrics: metrics})`
-  - `keymanager.NewRedisKeyStore(client, logger, metrics)` → `keymanager.NewRedisKeyStore(keymanager.RedisKeyStoreConfig{Client: client, Logger: logger, Metrics: metrics})`
+  - `keys.NewDiskKeyStore(dir, keySize, logger, metrics)` → `keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: dir, KeySize: keySize, Logger: logger, Metrics: metrics})`
+  - `keys.NewRedisKeyStore(client, logger, metrics)` → `keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client, Logger: logger, Metrics: metrics})`
   - `storage.NewMemoryRefreshStore(logger, metrics)` → `storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: metrics})`
   - `storage.NewRedisRefreshStore(client, logger, metrics)` → `storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client, Logger: logger, Metrics: metrics})`
 
@@ -26,7 +26,7 @@ All notable changes to this project will be documented in this file.
 
 - **`AuthMiddleware` → `BearerMiddleware`** in all example middleware packages (`examples/gin-example/middleware`, `examples/chi-example/auth`, `examples/echo-example/middleware`). Rename call sites accordingly.
 
-- **Nil logger/metrics guards eliminated** across all five components — `Logger` and `Metrics` fields are now assigned `&logging.NoOpLogger{}` / `metrics.NewNoOpMetrics()` at construction when `nil` is passed; every call site in `pkg/keymanager/`, `pkg/metrics/prometheus.go`, and `pkg/tokens/` invokes `m.logger` and `m.metrics` unconditionally. Passing `nil` continues to work — it silently activates the no-op. Previously 217 call-site guards were scattered across five files.
+- **Nil logger/metrics guards eliminated** across all five components — `Logger` and `Metrics` fields are now assigned `&logging.NoOpLogger{}` / `metrics.NewNoOpMetrics()` at construction when `nil` is passed; every call site in `pkg/keys/`, `pkg/metrics/prometheus.go`, and `pkg/tokens/` invokes `m.logger` and `m.metrics` unconditionally. Passing `nil` continues to work — it silently activates the no-op. Previously 217 call-site guards were scattered across five files.
 
 ### Added
 
@@ -44,19 +44,19 @@ All notable changes to this project will be documented in this file.
   - `KeyManager` — spans for Start, Shutdown, and all key operations; attribute: `key_id`
   - `TokenManager` — spans for all 14 public methods; attributes: `user_id`, `token_id`, `active` (IntrospectToken), `deleted_count` (CleanupExpiredTokens)
 
-- **`KeyInfo` struct** — public metadata type in `pkg/keymanager` exposing `KeyID`, `CreatedAt`, `RotateAt` (estimated, current key only), `ExpiresAt`, `KeySizeBits`, `Algorithm`, `IsCurrent`, and `IsValid`. Contains no private key material — safe to serve from health check or admin endpoints.
+- **`KeyInfo` struct** — public metadata type in `pkg/keys` exposing `KeyID`, `CreatedAt`, `RotateAt` (estimated, current key only), `ExpiresAt`, `KeySizeBits`, `Algorithm`, `IsCurrent`, and `IsValid`. Contains no private key material — safe to serve from health check or admin endpoints.
 
-- **`GetKeyInfo(ctx, keyID)`** on `keymanager.Manager` — returns `*KeyInfo` for a specific key by ID. Pass an empty string to resolve the current signing key. Respects context cancellation. Returns `ErrManagerNotRunning` or `ErrKeyNotFound` as appropriate. `KeySizeBits` reflects the actual RSA modulus bit length of the key on disk, not the configured `KeySize`.
+- **`GetKeyInfo(ctx, keyID)`** on `keys.Manager` — returns `*KeyInfo` for a specific key by ID. Pass an empty string to resolve the current signing key. Respects context cancellation. Returns `ErrManagerNotRunning` or `ErrKeyNotFound` as appropriate. `KeySizeBits` reflects the actual RSA modulus bit length of the key on disk, not the configured `KeySize`.
 
-- **`GetCurrentKeyInfo(ctx)`** on `keymanager.Manager` — convenience wrapper around `GetKeyInfo(ctx, "")` for the common case of inspecting the active signing key.
+- **`GetCurrentKeyInfo(ctx)`** on `keys.Manager` — convenience wrapper around `GetKeyInfo(ctx, "")` for the common case of inspecting the active signing key.
 
-- **`GetKeyInfo` and `GetCurrentKeyInfo` on `keymanager.KeyManager` interface** — both methods are now part of the `KeyManager` interface, enabling dependency injection and test doubles for any code that inspects key metadata. `internal/testutil/mock_keymanager.go` has been regenerated with corresponding stubs (`MockKeyManager.GetKeyInfo`, `MockKeyManager.GetCurrentKeyInfo`).
+- **`GetKeyInfo` and `GetCurrentKeyInfo` on `keys.KeyManager` interface** — both methods are now part of the `KeyManager` interface, enabling dependency injection and test doubles for any code that inspects key metadata. `internal/testutil/mock_keys.go` has been regenerated with corresponding stubs (`MockKeyManager.GetKeyInfo`, `MockKeyManager.GetCurrentKeyInfo`).
 
 - **Integration tests for `GetCurrentKeyInfo` and `GetKeyInfo`** — three new cases added to `RunTokenManagerIntegrationTests` and run against all storage backends (DiskKeyStore+MemoryRefreshStore, RedisKeyStore+RedisRefreshStore): verifies accurate field values after `Start()`; verifies that `GetCurrentKeyInfo` reflects the new key after `RotateKeys()` while the old key remains accessible via `GetKeyInfo`; verifies that 20 concurrent `GetCurrentKeyInfo` calls during an active `RotateKeys()` produce no data races (real `Manager.mu` lock path exercised under `-race`).
 
 ### Fixed
 
-- **`KeyInfo.KeySizeBits` now reports actual key size** — previously sourced from `ManagerConfig.KeySize` (caller-supplied), which could silently diverge from the actual RSA key on disk if the `DiskKeyStore` or `RedisKeyStore` was configured with a different key size. Now derived from `keyPair.PrivateKey.N.BitLen()` so the reported value always matches the real key material.
+- **`KeyInfo.KeySizeBits` now reports actual key size** — previously sourced from `KeyManagerConfig.KeySize` (caller-supplied), which could silently diverge from the actual RSA key on disk if the `DiskKeyStore` or `RedisKeyStore` was configured with a different key size. Now derived from `keyPair.PrivateKey.N.BitLen()` so the reported value always matches the real key material.
 
 - **`pkg/tracing` package** — `Tracer` and `Span` interfaces defining the distributed tracing contract. `SpanOption` functional options pattern for span configuration. `StatusCode` (`Unset`, `Error`, `OK`) and `SpanKind` (`Internal`, `Server`, `Client`, `Producer`, `Consumer`) enumerations with `String()` methods. `WithAttributes` and `WithSpanKind` option constructors.
 
@@ -83,7 +83,7 @@ All notable changes to this project will be documented in this file.
 
 - **`pkg/tokens` — package doc comment** — added `// Package tokens ...` comment with key capability list (access token issuance, refresh token rotation, instant revocation, distributed cleanup) and canonical usage example covering the full token lifecycle.
 
-- **`pkg/keymanager` — package doc comment** — added `// Package keymanager ...` comment with rotation timeline ASCII diagram (Day 0 → Day 30 → Day 30+1h) and storage backend summary.
+- **`pkg/keys` — package doc comment** — added `// Package keys ...` comment with rotation timeline ASCII diagram (Day 0 → Day 30 → Day 30+1h) and storage backend summary.
 
 - **`README.md` — "Why This Library?" rewrite** — new positioning statement (authz layer, not authn), comparison vs. `golang-jwt/jwt` (build-vs-buy table), vs. framework JWT middleware (`gin-jwt`, `echo-jwt`) — previously missing entirely, vs. `lestrrat-go/jwx` / `go-jose/go-jose` JOSE toolkits, concrete security guarantees block (algorithm confusion, reserved claim protection, 10 sentinel errors, instant revocation), horizontal scale path table (`DiskKeyStore`+`MemoryRefreshStore` → `RedisKeyStore`+`RedisRefreshStore`), and "What jwtauth is not" closing paragraph.
 
@@ -115,7 +115,7 @@ All notable changes to this project will be documented in this file.
 
 - **Correlation ID logging** — `logging.WithCorrelationID(ctx, id)` and `logging.GetCorrelationID(ctx)` context helpers with an unexported key type that prevents collisions with external packages. `CorrelationIDHandler` wraps any `slog.Handler` and injects a `correlation_id` field into every log record when a correlation ID is present in the context. `SlogAdapter` now routes to slog's `*Context()` methods when `context.Context` is passed as the first variadic arg. `NewCorrelationJSONLogger` and `NewCorrelationTextLogger` convenience constructors pre-wire the handler. `examples/correlation-example/main.go` demonstrates end-to-end HTTP middleware usage.
 
-- **All internal logging call sites pass `ctx`** — every `logger.Info/Debug/Warn/Error` call in `pkg/keymanager`, `pkg/tokens`, and `pkg/storage` now forwards the in-scope `context.Context` as the first variadic arg, enabling correlation ID injection at all component boundaries without any Logger interface changes.
+- **All internal logging call sites pass `ctx`** — every `logger.Info/Debug/Warn/Error` call in `pkg/keys`, `pkg/tokens`, and `pkg/storage` now forwards the in-scope `context.Context` as the first variadic arg, enabling correlation ID injection at all component boundaries without any Logger interface changes.
 
 - **Context cancellation guard in `GetJWKS`** — returns the context error immediately after the running check, before acquiring the read lock.
 

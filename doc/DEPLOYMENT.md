@@ -25,7 +25,7 @@ if err := redisClient.Ping(ctx).Err(); err != nil {
     log.Fatalf("Redis unavailable: %v", err)
 }
 
-ks, _ := keymanager.NewRedisKeyStore(redisClient, logger, pm)
+ks, _ := keys.NewRedisKeyStore(redisClient, logger, pm)
 store := storage.NewRedisRefreshStore(redisClient, logger, pm)
 ```
 
@@ -50,7 +50,7 @@ Expose a health endpoint that reflects actual service state — not just HTTP li
 
 ```go
 // Health check handler — checks both manager and key availability
-func healthHandler(mgr *tokens.Manager, km keymanager.KeyManager) http.HandlerFunc {
+func healthHandler(mgr *tokens.Manager, km keys.KeyManager) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         if !mgr.IsRunning() {
             w.WriteHeader(http.StatusServiceUnavailable)
@@ -104,8 +104,8 @@ pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
     Namespace: "myapp",  // prefix for all metric names; defaults to "jwtauth"
 })
 
-ks, _   := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
-km, _   := keymanager.NewManager(keymanager.ManagerConfig{KeyStore: ks, Metrics: pm})
+ks, _   := keys.NewDiskKeyStore("./keys", 2048, logger, pm)
+km, _   := keys.NewManager(keys.KeyManagerConfig{KeyStore: ks, Metrics: pm})
 store   := storage.NewMemoryRefreshStore(logger, pm)
 mgr, _  := tokens.NewManager(tokens.ManagerConfig{
     KeyManager:   km,
@@ -171,7 +171,7 @@ import (
     "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
     "go.opentelemetry.io/otel/sdk/trace"
     "github.com/aetomala/jwtauth/pkg/tracing"
-    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/keys"
     "github.com/aetomala/jwtauth/pkg/storage"
     "github.com/aetomala/jwtauth/pkg/tokens"
 )
@@ -195,11 +195,11 @@ defer tp.Shutdown(ctx)
 // 3. Create a jwtauth tracer and pass it to every component
 tracer := tracing.NewOtelTracer("jwtauth")
 
-ks, _ := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{
     Dir:    "./keys",
     Tracer: tracer,
 })
-km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+km, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyStore: ks,
     Tracer:   tracer,
 })

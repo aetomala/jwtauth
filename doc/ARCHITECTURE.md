@@ -45,7 +45,7 @@ jwtauth is designed as a production-ready, highly observable, and testable **sta
 **Example**:
 ```go
 // KeyManager depends on abstractions, not concrete implementations
-type ManagerConfig struct {
+type KeyManagerConfig struct {
     Logger  logging.Logger   // Interface, not *slog.Logger
     Metrics metrics.Metrics  // Interface, not *PrometheusMetrics
 }
@@ -54,7 +54,7 @@ type ManagerConfig struct {
 ### 2. Single Responsibility Principle
 
 Each package has one clear responsibility:
-- `pkg/keymanager` - RSA key generation, rotation, and management
+- `pkg/keys` - RSA key generation, rotation, and management
 - `pkg/logging` - Logging abstraction and adapters
 - `pkg/metrics` - Metrics abstraction and implementations
 - `pkg/tracing` - Distributed tracing abstraction and OTel adapter
@@ -108,14 +108,14 @@ github.com/aetomala/jwtauth/
 │   │   ├── noop_test.go           # NoOp tests (36 specs)
 │   │   ├── otel.go                # OtelTracer adapter (go.opentelemetry.io/otel)
 │   │   └── otel_test.go           # OtelTracer tests
-│   ├── keymanager/                # Key rotation and management ✅
-│   │   ├── keymanager.go          # Manager: lifecycle, rotation, JWKS generation
+│   ├── keys/                # Key rotation and management ✅
+│   │   ├── manager.go          # Manager: lifecycle, rotation, JWKS generation
 │   │   ├── interface.go           # Manager interface
 │   │   ├── keystore.go            # KeyStore interface, StoredKey type, sentinel errors
 │   │   ├── disk.go                # DiskKeyStore — filesystem-backed KeyStore
 │   │   ├── redis.go               # RedisKeyStore — Redis-backed KeyStore for distributed deployments
 │   │   ├── observability.go       # Metric name constants (KeyStore + Manager)
-│   │   ├── keymanager_test.go     # 9-phase Manager tests (52 specs, MockKeyStore)
+│   │   ├── manager_test.go     # 9-phase Manager tests (52 specs, MockKeyStore)
 │   │   ├── disk_test.go           # 10-phase DiskKeyStore tests (42 specs)
 │   │   └── redis_test.go          # 10-phase RedisKeyStore tests (39 specs, miniredis)
 │   ├── tokens/                    # JWT token operations (Beta) 🟡
@@ -138,7 +138,7 @@ github.com/aetomala/jwtauth/
 ├── internal/                      # Private packages
 │   └── testutil/                  # Shared test utilities
 │       ├── errors.go              # Shared test error helpers
-│       ├── mock_keymanager.go     # gomock-generated MockKeyManager
+│       ├── mock_keys.go     # gomock-generated MockKeyManager
 │       ├── mock_keystore.go       # gomock-generated MockKeyStore
 │       ├── mock_logger.go         # Reusable MockLogger
 │       ├── mock_metrics.go        # gomock-generated MockMetrics
@@ -360,7 +360,7 @@ type Metrics interface {
 Every component accepts optional observability:
 
 ```go
-type ManagerConfig struct {
+type KeyManagerConfig struct {
     // Core configuration
     KeyStore            KeyStore        // Required: injected key persistence backend
     KeyRotationInterval time.Duration
@@ -564,8 +564,8 @@ This enables:
 **DiskKeyStore**:
 
 ```go
-ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, metrics)
-km, err := keymanager.NewManager(keymanager.ManagerConfig{
+ks, err := keys.NewDiskKeyStore("./keys", 2048, logger, metrics)
+km, err := keys.NewManager(keys.KeyManagerConfig{
     KeyStore: ks,
     Logger:   logger,
 })
@@ -581,8 +581,8 @@ File format:
 
 ```go
 client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
-ks, err := keymanager.NewRedisKeyStore(client, logger, metrics)
-km, err := keymanager.NewManager(keymanager.ManagerConfig{
+ks, err := keys.NewRedisKeyStore(client, logger, metrics)
+km, err := keys.NewManager(keys.KeyManagerConfig{
     KeyStore: ks,
     Logger:   logger,
 })
@@ -966,9 +966,9 @@ ctrl      := gomock.NewController(GinkgoT())
 mockLogger := testutil.NewMockLogger()
 mockKS     := testutil.NewMockKeyStore(ctrl)
 
-mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
 
-manager, _ := keymanager.NewManager(keymanager.ManagerConfig{
+manager, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyStore: mockKS,
     Logger:   mockLogger,
 })
@@ -1072,7 +1072,7 @@ Catches:
 ### 1. Dependency Injection
 Configuration structs accept interfaces:
 ```go
-type ManagerConfig struct {
+type KeyManagerConfig struct {
     Logger logging.Logger  // Injected
 }
 ```
