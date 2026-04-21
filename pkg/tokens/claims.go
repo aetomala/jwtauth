@@ -1,6 +1,7 @@
 package tokens
 
 import (
+	"errors"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -171,27 +172,14 @@ type TokenMetadata struct {
 
 var (
 	// ErrTokenExpired indicates the token has passed its expiration time
-	ErrTokenExpired = NewTokenError("token has expired")
+	ErrTokenExpired = errors.New("token has expired")
 
 	// ErrTokenNotYetValid indicates the token's nbf (not before) time hasn't been reached
-	ErrTokenNotYetValid = NewTokenError("token not yet valid")
+	ErrTokenNotYetValid = errors.New("token not yet valid")
 
 	// ErrInvalidAudience indicates the token audience doesn't match
-	ErrInvalidAudience = NewTokenError("invalid token audience")
+	ErrInvalidAudience = errors.New("invalid token audience")
 
 	// ErrInvalidIssuer indicates the token issuer doesn't match
-	ErrInvalidIssuer = NewTokenError("invalid token issuer")
+	ErrInvalidIssuer = errors.New("invalid token issuer")
 )
-
-// TokenError represents a token validation error
-type TokenError struct {
-	message string
-}
-
-func (e *TokenError) Error() string {
-	return e.message
-}
-
-func NewTokenError(message string) *TokenError {
-	return &TokenError{message: message}
-}
