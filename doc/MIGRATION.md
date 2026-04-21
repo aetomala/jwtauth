@@ -39,14 +39,14 @@ parsed, _ := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) 
 
 ```go
 import (
-    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/keys"
     "github.com/aetomala/jwtauth/pkg/storage"
     "github.com/aetomala/jwtauth/pkg/tokens"
 )
 
 // Step 1: Create KeyManager (handles keys + rotation)
-ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
-km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+ks, _ := keys.NewDiskKeyStore("./keys", 2048, nil, nil)
+km, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour,
     KeyOverlapDuration:  1 * time.Hour,
@@ -281,7 +281,7 @@ mgr.RevokeAllUserTokens(ctx, userID)
 
 **After (zero-downtime):**
 ```go
-km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+km, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour, // Auto-rotate every 30 days
     KeyOverlapDuration:  1 * time.Hour,        // Old key valid for 1 hour
@@ -302,7 +302,7 @@ km, _ := keymanager.NewManager(keymanager.ManagerConfig{
 **Development/Single-Instance:**
 ```go
 // Use in-memory storage
-ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
+ks, _ := keys.NewDiskKeyStore("./keys", 2048, nil, nil)
 refreshStore := storage.NewMemoryRefreshStore(nil, nil)
 ```
 
@@ -314,7 +314,7 @@ import "github.com/redis/go-redis/v9"
 client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
 
 // Shared key storage
-ks, _ := keymanager.NewRedisKeyStore(client, logger, metrics)
+ks, _ := keys.NewRedisKeyStore(client, logger, metrics)
 
 // Shared refresh token storage
 refreshStore := storage.NewRedisRefreshStore(client, logger, metrics)

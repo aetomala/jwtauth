@@ -177,7 +177,7 @@ The built-in metrics above cover rotation counts and operation latency. For time
 
 ```go
 import (
-    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/keys"
     "github.com/prometheus/client_golang/prometheus"
 )
 
@@ -196,7 +196,7 @@ var (
     })
 )
 
-func collectKeyMetrics(ctx context.Context, km *keymanager.Manager) {
+func collectKeyMetrics(ctx context.Context, km *keys.Manager) {
     info, err := km.GetCurrentKeyInfo(ctx)
     if err != nil {
         return

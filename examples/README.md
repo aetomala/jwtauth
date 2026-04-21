@@ -130,7 +130,7 @@ The `health-check` and `prometheus-metrics` examples focus exclusively on the **
 
 ```go
 // Create KeyManager for key rotation
-km, _ := keymanager.NewManager(config)
+km, _ := keys.NewManager(config)
 km.Start(ctx)
 
 // Create RefreshStore for token persistence
