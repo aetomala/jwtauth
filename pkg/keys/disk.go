@@ -232,14 +232,23 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 		return err
 	}
 
-	// ===== STEP 2: Encode Private Key to PEM =====
+	// ===== STEP 2: Validate Key ID =====
+	if !isValidKeyID(keyID) {
+		status = "validation_error"
+		errorType = "validation_error"
+		span.RecordError(ErrKeyStoreInvalidKeyID)
+		span.SetStatus(tracing.StatusError, ErrKeyStoreInvalidKeyID.Error())
+		return ErrKeyStoreInvalidKeyID
+	}
+
+	// ===== STEP 3: Encode Private Key to PEM =====
 	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
 	pemBlock := &pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: privateKeyBytes,
 	}
 
-	// ===== STEP 3: Write PEM File =====
+	// ===== STEP 4: Write PEM File =====
 	pemPath := filepath.Join(d.dir, keyID+".pem")
 	file, err := os.OpenFile(pemPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
@@ -261,7 +270,7 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 		return fmt.Errorf("write key file: %w", err)
 	}
 
-	// ===== STEP 4: Write Metadata File =====
+	// ===== STEP 5: Write Metadata File =====
 	if err := d.writeMetadata(keyID, meta); err != nil {
 		// Rollback: remove the PEM file to maintain consistency
 		os.Remove(pemPath)
@@ -273,7 +282,7 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 		return fmt.Errorf("save key metadata: %w", err)
 	}
 
-	// ===== STEP 5: Log and Return =====
+	// ===== STEP 6: Log and Return =====
 	status = "success"
 	errorType = ""
 	d.logger.Info("saved key to disk", ctx, "keyID", keyID)
@@ -315,7 +324,16 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 		return err
 	}
 
-	// ===== STEP 2: Verify Key Exists =====
+	// ===== STEP 2: Validate Key ID =====
+	if !isValidKeyID(keyID) {
+		status = "validation_error"
+		errorType = "validation_error"
+		span.RecordError(ErrKeyStoreInvalidKeyID)
+		span.SetStatus(tracing.StatusError, ErrKeyStoreInvalidKeyID.Error())
+		return ErrKeyStoreInvalidKeyID
+	}
+
+	// ===== STEP 3: Verify Key Exists =====
 	pemPath := filepath.Join(d.dir, keyID+".pem")
 	if _, err := os.Stat(pemPath); errors.Is(err, os.ErrNotExist) {
 		status = "not_found"
@@ -324,7 +342,7 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 		return ErrKeyStoreKeyNotFound
 	}
 
-	// ===== STEP 3: Write Updated Metadata =====
+	// ===== STEP 4: Write Updated Metadata =====
 	if err := d.writeMetadata(keyID, meta); err != nil {
 		d.logger.Error("failed to update metadata", ctx,
 			"keyID", keyID,
@@ -334,7 +352,7 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 		return fmt.Errorf("update metadata: %w", err)
 	}
 
-	// ===== STEP 4: Log and Return =====
+	// ===== STEP 5: Log and Return =====
 	status = "success"
 	errorType = ""
 	d.logger.Info("updated key metadata", ctx, "keyID", keyID)
@@ -343,8 +361,8 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 }
 
 // LoadKey fetches the private key and metadata for keyID. Called by Manager on a
-// GetPublicKey cache miss. Returns ErrKeyStoreInvalidKeyID if keyID is empty or
-// whitespace-only, ErrKeyStoreKeyNotFound if the key does not exist on disk.
+// GetPublicKey cache miss. Returns ErrKeyStoreInvalidKeyID if keyID is not a valid
+// UUID v4 string. Returns ErrKeyStoreKeyNotFound if the key does not exist on disk.
 func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *KeyMetadata, error) {
 	ctx, span := d.startSpan(ctx, "LoadKey")
 	defer span.End()
@@ -376,10 +394,11 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 	}
 
 	// ===== STEP 2: Validate Key ID =====
-	if strings.TrimSpace(keyID) == "" {
-		status = "not_found"
-		errorType = "not_found"
-		span.SetStatus(tracing.StatusError, "invalid key ID")
+	if !isValidKeyID(keyID) {
+		status = "validation_error"
+		errorType = "validation_error"
+		span.RecordError(ErrKeyStoreInvalidKeyID)
+		span.SetStatus(tracing.StatusError, ErrKeyStoreInvalidKeyID.Error())
 		return nil, nil, ErrKeyStoreInvalidKeyID
 	}
 
@@ -453,7 +472,16 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 		return err
 	}
 
-	// ===== STEP 2: Remove PEM File =====
+	// ===== STEP 2: Validate Key ID =====
+	if !isValidKeyID(keyID) {
+		status = "validation_error"
+		errorType = "validation_error"
+		span.RecordError(ErrKeyStoreInvalidKeyID)
+		span.SetStatus(tracing.StatusError, ErrKeyStoreInvalidKeyID.Error())
+		return ErrKeyStoreInvalidKeyID
+	}
+
+	// ===== STEP 3: Remove PEM File =====
 	pemPath := filepath.Join(d.dir, keyID+".pem")
 	if err := os.Remove(pemPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		d.logger.Error("failed to delete key file", ctx,
@@ -464,7 +492,7 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 		return fmt.Errorf("delete key file: %w", err)
 	}
 
-	// ===== STEP 3: Remove Metadata File =====
+	// ===== STEP 4: Remove Metadata File =====
 	metaPath := filepath.Join(d.dir, keyID+".json")
 	if err := os.Remove(metaPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		d.logger.Error("failed to delete metadata file", ctx,
@@ -475,7 +503,7 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 		return fmt.Errorf("delete metadata file: %w", err)
 	}
 
-	// ===== STEP 4: Log and Return =====
+	// ===== STEP 5: Log and Return =====
 	status = "success"
 	errorType = ""
 	d.logger.Info("deleted key from disk", ctx, "keyID", keyID)

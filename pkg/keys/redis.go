@@ -238,10 +238,19 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 		return err
 	}
 
-	// ===== STEP 2: Encode Private Key to PEM =====
+	// ===== STEP 2: Validate Key ID =====
+	if !isValidKeyID(keyID) {
+		status = "validation_error"
+		errorType = "validation_error"
+		span.RecordError(ErrKeyStoreInvalidKeyID)
+		span.SetStatus(tracing.StatusError, ErrKeyStoreInvalidKeyID.Error())
+		return ErrKeyStoreInvalidKeyID
+	}
+
+	// ===== STEP 3: Encode Private Key to PEM =====
 	pemStr := encodePEM(privateKey)
 
-	// ===== STEP 3: Marshal Metadata =====
+	// ===== STEP 4: Marshal Metadata =====
 	metaBytes, err := json.Marshal(meta)
 	if err != nil {
 		r.logger.Error("failed to marshal key metadata", ctx,
@@ -252,7 +261,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 		return fmt.Errorf("marshal key metadata: %w", err)
 	}
 
-	// ===== STEP 4: Write via Atomic Pipeline =====
+	// ===== STEP 5: Write via Atomic Pipeline =====
 	pipe := r.client.Pipeline()
 	pipe.Set(ctx, keyPEMPrefix+keyID, pemStr, 0)
 	pipe.Set(ctx, keyMetaPrefix+keyID, string(metaBytes), 0)
@@ -266,7 +275,7 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 		return fmt.Errorf("save key to redis: %w", err)
 	}
 
-	// ===== STEP 5: Log and Return =====
+	// ===== STEP 6: Log and Return =====
 	status = "success"
 	errorType = ""
 	r.logger.Info("saved key to redis", ctx, "keyID", keyID)
@@ -308,7 +317,16 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 		return err
 	}
 
-	// ===== STEP 2: Verify Key Exists =====
+	// ===== STEP 2: Validate Key ID =====
+	if !isValidKeyID(keyID) {
+		status = "validation_error"
+		errorType = "validation_error"
+		span.RecordError(ErrKeyStoreInvalidKeyID)
+		span.SetStatus(tracing.StatusError, ErrKeyStoreInvalidKeyID.Error())
+		return ErrKeyStoreInvalidKeyID
+	}
+
+	// ===== STEP 3: Verify Key Exists =====
 	exists, err := r.client.Exists(ctx, keyPEMPrefix+keyID).Result()
 	if err != nil {
 		r.logger.Error("failed to check key existence", ctx,
@@ -326,7 +344,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 		return ErrKeyStoreKeyNotFound
 	}
 
-	// ===== STEP 3: Marshal and Write Updated Metadata =====
+	// ===== STEP 4: Marshal and Write Updated Metadata =====
 	metaBytes, err := json.Marshal(meta)
 	if err != nil {
 		r.logger.Error("failed to marshal key metadata", ctx,
@@ -346,7 +364,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 		return fmt.Errorf("update metadata: %w", err)
 	}
 
-	// ===== STEP 4: Log and Return =====
+	// ===== STEP 5: Log and Return =====
 	status = "success"
 	errorType = ""
 	r.logger.Info("updated key metadata", ctx, "keyID", keyID)
@@ -389,9 +407,9 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	}
 
 	// ===== STEP 2: Validate Key ID =====
-	if strings.TrimSpace(keyID) == "" {
-		status = "not_found"
-		errorType = "not_found"
+	if !isValidKeyID(keyID) {
+		status = "validation_error"
+		errorType = "validation_error"
 		span.RecordError(ErrKeyStoreInvalidKeyID)
 		span.SetStatus(tracing.StatusError, ErrKeyStoreInvalidKeyID.Error())
 		return nil, nil, ErrKeyStoreInvalidKeyID
@@ -494,7 +512,16 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 		return err
 	}
 
-	// ===== STEP 2: Delete Both Keys =====
+	// ===== STEP 2: Validate Key ID =====
+	if !isValidKeyID(keyID) {
+		status = "validation_error"
+		errorType = "validation_error"
+		span.RecordError(ErrKeyStoreInvalidKeyID)
+		span.SetStatus(tracing.StatusError, ErrKeyStoreInvalidKeyID.Error())
+		return ErrKeyStoreInvalidKeyID
+	}
+
+	// ===== STEP 3: Delete Both Keys =====
 	if err := r.client.Del(ctx, keyPEMPrefix+keyID, keyMetaPrefix+keyID).Err(); err != nil {
 		r.logger.Error("failed to delete key from redis", ctx,
 			"keyID", keyID,
@@ -504,7 +531,7 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 		return fmt.Errorf("delete key from redis: %w", err)
 	}
 
-	// ===== STEP 3: Log and Return =====
+	// ===== STEP 4: Log and Return =====
 	status = "success"
 	errorType = ""
 	r.logger.Info("deleted key from redis", ctx, "keyID", keyID)

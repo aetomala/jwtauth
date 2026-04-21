@@ -21,6 +21,12 @@ import (
 	"github.com/aetomala/jwtauth/pkg/tracing"
 )
 
+const (
+	testKeyA       = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"
+	testKeyB       = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb"
+	testKeyMissing = "ffffffff-ffff-4fff-ffff-ffffffffffff"
+)
+
 // writePEMFile writes a PKCS#1 PEM file for key at dir/keyID.pem with 0600 permissions.
 func writePEMFile(dir, keyID string, key *rsa.PrivateKey) {
 	pemPath := filepath.Join(dir, keyID+".pem")
@@ -81,8 +87,8 @@ var _ = Describe("DiskKeyStore", func() {
 				ds, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: dir})
 				Expect(err).NotTo(HaveOccurred())
 				key := newTestKey()
-				Expect(ds.Save(ctx, "defaults-key", key, keys.KeyMetadata{ID: "defaults-key", CreatedAt: time.Now()})).To(Succeed())
-				_, _, err = ds.LoadKey(ctx, "defaults-key")
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				_, _, err = ds.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
 				Expect(err).NotTo(HaveOccurred())
 			})
 
@@ -127,11 +133,11 @@ var _ = Describe("DiskKeyStore", func() {
 		Context("with a valid key and metadata", func() {
 			It("should write a PEM file at 0600 permissions", func() {
 				key := newTestKey()
-				meta := keys.KeyMetadata{ID: "save-key", CreatedAt: time.Now()}
+				meta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()}
 
-				Expect(ds.Save(ctx, "save-key", key, meta)).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, meta)).To(Succeed())
 
-				pemPath := filepath.Join(dir, "save-key.pem")
+				pemPath := filepath.Join(dir, testKeyA+".pem")
 				info, err := os.Stat(pemPath)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(info.Mode().Perm()).To(Equal(os.FileMode(0600)))
@@ -139,24 +145,24 @@ var _ = Describe("DiskKeyStore", func() {
 
 			It("should write a companion metadata JSON file", func() {
 				key := newTestKey()
-				meta := keys.KeyMetadata{ID: "meta-key", CreatedAt: time.Now()}
+				meta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()}
 
-				Expect(ds.Save(ctx, "meta-key", key, meta)).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, meta)).To(Succeed())
 
-				_, err := os.Stat(filepath.Join(dir, "meta-key.json"))
+				_, err := os.Stat(filepath.Join(dir, testKeyA+".json"))
 				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("should persist a key that is then retrievable via LoadKey", func() {
 				key := newTestKey()
-				meta := keys.KeyMetadata{ID: "round-trip-key", CreatedAt: time.Now()}
+				meta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()}
 
-				Expect(ds.Save(ctx, "round-trip-key", key, meta)).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, meta)).To(Succeed())
 
-				loaded, loadedMeta, err := ds.LoadKey(ctx, "round-trip-key")
+				loaded, loadedMeta, err := ds.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(loaded.N.Cmp(key.N)).To(Equal(0))
-				Expect(loadedMeta.ID).To(Equal("round-trip-key"))
+				Expect(loadedMeta.ID).To(Equal("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"))
 			})
 		})
 
@@ -186,8 +192,8 @@ var _ = Describe("DiskKeyStore", func() {
 		Context("with saved keys", func() {
 			It("should return all saved non-expired keys", func() {
 				key1, key2 := newTestKey(), newTestKey()
-				Expect(ds.Save(ctx, "key-1", key1, keys.KeyMetadata{ID: "key-1", CreatedAt: time.Now()})).To(Succeed())
-				Expect(ds.Save(ctx, "key-2", key2, keys.KeyMetadata{ID: "key-2", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key1, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", key2, keys.KeyMetadata{ID: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", CreatedAt: time.Now()})).To(Succeed())
 
 				keys, err := ds.LoadAll(ctx)
 				Expect(err).NotTo(HaveOccurred())
@@ -198,9 +204,9 @@ var _ = Describe("DiskKeyStore", func() {
 				active := newTestKey()
 				expired := newTestKey()
 
-				Expect(ds.Save(ctx, "active-key", active, keys.KeyMetadata{ID: "active-key", CreatedAt: time.Now()})).To(Succeed())
-				Expect(ds.Save(ctx, "expired-key", expired, keys.KeyMetadata{
-					ID:        "expired-key",
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", active, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", expired, keys.KeyMetadata{
+					ID:        "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb",
 					CreatedAt: time.Now().Add(-2 * time.Hour),
 					ExpiresAt: time.Now().Add(-1 * time.Hour),
 				})).To(Succeed())
@@ -208,12 +214,12 @@ var _ = Describe("DiskKeyStore", func() {
 				keys, err := ds.LoadAll(ctx)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(keys).To(HaveLen(1))
-				Expect(keys[0].KeyID).To(Equal("active-key"))
+				Expect(keys[0].KeyID).To(Equal("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"))
 			})
 
 			It("should skip files with corrupted PEM data", func() {
 				good := newTestKey()
-				Expect(ds.Save(ctx, "good-key", good, keys.KeyMetadata{ID: "good-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", good, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 
 				// Write a corrupted PEM file
 				Expect(os.WriteFile(filepath.Join(dir, "corrupt-key.pem"), []byte("not-valid-pem"), 0600)).To(Succeed())
@@ -221,7 +227,7 @@ var _ = Describe("DiskKeyStore", func() {
 				keys, err := ds.LoadAll(ctx)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(keys).To(HaveLen(1))
-				Expect(keys[0].KeyID).To(Equal("good-key"))
+				Expect(keys[0].KeyID).To(Equal("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"))
 			})
 		})
 
@@ -258,21 +264,21 @@ var _ = Describe("DiskKeyStore", func() {
 			It("should return the private key and metadata", func() {
 				key := newTestKey()
 				now := time.Now().Truncate(time.Second)
-				meta := keys.KeyMetadata{ID: "load-key", CreatedAt: now}
-				Expect(ds.Save(ctx, "load-key", key, meta)).To(Succeed())
+				meta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: now}
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, meta)).To(Succeed())
 
-				loaded, loadedMeta, err := ds.LoadKey(ctx, "load-key")
+				loaded, loadedMeta, err := ds.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(loaded).NotTo(BeNil())
 				Expect(loaded.N.Cmp(key.N)).To(Equal(0))
-				Expect(loadedMeta.ID).To(Equal("load-key"))
+				Expect(loadedMeta.ID).To(Equal("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"))
 			})
 
 			It("should validate that the key size is at least 2048 bits", func() {
 				key := newTestKey()
-				Expect(ds.Save(ctx, "valid-size-key", key, keys.KeyMetadata{ID: "valid-size-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 
-				loaded, _, err := ds.LoadKey(ctx, "valid-size-key")
+				loaded, _, err := ds.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(loaded.N.BitLen()).To(BeNumerically(">=", 2048))
 			})
@@ -280,7 +286,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 		Context("missing or invalid key", func() {
 			It("should return ErrKeyStoreKeyNotFound for a missing key ID", func() {
-				_, _, err := ds.LoadKey(ctx, "does-not-exist")
+				_, _, err := ds.LoadKey(ctx, "ffffffff-ffff-4fff-ffff-ffffffffffff")
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
 			})
 
@@ -291,6 +297,26 @@ var _ = Describe("DiskKeyStore", func() {
 
 			It("should return ErrKeyStoreInvalidKeyID for a whitespace-only key ID", func() {
 				_, _, err := ds.LoadKey(ctx, "   ")
+				Expect(err).To(MatchError(keys.ErrKeyStoreInvalidKeyID))
+			})
+
+			It("should return ErrKeyStoreInvalidKeyID for a path traversal attempt with ../ prefix", func() {
+				_, _, err := ds.LoadKey(ctx, "../../etc/passwd")
+				Expect(err).To(MatchError(keys.ErrKeyStoreInvalidKeyID))
+			})
+
+			It("should return ErrKeyStoreInvalidKeyID for a path traversal attempt with ../ infix", func() {
+				_, _, err := ds.LoadKey(ctx, "abc/../../../etc/shadow")
+				Expect(err).To(MatchError(keys.ErrKeyStoreInvalidKeyID))
+			})
+
+			It("should return ErrKeyStoreInvalidKeyID for an absolute path", func() {
+				_, _, err := ds.LoadKey(ctx, "/etc/passwd")
+				Expect(err).To(MatchError(keys.ErrKeyStoreInvalidKeyID))
+			})
+
+			It("should return ErrKeyStoreInvalidKeyID for a non-UUID string", func() {
+				_, _, err := ds.LoadKey(ctx, "not-a-uuid")
 				Expect(err).To(MatchError(keys.ErrKeyStoreInvalidKeyID))
 			})
 		})
@@ -320,13 +346,13 @@ var _ = Describe("DiskKeyStore", func() {
 			It("should persist the updated ExpiresAt and be visible on LoadKey", func() {
 				key := newTestKey()
 				now := time.Now()
-				Expect(ds.Save(ctx, "update-key", key, keys.KeyMetadata{ID: "update-key", CreatedAt: now})).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: now})).To(Succeed())
 
 				expiry := now.Add(1 * time.Hour)
-				updatedMeta := keys.KeyMetadata{ID: "update-key", CreatedAt: now, ExpiresAt: expiry}
-				Expect(ds.UpdateMetadata(ctx, "update-key", updatedMeta)).To(Succeed())
+				updatedMeta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: now, ExpiresAt: expiry}
+				Expect(ds.UpdateMetadata(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", updatedMeta)).To(Succeed())
 
-				_, loadedMeta, err := ds.LoadKey(ctx, "update-key")
+				_, loadedMeta, err := ds.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(loadedMeta.ExpiresAt.UTC().Truncate(time.Second)).To(Equal(expiry.UTC().Truncate(time.Second)))
 			})
@@ -334,8 +360,8 @@ var _ = Describe("DiskKeyStore", func() {
 
 		Context("updating a non-existent key", func() {
 			It("should return ErrKeyStoreKeyNotFound", func() {
-				meta := keys.KeyMetadata{ID: "missing-key", CreatedAt: time.Now()}
-				err := ds.UpdateMetadata(ctx, "missing-key", meta)
+				meta := keys.KeyMetadata{ID: "ffffffff-ffff-4fff-ffff-ffffffffffff", CreatedAt: time.Now()}
+				err := ds.UpdateMetadata(ctx, "ffffffff-ffff-4fff-ffff-ffffffffffff", meta)
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
 			})
 		})
@@ -365,29 +391,29 @@ var _ = Describe("DiskKeyStore", func() {
 		Context("deleting an existing key", func() {
 			It("should remove both the PEM and metadata files from disk", func() {
 				key := newTestKey()
-				Expect(ds.Save(ctx, "delete-key", key, keys.KeyMetadata{ID: "delete-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 
-				Expect(ds.Delete(ctx, "delete-key")).To(Succeed())
+				Expect(ds.Delete(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")).To(Succeed())
 
-				_, pemErr := os.Stat(filepath.Join(dir, "delete-key.pem"))
-				_, jsonErr := os.Stat(filepath.Join(dir, "delete-key.json"))
+				_, pemErr := os.Stat(filepath.Join(dir, testKeyA+".pem"))
+				_, jsonErr := os.Stat(filepath.Join(dir, testKeyA+".json"))
 				Expect(os.IsNotExist(pemErr)).To(BeTrue())
 				Expect(os.IsNotExist(jsonErr)).To(BeTrue())
 			})
 
 			It("should make the key unavailable via LoadKey after deletion", func() {
 				key := newTestKey()
-				Expect(ds.Save(ctx, "del-load-key", key, keys.KeyMetadata{ID: "del-load-key", CreatedAt: time.Now()})).To(Succeed())
-				Expect(ds.Delete(ctx, "del-load-key")).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Delete(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")).To(Succeed())
 
-				_, _, err := ds.LoadKey(ctx, "del-load-key")
+				_, _, err := ds.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
 			})
 		})
 
 		Context("deleting a non-existent key", func() {
 			It("should succeed without error — idempotent", func() {
-				Expect(ds.Delete(ctx, "non-existent-key")).To(Succeed())
+				Expect(ds.Delete(ctx, "ffffffff-ffff-4fff-ffff-ffffffffffff")).To(Succeed())
 			})
 		})
 
@@ -415,10 +441,10 @@ var _ = Describe("DiskKeyStore", func() {
 		Context("LoadAll with a key missing its metadata file", func() {
 			It("should skip the key without returning an error", func() {
 				key := newTestKey()
-				Expect(ds.Save(ctx, "no-meta-key", key, keys.KeyMetadata{ID: "no-meta-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 
 				// Remove metadata file to simulate corruption
-				Expect(os.Remove(filepath.Join(dir, "no-meta-key.json"))).To(Succeed())
+				Expect(os.Remove(filepath.Join(dir, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa.json"))).To(Succeed())
 
 				keys, err := ds.LoadAll(ctx)
 				Expect(err).NotTo(HaveOccurred())
@@ -431,8 +457,8 @@ var _ = Describe("DiskKeyStore", func() {
 				// Save accepts whatever key is provided; size is enforced at LoadKey/LoadAll
 				smallKey, err := rsa.GenerateKey(rand.Reader, 2048) // 2048 is minimum accepted
 				Expect(err).NotTo(HaveOccurred())
-				meta := keys.KeyMetadata{ID: "small-key", CreatedAt: time.Now()}
-				Expect(ds.Save(ctx, "small-key", smallKey, meta)).To(Succeed())
+				meta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()}
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", smallKey, meta)).To(Succeed())
 			})
 		})
 	})
@@ -454,7 +480,7 @@ var _ = Describe("DiskKeyStore", func() {
 
 				// Pre-save one key for readers
 				preKey := newTestKey()
-				Expect(ds.Save(ctx, "concurrent-key", preKey, keys.KeyMetadata{ID: "concurrent-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", preKey, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 
 				// Concurrent readers
 				for i := 0; i < numOps; i++ {
@@ -462,7 +488,7 @@ var _ = Describe("DiskKeyStore", func() {
 					go func() {
 						defer GinkgoRecover()
 						defer wg.Done()
-						_, _, err := ds.LoadKey(ctx, "concurrent-key")
+						_, _, err := ds.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
 						Expect(err).NotTo(HaveOccurred())
 					}()
 				}
@@ -477,7 +503,7 @@ var _ = Describe("DiskKeyStore", func() {
 						keyID := filepath.Join("writer-key")
 						_ = keyID
 						// Each goroutine writes to its own key to avoid OS-level contention
-						_ = ds.Save(ctx, "write-only", key, keys.KeyMetadata{ID: "write-only", CreatedAt: time.Now()})
+						_ = ds.Save(ctx, "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", key, keys.KeyMetadata{ID: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", CreatedAt: time.Now()})
 					}(i)
 				}
 
@@ -488,7 +514,7 @@ var _ = Describe("DiskKeyStore", func() {
 		Context("concurrent LoadAll", func() {
 			It("should return consistent results under concurrent reads", func() {
 				key := newTestKey()
-				Expect(ds.Save(ctx, "loadall-key", key, keys.KeyMetadata{ID: "loadall-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 
 				const numReaders = 10
 				results := make(chan int, numReaders)
@@ -552,7 +578,7 @@ var _ = Describe("DiskKeyStore", func() {
 				expectOpsMetrics("save", "success")
 				ds := newMetricStore()
 				key := newTestKey()
-				Expect(ds.Save(ctx, "metric-save-key", key, keys.KeyMetadata{ID: "metric-save-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 			})
 		})
 
@@ -573,18 +599,18 @@ var _ = Describe("DiskKeyStore", func() {
 				// Pre-save via unmetered store
 				plain, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 				key := newTestKey()
-				Expect(plain.Save(ctx, "metric-load-key", key, keys.KeyMetadata{ID: "metric-load-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(plain.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 
 				expectOpsMetrics("load_key", "success")
 				ds := newMetricStore()
-				_, _, err := ds.LoadKey(ctx, "metric-load-key")
+				_, _, err := ds.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
 				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("should record not_found status for missing keys", func() {
 				expectOpsMetrics("load_key", "not_found")
 				ds := newMetricStore()
-				_, _, err := ds.LoadKey(ctx, "ghost-key")
+				_, _, err := ds.LoadKey(ctx, "ffffffff-ffff-4fff-ffff-ffffffffffff")
 				Expect(err).To(HaveOccurred())
 			})
 		})
@@ -593,11 +619,11 @@ var _ = Describe("DiskKeyStore", func() {
 			It("should record success metrics", func() {
 				plain, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 				key := newTestKey()
-				Expect(plain.Save(ctx, "metric-update-key", key, keys.KeyMetadata{ID: "metric-update-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(plain.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 
 				expectOpsMetrics("update_metadata", "success")
 				ds := newMetricStore()
-				Expect(ds.UpdateMetadata(ctx, "metric-update-key", keys.KeyMetadata{ID: "metric-update-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.UpdateMetadata(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 			})
 		})
 
@@ -605,11 +631,11 @@ var _ = Describe("DiskKeyStore", func() {
 			It("should record success metrics", func() {
 				plain, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: dir, KeySize: 2048})
 				key := newTestKey()
-				Expect(plain.Save(ctx, "metric-delete-key", key, keys.KeyMetadata{ID: "metric-delete-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(plain.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 
 				expectOpsMetrics("delete", "success")
 				ds := newMetricStore()
-				Expect(ds.Delete(ctx, "metric-delete-key")).To(Succeed())
+				Expect(ds.Delete(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")).To(Succeed())
 			})
 		})
 
@@ -619,13 +645,13 @@ var _ = Describe("DiskKeyStore", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				key := newTestKey()
-				Expect(ds.Save(ctx, "nil-metrics-key", key, keys.KeyMetadata{ID: "nil-metrics-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(ds.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 				Expect(func() { _, _ = ds.LoadAll(ctx) }).NotTo(Panic())
-				Expect(func() { _, _, _ = ds.LoadKey(ctx, "nil-metrics-key") }).NotTo(Panic())
+				Expect(func() { _, _, _ = ds.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa") }).NotTo(Panic())
 				Expect(func() {
-					_ = ds.UpdateMetadata(ctx, "nil-metrics-key", keys.KeyMetadata{ID: "nil-metrics-key", CreatedAt: time.Now()})
+					_ = ds.UpdateMetadata(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})
 				}).NotTo(Panic())
-				Expect(func() { _ = ds.Delete(ctx, "nil-metrics-key") }).NotTo(Panic())
+				Expect(func() { _ = ds.Delete(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa") }).NotTo(Panic())
 			})
 		})
 	})
@@ -653,23 +679,23 @@ var _ = Describe("DiskKeyStore", func() {
 		Context("Save — success path", func() {
 			It("should start a span named DiskKeyStore.Save with key_id and StatusOK", func() {
 				mockTracer.EXPECT().Start(gomock.Any(), "DiskKeyStore.Save", gomock.Any()).Return(ctx, mockSpan)
-				mockSpan.EXPECT().SetAttribute("key_id", "trace-save-key")
+				mockSpan.EXPECT().SetAttribute("key_id", "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
 				mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 				mockSpan.EXPECT().End()
 
 				key := newTestKey()
-				Expect(tracingStore.Save(ctx, "trace-save-key", key, keys.KeyMetadata{ID: "trace-save-key", CreatedAt: time.Now()})).To(Succeed())
+				Expect(tracingStore.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
 			})
 		})
 
 		Context("LoadKey — error path", func() {
 			It("should call RecordError and StatusError when key is not found", func() {
 				mockTracer.EXPECT().Start(gomock.Any(), "DiskKeyStore.LoadKey", gomock.Any()).Return(ctx, mockSpan)
-				mockSpan.EXPECT().SetAttribute("key_id", "missing-trace-key")
+				mockSpan.EXPECT().SetAttribute("key_id", "ffffffff-ffff-4fff-ffff-ffffffffffff")
 				mockSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
 				mockSpan.EXPECT().End()
 
-				_, _, err := tracingStore.LoadKey(ctx, "missing-trace-key")
+				_, _, err := tracingStore.LoadKey(ctx, "ffffffff-ffff-4fff-ffff-ffffffffffff")
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
 			})
 		})
