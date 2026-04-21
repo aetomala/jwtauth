@@ -54,7 +54,7 @@ func main() {
 	store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: pm})
 
 	// Create TokenService
-	mgr, err := tokens.NewManager(tokens.ManagerConfig{
+	mgr, err := tokens.NewManager(tokens.TokenManagerConfig{
 		KeyManager:           km,
 		RefreshStore:         store,
 		AccessTokenDuration:  15 * time.Minute,

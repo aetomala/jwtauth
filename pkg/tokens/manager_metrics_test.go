@@ -41,7 +41,7 @@ var _ = Describe("TokenManager Metrics", func() {
 		mockStore = testutil.NewMockRefreshStore(ctrl)
 		mockM = testutil.NewMockMetrics(ctrl)
 
-		service, err = tokens.NewManager(tokens.ManagerConfig{
+		service, err = tokens.NewManager(tokens.TokenManagerConfig{
 			KeyManager:           mockKM,
 			RefreshStore:         mockStore,
 			Metrics:              mockM,
@@ -385,7 +385,7 @@ var _ = Describe("TokenManager Metrics", func() {
 
 	Describe("nil metrics", func() {
 		It("does not panic when Metrics is nil", func() {
-			nilService, nilMetricsErr := tokens.NewManager(tokens.ManagerConfig{
+			nilService, nilMetricsErr := tokens.NewManager(tokens.TokenManagerConfig{
 				KeyManager:          mockKM,
 				RefreshStore:        mockStore,
 				Metrics:             nil,

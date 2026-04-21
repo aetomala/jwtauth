@@ -60,7 +60,7 @@ var _ = Describe("TokenManager", func() {
 	})
 
 	createService := func() *tokens.Manager {
-		config := tokens.ManagerConfig{
+		config := tokens.TokenManagerConfig{
 			KeyManager:           mockKM,
 			RefreshStore:         mockStore,
 			Logger:               mockLogger,

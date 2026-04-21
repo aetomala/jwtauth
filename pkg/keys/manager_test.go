@@ -28,7 +28,7 @@ func newTestKey() *rsa.PrivateKey {
 	return key
 }
 
-// newTestConfig returns a ManagerConfig wired to the given MockKeyStore with
+// newTestConfig returns a KeyManagerConfig wired to the given MockKeyStore with
 // short rotation/overlap durations suitable for tests.
 func newTestConfig(mockKS *testutil.MockKeyStore) keys.KeyManagerConfig {
 	return keys.KeyManagerConfig{

@@ -74,7 +74,7 @@ var _ = Describe("TokenManager", func() {
 	})
 
 	createService := func() *tokens.Manager {
-		config := tokens.ManagerConfig{
+		config := tokens.TokenManagerConfig{
 			KeyManager:           mockKM,
 			RefreshStore:         mockStore,
 			Logger:               mockLogger,
@@ -96,7 +96,7 @@ var _ = Describe("TokenManager", func() {
 	Describe("NewManager", func() {
 		Context("with valid configuration", func() {
 			It("should create service successfully", func() {
-				config := tokens.ManagerConfig{
+				config := tokens.TokenManagerConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
 							Logger:               mockLogger,
@@ -109,7 +109,7 @@ var _ = Describe("TokenManager", func() {
 			})
 
 			It("should work without optional logger", func() {
-				config := tokens.ManagerConfig{
+				config := tokens.TokenManagerConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
 							Logger:               nil, // Optional
@@ -124,7 +124,7 @@ var _ = Describe("TokenManager", func() {
 			})
 
 			It("should use default durations when not specified", func() {
-				config := tokens.ManagerConfig{
+				config := tokens.TokenManagerConfig{
 					KeyManager:   mockKM,
 					RefreshStore: mockStore,
 						// Durations not specified
@@ -139,7 +139,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("with invalid configuration", func() {
 			It("should return error when KeyManager is nil", func() {
-				config := tokens.ManagerConfig{
+				config := tokens.TokenManagerConfig{
 					KeyManager:   nil, // Required
 					RefreshStore: mockStore,
 					}
@@ -151,7 +151,7 @@ var _ = Describe("TokenManager", func() {
 			})
 
 			It("should return error when RefreshStore is nil", func() {
-				config := tokens.ManagerConfig{
+				config := tokens.TokenManagerConfig{
 					KeyManager:   mockKM,
 					RefreshStore: nil, // Required
 					}
@@ -162,7 +162,7 @@ var _ = Describe("TokenManager", func() {
 
 
 			It("should return error for invalid token durations", func() {
-				config := tokens.ManagerConfig{
+				config := tokens.TokenManagerConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
 							AccessTokenDuration:  -1 * time.Minute, // Invalid
@@ -176,7 +176,7 @@ var _ = Describe("TokenManager", func() {
 			})
 
 			It("should return error for invalid refresh token durations", func() {
-				config := tokens.ManagerConfig{
+				config := tokens.TokenManagerConfig{
 					KeyManager:           mockKM,
 					RefreshStore:         mockStore,
 							AccessTokenDuration:  5 * time.Minute,
@@ -190,7 +190,7 @@ var _ = Describe("TokenManager", func() {
 			})
 
 			It("should return error for negative ClockSkew", func() {
-				config := tokens.ManagerConfig{
+				config := tokens.TokenManagerConfig{
 					KeyManager: mockKM,
 					RefreshStore: mockStore,
 					ClockSkew:  -1 * time.Second,
@@ -204,8 +204,8 @@ var _ = Describe("TokenManager", func() {
 		})
 
 		Context("tracer defaults and acceptance", func() {
-			It("should apply default Tracer from DefaultManagerConfig when Tracer is nil", func() {
-				mgr, err := tokens.NewManager(tokens.ManagerConfig{
+			It("should apply default Tracer from DefaultTokenManagerConfig when Tracer is nil", func() {
+				mgr, err := tokens.NewManager(tokens.TokenManagerConfig{
 					KeyManager:   mockKM,
 					RefreshStore: mockStore,
 				})
@@ -224,7 +224,7 @@ var _ = Describe("TokenManager", func() {
 				mockSp.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
 				mockSp.EXPECT().RecordError(gomock.Any()).AnyTimes()
 
-				mgr, err := tokens.NewManager(tokens.ManagerConfig{
+				mgr, err := tokens.NewManager(tokens.TokenManagerConfig{
 					KeyManager:   mockKM,
 					RefreshStore: mockStore,
 					Tracer:       mockT,
@@ -920,7 +920,7 @@ var _ = Describe("TokenManager", func() {
 			var leewayService *tokens.Manager
 
 			BeforeEach(func() {
-				config := tokens.ManagerConfig{
+				config := tokens.TokenManagerConfig{
 					KeyManager:          mockKM,
 					RefreshStore:        mockStore,
 					Logger:              mockLogger,
@@ -2054,7 +2054,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 		Expect(err).NotTo(HaveOccurred())
 		testKeyID = "tracing-key-id"
 
-		manager, err = tokens.NewManager(tokens.ManagerConfig{
+		manager, err = tokens.NewManager(tokens.TokenManagerConfig{
 			KeyManager:           mockKM,
 			RefreshStore:         mockStore,
 			Tracer:               mockTracer,

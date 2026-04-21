@@ -23,7 +23,7 @@ func TestIntegration(t *testing.T) {
 // ManagerFactory creates a configured but not-yet-started TokenManager along with its
 // KeyManager and a cleanup function. The caller is responsible for calling Start and
 // Shutdown on the returned manager, and calling cleanup after Shutdown.
-type ManagerFactory func(cfg tokens.ManagerConfig) (mgr *tokens.Manager, km *keys.Manager, cleanup func())
+type ManagerFactory func(cfg tokens.TokenManagerConfig) (mgr *tokens.Manager, km *keys.Manager, cleanup func())
 
 // RunTokenManagerIntegrationTests runs the full TokenManager behavioral contract suite
 // against the storage backend provided by factory. It is called once per backend
@@ -41,7 +41,7 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 			ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 
 			var cleanup func()
-			mgr, km, cleanup = factory(tokens.ManagerConfig{
+			mgr, km, cleanup = factory(tokens.TokenManagerConfig{
 				AccessTokenDuration:  5 * time.Minute,
 				RefreshTokenDuration: 1 * time.Hour,
 				CleanupInterval:      5 * time.Minute,
@@ -156,7 +156,7 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 		})
 
 		It("should reject operations when service is not running", func() {
-			mgr2, _, cleanup2 := factory(tokens.ManagerConfig{
+			mgr2, _, cleanup2 := factory(tokens.TokenManagerConfig{
 				AccessTokenDuration:  5 * time.Minute,
 				RefreshTokenDuration: 1 * time.Hour,
 				Issuer:               "integration-test",
@@ -225,7 +225,7 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 		It("should clean up expired tokens", func() {
 			userID := "cleanup-user"
 
-			mgr2, _, cleanup2 := factory(tokens.ManagerConfig{
+			mgr2, _, cleanup2 := factory(tokens.TokenManagerConfig{
 				AccessTokenDuration:  5 * time.Minute,
 				RefreshTokenDuration: 100 * time.Millisecond,
 				CleanupInterval:      10 * time.Second,
@@ -378,7 +378,7 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 			_, err = mgr.RefreshAccessToken(ctx, "not-a-valid-token")
 			Expect(err).To(HaveOccurred())
 
-			mgr2, _, cleanup2 := factory(tokens.ManagerConfig{
+			mgr2, _, cleanup2 := factory(tokens.TokenManagerConfig{
 				AccessTokenDuration:  5 * time.Minute,
 				RefreshTokenDuration: 50 * time.Millisecond,
 				Issuer:               "integration-test",
