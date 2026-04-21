@@ -1049,8 +1049,8 @@ All spans set `StatusOK` on success and `RecordError` + `StatusError` on failure
 github.com/aetomala/jwtauth/
 ├── pkg/                          # Public API packages
 │   ├── logging/                  # Logging abstraction
-│   │   ├── logger.go             # Logger interface (4 methods: Debug, Info, Warn, Error)
-│   │   ├── slog_adapter.go       # Standard library adapter
+│   │   ├── interface.go          # Logger interface (4 methods: Debug, Info, Warn, Error)
+│   │   ├── slog.go               # Standard library adapter
 │   │   ├── noop.go               # NoOp implementation
 │   │   ├── logger_test.go        # Logging tests (76 specs)
 │   │   └── README.md             # Usage documentation
