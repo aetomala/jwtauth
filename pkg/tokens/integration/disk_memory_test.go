@@ -20,7 +20,7 @@ func init() {
 	)
 }
 
-func diskMemoryFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keys.Manager, func()) {
+func diskMemoryFactory(cfg tokens.TokenManagerConfig) (*tokens.Manager, *keys.Manager, func()) {
 	tmpDir, err := os.MkdirTemp("", "integration-disk-*")
 	Expect(err).NotTo(HaveOccurred())
 

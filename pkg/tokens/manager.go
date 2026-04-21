@@ -20,7 +20,7 @@
 //
 // Example usage:
 //
-//	config := tokens.ManagerConfig{
+//	config := tokens.TokenManagerConfig{
 //	    KeyManager:   keyManager,        // Handles RSA keys and rotation
 //	    RefreshStore: refreshStore,      // Persists refresh tokens (Redis, Memory, etc.)
 //	    Logger:       logger,            // Optional structured logging
@@ -87,11 +87,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// ManagerConfig holds the configuration for a Manager.
+// TokenManagerConfig holds the configuration for a Manager.
 //
 // KeyManager and RefreshStore are required. All duration fields
-// default to production-safe values via DefaultManagerConfig if left at zero.
-type ManagerConfig struct {
+// default to production-safe values via DefaultTokenManagerConfig if left at zero.
+type TokenManagerConfig struct {
 	// Required dependencies
 	KeyManager   keys.KeyManager // Signs and validates tokens
 	RefreshStore storage.RefreshStore  // Persists refresh tokens
@@ -157,10 +157,10 @@ func ErrInvalidConfig(msg string) error {
 	return errors.New(msg)
 }
 
-// DefaultManagerConfig returns a ManagerConfig populated with production-safe defaultm.
+// DefaultTokenManagerConfig returns a TokenManagerConfig populated with production-safe defaultm.
 // NewManager applies these automatically for any zero-value duration fieldm.
-func DefaultManagerConfig() ManagerConfig {
-	return ManagerConfig{
+func DefaultTokenManagerConfig() TokenManagerConfig {
+	return TokenManagerConfig{
 		AccessTokenDuration:  15 * time.Minute,
 		RefreshTokenDuration: 30 * 24 * time.Hour,
 		CleanupInterval:      1 * time.Hour,
@@ -177,29 +177,29 @@ func (m *Manager) IsRunning() bool {
 }
 
 // NewManager constructs a Manager from the given config. Zero-value duration
-// fields are filled with defaults from DefaultManagerConfig. Returns an error if any
+// fields are filled with defaults from DefaultTokenManagerConfig. Returns an error if any
 // required dependency is nil or a duration is negative.
-func NewManager(config ManagerConfig) (*Manager, error) {
+func NewManager(config TokenManagerConfig) (*Manager, error) {
 	if config.AccessTokenDuration == 0 {
-		config.AccessTokenDuration = DefaultManagerConfig().AccessTokenDuration
+		config.AccessTokenDuration = DefaultTokenManagerConfig().AccessTokenDuration
 	}
 
 	if config.RefreshTokenDuration == 0 {
-		config.RefreshTokenDuration = DefaultManagerConfig().RefreshTokenDuration
+		config.RefreshTokenDuration = DefaultTokenManagerConfig().RefreshTokenDuration
 	}
 
 	if config.CleanupInterval == 0 {
-		config.CleanupInterval = DefaultManagerConfig().CleanupInterval
+		config.CleanupInterval = DefaultTokenManagerConfig().CleanupInterval
 	}
 
 	if config.Logger == nil {
-		config.Logger = DefaultManagerConfig().Logger
+		config.Logger = DefaultTokenManagerConfig().Logger
 	}
 	if config.Metrics == nil {
-		config.Metrics = DefaultManagerConfig().Metrics
+		config.Metrics = DefaultTokenManagerConfig().Metrics
 	}
 	if config.Tracer == nil {
-		config.Tracer = DefaultManagerConfig().Tracer
+		config.Tracer = DefaultTokenManagerConfig().Tracer
 	}
 
 	if config.KeyManager == nil {

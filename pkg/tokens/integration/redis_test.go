@@ -68,7 +68,7 @@ func init() {
 			storeA, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
-			mgrA, err := tokens.NewManager(tokens.ManagerConfig{
+			mgrA, err := tokens.NewManager(tokens.TokenManagerConfig{
 				KeyManager:           kmA,
 				RefreshStore:         storeA,
 				AccessTokenDuration:  5 * time.Minute,
@@ -98,7 +98,7 @@ func init() {
 			storeB, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
-			mgrB, err := tokens.NewManager(tokens.ManagerConfig{
+			mgrB, err := tokens.NewManager(tokens.TokenManagerConfig{
 				KeyManager:           kmB,
 				RefreshStore:         storeB,
 				AccessTokenDuration:  5 * time.Minute,
@@ -155,7 +155,7 @@ func init() {
 			storeA, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
-			mgrA, err := tokens.NewManager(tokens.ManagerConfig{
+			mgrA, err := tokens.NewManager(tokens.TokenManagerConfig{
 				KeyManager:           kmA,
 				RefreshStore:         storeA,
 				AccessTokenDuration:  5 * time.Minute,
@@ -198,7 +198,7 @@ func init() {
 			storeB, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
-			mgrB, err := tokens.NewManager(tokens.ManagerConfig{
+			mgrB, err := tokens.NewManager(tokens.TokenManagerConfig{
 				KeyManager:           kmB,
 				RefreshStore:         storeB,
 				AccessTokenDuration:  5 * time.Minute,
@@ -228,7 +228,7 @@ func init() {
 
 // redisFactory creates a TokenManager backed by RedisKeyStore + RedisRefreshStore
 // using an isolated miniredis instance. Each call produces a fully independent backend.
-func redisFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keys.Manager, func()) {
+func redisFactory(cfg tokens.TokenManagerConfig) (*tokens.Manager, *keys.Manager, func()) {
 	mr, err := miniredis.Run()
 	Expect(err).NotTo(HaveOccurred())
 
