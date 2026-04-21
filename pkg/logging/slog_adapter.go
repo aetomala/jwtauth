@@ -22,7 +22,7 @@ import (
 //	})
 //	logger := logging.NewSlogAdapter(slog.New(handler))
 //
-//	config := keymanager.ManagerConfig{
+//	config := keys.KeyManagerConfig{
 //	    Logger: logger,
 //	}
 //

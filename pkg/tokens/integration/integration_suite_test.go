@@ -11,7 +11,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
 
@@ -23,7 +23,7 @@ func TestIntegration(t *testing.T) {
 // ManagerFactory creates a configured but not-yet-started TokenManager along with its
 // KeyManager and a cleanup function. The caller is responsible for calling Start and
 // Shutdown on the returned manager, and calling cleanup after Shutdown.
-type ManagerFactory func(cfg tokens.ManagerConfig) (mgr *tokens.Manager, km *keymanager.Manager, cleanup func())
+type ManagerFactory func(cfg tokens.ManagerConfig) (mgr *tokens.Manager, km *keys.Manager, cleanup func())
 
 // RunTokenManagerIntegrationTests runs the full TokenManager behavioral contract suite
 // against the storage backend provided by factory. It is called once per backend
@@ -32,7 +32,7 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 	Describe(description, func() {
 		var (
 			mgr    *tokens.Manager
-			km     *keymanager.Manager
+			km     *keys.Manager
 			ctx    context.Context
 			cancel context.CancelFunc
 		)

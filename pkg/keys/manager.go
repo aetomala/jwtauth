@@ -1,4 +1,4 @@
-// Package keymanager provides zero-downtime RSA key rotation for JWT signing.
+// Package keys provides zero-downtime RSA key rotation for JWT signing.
 //
 // KeyManager generates RSA key pairs, rotates them on a configurable schedule, and
 // maintains an overlap period where both old and new keys remain valid. This enables
@@ -22,13 +22,13 @@
 // Example usage:
 //
 //	// Create a KeyStore (choose based on deployment)
-//	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: metrics})
+//	ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: metrics})
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //
 //	// Create KeyManager
-//	config := keymanager.ManagerConfig{
+//	config := keys.KeyManagerConfig{
 //	    KeyStore:            ks,
 //	    KeyRotationInterval: 30 * 24 * time.Hour, // 30 days
 //	    KeyOverlapDuration:  1 * time.Hour,        // 1 hour overlap
@@ -36,7 +36,7 @@
 //	    Metrics:             metrics,              // Optional
 //	}
 //
-//	mgr, err := keymanager.NewManager(config)
+//	mgr, err := keys.NewManager(config)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -84,7 +84,7 @@
 //   - Prometheus gauges (key age, time-until-rotation, validity)
 //   - Debugging token validation failures against a specific kid
 //   - Admin dashboards displaying key state
-package keymanager
+package keys
 
 import (
 	"context"
@@ -120,7 +120,7 @@ const (
 // for concurrent use.
 type Manager struct {
 	// ===== Configuration =====
-	config ManagerConfig // Configuration settings (key store, intervals, key size, logger)
+	config KeyManagerConfig // Configuration settings (key store, intervals, key size, logger)
 
 	// ===== Key Cache =====
 	keys         map[string]*KeyPair // keyID -> KeyPair; all keys (current + historical)
@@ -141,9 +141,9 @@ type Manager struct {
 	rotationTicker          *time.Ticker   // Fires at KeyRotationInterval for automatic rotation
 }
 
-// ManagerConfig holds configuration settings for the Manager.
+// KeyManagerConfig holds configuration settings for the Manager.
 // All fields should be set before passing to NewManager.
-type ManagerConfig struct {
+type KeyManagerConfig struct {
 	Logger              logging.Logger  // Optional; nil defaults to NoOpLogger.
 	KeyStore            KeyStore        // Required; the persistence backend for RSA key pairs
 	Metrics             metrics.Metrics // Optional; nil defaults to NoOpMetrics.
@@ -153,11 +153,11 @@ type ManagerConfig struct {
 	KeySize             int             // RSA key size in bits (minimum 2048)
 }
 
-// ConfigDefault returns a ManagerConfig with sensible defaults suitable for
+// DefaultKeyManagerConfig returns a KeyManagerConfig with sensible defaults suitable for
 // most production deployments. Set KeyStore before use, or override other
 // fields as needed.
-func ConfigDefault() ManagerConfig {
-	return ManagerConfig{
+func DefaultKeyManagerConfig() KeyManagerConfig {
+	return KeyManagerConfig{
 		KeySize:             2048,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		KeyOverlapDuration:  1 * time.Hour,
@@ -255,7 +255,7 @@ func (m *Manager) Keys() map[string]*KeyPair {
 // less than 2048 bits, ErrInvalidKeyRotationInterval if KeyRotationInterval is
 // negative, or ErrInvalidKeyOverlapDuration if KeyOverlapDuration is negative.
 // Applies defaults for zero-value duration and size fields before validation.
-func NewManager(config ManagerConfig) (*Manager, error) {
+func NewManager(config KeyManagerConfig) (*Manager, error) {
 	// ===== STEP 1: Validate Required Fields =====
 	if config.KeyStore == nil {
 		return nil, ErrInvalidKeyStore
@@ -273,7 +273,7 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	}
 
 	// ===== STEP 3: Apply Defaults for Zero Values =====
-	defaults := ConfigDefault()
+	defaults := DefaultKeyManagerConfig()
 
 	if config.KeySize == 0 {
 		config.KeySize = defaults.KeySize

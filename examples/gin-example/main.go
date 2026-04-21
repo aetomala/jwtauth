@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/aetomala/jwtauth/examples/gin-example/middleware"
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/storage"
@@ -25,12 +25,12 @@ func main() {
 	pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{})
 
 	// Create KeyStore and KeyManager
-	ks, err := keymanager.NewDiskKeyStore(keymanager.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: pm})
+	ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: pm})
 	if err != nil {
 		log.Fatal("Failed to create DiskKeyStore:", err)
 	}
 
-	km, err := keymanager.NewManager(keymanager.ManagerConfig{
+	km, err := keys.NewManager(keys.KeyManagerConfig{
 		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		Logger:              logger,

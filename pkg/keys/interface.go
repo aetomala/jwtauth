@@ -1,4 +1,4 @@
-package keymanager
+package keys
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 )
 
 // Generate mock from this interface using mockgen
-//go:generate mockgen -source=interface.go -destination=../../internal/testutil/mock_keymanager.go -package=testutil -mock_names=KeyManager=MockKeyManager
+//go:generate mockgen -source=interface.go -destination=../../internal/testutil/mock_keys.go -package=testutil -mock_names=KeyManager=MockKeyManager
 
 // KeyManager is a thread-safe interface for JWT key management operations,
 // suitable for use in long-running services with automatic key rotation. All

@@ -1,4 +1,4 @@
-package keymanager
+package keys
 
 // Metric names for KeyStore operations. Both DiskKeyStore and any future
 // implementations record the same set of metrics so the names are defined

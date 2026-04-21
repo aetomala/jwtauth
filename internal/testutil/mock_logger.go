@@ -18,7 +18,7 @@ var _ logging.Logger = (*MockLogger)(nil)
 //
 // mockLogger := testutil.NewMockLogger()
 //
-//	manager := keymanager.NewManager(keymanager.ManagerConfig{
+//	manager := keys.NewManager(keys.KeyManagerConfig{
 //			Logger: mockLogger,
 //	})
 //
