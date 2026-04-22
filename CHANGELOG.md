@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] — v0.4.0
 
+### Security
+
+- **`kid` path traversal fix** — `DiskKeyStore` and `RedisKeyStore` now validate the
+  `kid` header value against a UUID v4 format at every method boundary (`Save`,
+  `UpdateMetadata`, `LoadKey`, `Delete`) before constructing any filesystem path or
+  Redis key. Tokens with crafted `kid` values (e.g. `../../../etc/passwd`) are
+  rejected with `ErrKeyStoreInvalidKeyID` before any I/O. See ADR-004 and ADR-005.
+
 ### Changed
 
 - **`IssueAccessTokenWithClaims` parameter type changed** from `map[string]interface{}` to `CustomClaims` — update call sites: `map[string]interface{}{"k": v}` → `tokens.CustomClaims{"k": v}`.
