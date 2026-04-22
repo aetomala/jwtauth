@@ -68,8 +68,10 @@ var _ = Describe("RedisKeyStore", func() {
 				store, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client})
 				Expect(err).NotTo(HaveOccurred())
 				key := newTestKey()
-				Expect(store.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
-				_, _, err = store.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err = store.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
+				_, _, err = store.LoadKey(ctx, testKeyA)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
@@ -85,7 +87,9 @@ var _ = Describe("RedisKeyStore", func() {
 				store, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client, Tracer: mockTracer})
 				Expect(err).NotTo(HaveOccurred())
 				key := newTestKey()
-				Expect(store.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err = store.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
 			})
 		})
 
@@ -102,25 +106,29 @@ var _ = Describe("RedisKeyStore", func() {
 		Context("with a valid key and metadata", func() {
 			It("should persist PEM and metadata retrievable via LoadKey", func() {
 				key := newTestKey()
-				meta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()}
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
 
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, meta)).To(Succeed())
+				err := rs.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
 
-				loaded, loadedMeta, err := rs.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+				loaded, loadedMeta, err := rs.LoadKey(ctx, testKeyA)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(loaded.N.Cmp(key.N)).To(Equal(0))
-				Expect(loadedMeta.ID).To(Equal("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"))
+				Expect(loadedMeta.ID).To(Equal(testKeyA))
 			})
 
 			It("should overwrite an existing key on repeated Save", func() {
 				key1 := newTestKey()
 				key2 := newTestKey()
-				meta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()}
+				firstKeyMetadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
 
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key1, meta)).To(Succeed())
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key2, meta)).To(Succeed())
+				err := rs.Save(ctx, testKeyA, key1, firstKeyMetadata)
+				Expect(err).NotTo(HaveOccurred())
+				secondKeyMetadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err = rs.Save(ctx, testKeyA, key2, secondKeyMetadata)
+				Expect(err).NotTo(HaveOccurred())
 
-				loaded, _, err := rs.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+				loaded, _, err := rs.LoadKey(ctx, testKeyA)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(loaded.N.Cmp(key2.N)).To(Equal(0))
 			})
@@ -144,8 +152,12 @@ var _ = Describe("RedisKeyStore", func() {
 		Context("with saved keys", func() {
 			It("should return all saved non-expired keys", func() {
 				key1, key2 := newTestKey(), newTestKey()
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key1, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
-				Expect(rs.Save(ctx, "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", key2, keys.KeyMetadata{ID: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", CreatedAt: time.Now()})).To(Succeed())
+				firstKeyMetadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				secondKeyMetadata := keys.KeyMetadata{ID: testKeyB, CreatedAt: time.Now()}
+				err := rs.Save(ctx, testKeyA, key1, firstKeyMetadata)
+				Expect(err).NotTo(HaveOccurred())
+				err = rs.Save(ctx, testKeyB, key2, secondKeyMetadata)
+				Expect(err).NotTo(HaveOccurred())
 
 				keys, err := rs.LoadAll(ctx)
 				Expect(err).NotTo(HaveOccurred())
@@ -156,20 +168,24 @@ var _ = Describe("RedisKeyStore", func() {
 				active := newTestKey()
 				expired := newTestKey()
 
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", active, keys.KeyMetadata{
-					ID:        "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+				activeKeyMetadata := keys.KeyMetadata{
+					ID:        testKeyA,
 					CreatedAt: time.Now(),
-				})).To(Succeed())
-				Expect(rs.Save(ctx, "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", expired, keys.KeyMetadata{
-					ID:        "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb",
+				}
+				expiredKeyMetadata := keys.KeyMetadata{
+					ID:        testKeyB,
 					CreatedAt: time.Now().Add(-2 * time.Hour),
 					ExpiresAt: time.Now().Add(-1 * time.Hour),
-				})).To(Succeed())
+				}
+				err := rs.Save(ctx, testKeyA, active, activeKeyMetadata)
+				Expect(err).NotTo(HaveOccurred())
+				err = rs.Save(ctx, testKeyB, expired, expiredKeyMetadata)
+				Expect(err).NotTo(HaveOccurred())
 
 				keys, err := rs.LoadAll(ctx)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(keys).To(HaveLen(1))
-				Expect(keys[0].KeyID).To(Equal("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"))
+				Expect(keys[0].KeyID).To(Equal(testKeyA))
 			})
 		})
 
@@ -198,20 +214,21 @@ var _ = Describe("RedisKeyStore", func() {
 			It("should return the private key and metadata", func() {
 				key := newTestKey()
 				now := time.Now().Truncate(time.Second)
-				meta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: now}
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, meta)).To(Succeed())
+				savedMetadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: now}
+				err := rs.Save(ctx, testKeyA, key, savedMetadata)
+				Expect(err).NotTo(HaveOccurred())
 
-				loaded, loadedMeta, err := rs.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+				loaded, loadedMeta, err := rs.LoadKey(ctx, testKeyA)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(loaded).NotTo(BeNil())
 				Expect(loaded.N.Cmp(key.N)).To(Equal(0))
-				Expect(loadedMeta.ID).To(Equal("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"))
+				Expect(loadedMeta.ID).To(Equal(testKeyA))
 			})
 		})
 
 		Context("missing or invalid key", func() {
 			It("should return ErrKeyStoreKeyNotFound for a missing key ID", func() {
-				_, _, err := rs.LoadKey(ctx, "ffffffff-ffff-4fff-ffff-ffffffffffff")
+				_, _, err := rs.LoadKey(ctx, testKeyMissing)
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
 			})
 
@@ -263,13 +280,16 @@ var _ = Describe("RedisKeyStore", func() {
 			It("should persist the updated ExpiresAt and be visible on LoadKey", func() {
 				key := newTestKey()
 				now := time.Now()
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: now})).To(Succeed())
+				savedMetadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: now}
+				err := rs.Save(ctx, testKeyA, key, savedMetadata)
+				Expect(err).NotTo(HaveOccurred())
 
 				expiry := now.Add(1 * time.Hour)
-				updatedMeta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: now, ExpiresAt: expiry}
-				Expect(rs.UpdateMetadata(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", updatedMeta)).To(Succeed())
+				updatedMetadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: now, ExpiresAt: expiry}
+				err = rs.UpdateMetadata(ctx, testKeyA, updatedMetadata)
+				Expect(err).NotTo(HaveOccurred())
 
-				_, loadedMeta, err := rs.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+				_, loadedMeta, err := rs.LoadKey(ctx, testKeyA)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(loadedMeta.ExpiresAt.UTC().Truncate(time.Second)).To(Equal(expiry.UTC().Truncate(time.Second)))
 			})
@@ -277,8 +297,8 @@ var _ = Describe("RedisKeyStore", func() {
 
 		Context("updating a non-existent key", func() {
 			It("should return ErrKeyStoreKeyNotFound", func() {
-				meta := keys.KeyMetadata{ID: "ffffffff-ffff-4fff-ffff-ffffffffffff", CreatedAt: time.Now()}
-				err := rs.UpdateMetadata(ctx, "ffffffff-ffff-4fff-ffff-ffffffffffff", meta)
+				metadata := keys.KeyMetadata{ID: testKeyMissing, CreatedAt: time.Now()}
+				err := rs.UpdateMetadata(ctx, testKeyMissing, metadata)
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
 			})
 		})
@@ -300,18 +320,24 @@ var _ = Describe("RedisKeyStore", func() {
 		Context("deleting an existing key", func() {
 			It("should remove both PEM and metadata from Redis", func() {
 				key := newTestKey()
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := rs.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
 
-				Expect(rs.Delete(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")).To(Succeed())
+				err = rs.Delete(ctx, testKeyA)
+				Expect(err).NotTo(HaveOccurred())
 
-				_, _, err := rs.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+				_, _, err = rs.LoadKey(ctx, testKeyA)
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
 			})
 
 			It("should make the key absent from LoadAll after deletion", func() {
 				key := newTestKey()
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
-				Expect(rs.Delete(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := rs.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
+				err = rs.Delete(ctx, testKeyA)
+				Expect(err).NotTo(HaveOccurred())
 
 				keys, err := rs.LoadAll(ctx)
 				Expect(err).NotTo(HaveOccurred())
@@ -321,7 +347,8 @@ var _ = Describe("RedisKeyStore", func() {
 
 		Context("deleting a non-existent key", func() {
 			It("should succeed without error — idempotent", func() {
-				Expect(rs.Delete(ctx, "ffffffff-ffff-4fff-ffff-ffffffffffff")).To(Succeed())
+				err := rs.Delete(ctx, testKeyMissing)
+				Expect(err).NotTo(HaveOccurred())
 			})
 		})
 
@@ -378,9 +405,9 @@ var _ = Describe("RedisKeyStore", func() {
 					Bytes: x509.MarshalPKCS1PrivateKey(key),
 				})
 				// Write PEM only — no metadata
-				Expect(client.Set(ctx, "ks:pem:aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", string(pemBytes), 0).Err()).To(Succeed())
+				Expect(client.Set(ctx, "ks:pem:"+testKeyA, string(pemBytes), 0).Err()).To(Succeed())
 
-				_, _, err := rs.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+				_, _, err := rs.LoadKey(ctx, testKeyA)
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
 			})
 		})
@@ -391,8 +418,8 @@ var _ = Describe("RedisKeyStore", func() {
 				defer miniRedis.SetError("")
 
 				key := newTestKey()
-				meta := keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()}
-				err := rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, meta)
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := rs.Save(ctx, testKeyA, key, metadata)
 				Expect(err).To(HaveOccurred())
 			})
 		})
@@ -407,7 +434,9 @@ var _ = Describe("RedisKeyStore", func() {
 
 				// Pre-save one key for readers
 				preKey := newTestKey()
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", preKey, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := rs.Save(ctx, testKeyA, preKey, metadata)
+				Expect(err).NotTo(HaveOccurred())
 
 				// Concurrent readers
 				for i := 0; i < numOps; i++ {
@@ -415,7 +444,7 @@ var _ = Describe("RedisKeyStore", func() {
 					go func() {
 						defer GinkgoRecover()
 						defer wg.Done()
-						_, _, err := rs.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+						_, _, err := rs.LoadKey(ctx, testKeyA)
 						Expect(err).NotTo(HaveOccurred())
 					}()
 				}
@@ -427,7 +456,7 @@ var _ = Describe("RedisKeyStore", func() {
 						defer GinkgoRecover()
 						defer wg.Done()
 						key := newTestKey()
-						_ = rs.Save(ctx, "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", key, keys.KeyMetadata{ID: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb", CreatedAt: time.Now()})
+						_ = rs.Save(ctx, testKeyB, key, keys.KeyMetadata{ID: testKeyB, CreatedAt: time.Now()})
 					}()
 				}
 
@@ -438,7 +467,9 @@ var _ = Describe("RedisKeyStore", func() {
 		Context("concurrent LoadAll", func() {
 			It("should return consistent results under concurrent reads", func() {
 				key := newTestKey()
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := rs.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
 
 				const numReaders = 10
 				results := make(chan int, numReaders)
@@ -502,7 +533,9 @@ var _ = Describe("RedisKeyStore", func() {
 				expectOpsMetrics("save", "success")
 				store := newMetricStore()
 				key := newTestKey()
-				Expect(store.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := store.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
 			})
 		})
 
@@ -522,11 +555,13 @@ var _ = Describe("RedisKeyStore", func() {
 			It("should record success metrics", func() {
 				// Pre-save via unmetered store
 				key := newTestKey()
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := rs.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
 
 				expectOpsMetrics("load_key", "success")
 				store := newMetricStore()
-				_, _, err := store.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+				_, _, err = store.LoadKey(ctx, testKeyA)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
@@ -541,36 +576,45 @@ var _ = Describe("RedisKeyStore", func() {
 		Context("UpdateMetadata", func() {
 			It("should record success metrics", func() {
 				key := newTestKey()
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := rs.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
 
 				expectOpsMetrics("update_metadata", "success")
 				store := newMetricStore()
-				Expect(store.UpdateMetadata(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				updatedMetadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err = store.UpdateMetadata(ctx, testKeyA, updatedMetadata)
+				Expect(err).NotTo(HaveOccurred())
 			})
 		})
 
 		Context("Delete", func() {
 			It("should record success metrics", func() {
 				key := newTestKey()
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := rs.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
 
 				expectOpsMetrics("delete", "success")
 				store := newMetricStore()
-				Expect(store.Delete(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")).To(Succeed())
+				err = store.Delete(ctx, testKeyA)
+				Expect(err).NotTo(HaveOccurred())
 			})
 		})
 
 		Context("nil metrics", func() {
 			It("should not panic when metrics is nil", func() {
 				key := newTestKey()
-				Expect(rs.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := rs.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
 
 				Expect(func() { _, _ = rs.LoadAll(ctx) }).NotTo(Panic())
-				Expect(func() { _, _, _ = rs.LoadKey(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa") }).NotTo(Panic())
+				Expect(func() { _, _, _ = rs.LoadKey(ctx, testKeyA) }).NotTo(Panic())
 				Expect(func() {
-					_ = rs.UpdateMetadata(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})
+					_ = rs.UpdateMetadata(ctx, testKeyA, keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()})
 				}).NotTo(Panic())
-				Expect(func() { _ = rs.Delete(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa") }).NotTo(Panic())
+				Expect(func() { _ = rs.Delete(ctx, testKeyA) }).NotTo(Panic())
 			})
 		})
 	})
@@ -598,24 +642,26 @@ var _ = Describe("RedisKeyStore", func() {
 		Context("Save — success path", func() {
 			It("should start a span named RedisKeyStore.Save with storage.backend, key_id and StatusOK", func() {
 				mockTracer.EXPECT().Start(gomock.Any(), "RedisKeyStore.Save", gomock.Any()).Return(ctx, mockSpan)
-				mockSpan.EXPECT().SetAttribute("key_id", "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+				mockSpan.EXPECT().SetAttribute("key_id", testKeyA)
 				mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 				mockSpan.EXPECT().End()
 
 				key := newTestKey()
-				Expect(tracingStore.Save(ctx, "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", key, keys.KeyMetadata{ID: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", CreatedAt: time.Now()})).To(Succeed())
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				err := tracingStore.Save(ctx, testKeyA, key, metadata)
+				Expect(err).NotTo(HaveOccurred())
 			})
 		})
 
 		Context("LoadKey — error path", func() {
 			It("should call RecordError and StatusError when key is not found", func() {
 				mockTracer.EXPECT().Start(gomock.Any(), "RedisKeyStore.LoadKey", gomock.Any()).Return(ctx, mockSpan)
-				mockSpan.EXPECT().SetAttribute("key_id", "ffffffff-ffff-4fff-ffff-ffffffffffff")
+				mockSpan.EXPECT().SetAttribute("key_id", testKeyMissing)
 				mockSpan.EXPECT().RecordError(keys.ErrKeyStoreKeyNotFound)
 				mockSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
 				mockSpan.EXPECT().End()
 
-				_, _, err := tracingStore.LoadKey(ctx, "ffffffff-ffff-4fff-ffff-ffffffffffff")
+				_, _, err := tracingStore.LoadKey(ctx, testKeyMissing)
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
 			})
 		})
