@@ -154,7 +154,9 @@ github.com/aetomala/jwtauth/
 │       ├── README.md              # ADR index
 │       ├── 001-no-rate-limiting.md
 │       ├── 002-stateful-refresh-tokens.md
-│       └── 003-rs256-only.md
+│       ├── 003-rs256-only.md
+│       ├── 004-kid-validation.md
+│       └── 005-security-boundaries.md
 ├── examples/                      # Framework usage examples
 │   ├── README.md                  # Examples overview
 │   ├── gin-example/               # Gin HTTP framework
@@ -1159,6 +1161,8 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 | [001](adr/001-no-rate-limiting.md) | No Rate Limiting in Library | 2026-03-11 |
 | [002](adr/002-stateful-refresh-tokens.md) | Stateful Refresh Tokens | 2026-03-18 |
 | [003](adr/003-rs256-only.md) | RS256 Only (No Algorithm Flexibility) | 2026-04-01 |
+| [004](adr/004-kid-validation.md) | `kid` UUID Validation at KeyStore Boundary | 2026-04-21 |
+| [005](adr/005-security-boundaries.md) | Security Boundaries — Attacker-Controlled Token Fields | 2026-04-21 |
 
 ---
 
