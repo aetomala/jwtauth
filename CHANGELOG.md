@@ -107,6 +107,8 @@ All notable changes to this project will be documented in this file.
 
 - **`doc/ARCHITECTURE.md` — terminology and positioning** — updated title and overview to reflect stateful JWT authorization engine positioning; replaced all "TokenManager" occurrences with "TokenService" / `Manager`.
 
+- **ADR-004 and ADR-005 cross-referenced in `README.md` and `doc/ARCHITECTURE.md`** — `004-kid-validation.md` and `005-security-boundaries.md` added to the `doc/adr/` directory tree and the Architecture Decision Records table in both files.
+
 - **`doc/MIGRATION.md`** — new file; step-by-step migration guides from `golang-jwt/jwt` (manual token management → jwtauth), `gin-jwt` (framework lock-in → framework-agnostic middleware), and `lestrrat-go/jwx` (JOSE toolkit → focused engine). Covers common patterns (adding refresh tokens, adding revocation, zero-downtime key rotation), single-instance-to-distributed upgrade path, and a 10-item migration checklist.
 
 - **`doc/adr/`** — new directory; three Architecture Decision Records:
