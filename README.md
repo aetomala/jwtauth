@@ -601,14 +601,14 @@ graph TB
     end
 
     subgraph "Application Layer (Stateless)"
-        API1[API Instance 1<br/>tokens.Manager<br/>keys.Manager]
-        API2[API Instance 2<br/>tokens.Manager<br/>keys.Manager]
-        API3[API Instance 3<br/>tokens.Manager<br/>keys.Manager]
+        API1["API Instance 1\ntokens.Manager\nkeys.Manager"]
+        API2["API Instance 2\ntokens.Manager\nkeys.Manager"]
+        API3["API Instance 3\ntokens.Manager\nkeys.Manager"]
     end
 
     subgraph "Shared Storage Layer"
-        RedisRefresh[(Redis<br/>RefreshStore<br/>refresh tokens)]
-        RedisKeys[(Redis<br/>KeyStore<br/>RSA keys)]
+        RedisRefresh[("Redis\nRefreshStore\nrefresh tokens")]
+        RedisKeys[("Redis\nKeyStore\nRSA keys")]
     end
 
     C1 --> LB
@@ -634,9 +634,6 @@ graph TB
     style RedisKeys fill:#ffe1e1
     style LB fill:#e1e5ff
 
-    classDef stateless fill:#e1f5e1,stroke:#2d5016,stroke-width:2px
-    classDef storage fill:#ffe1e1,stroke:#8b0000,stroke-width:2px
-    classDef infra fill:#e1e5ff,stroke:#000080,stroke-width:2px
 ```
 
 **Key characteristics:**
