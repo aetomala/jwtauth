@@ -43,27 +43,23 @@ var _ = Describe("Manager", func() {
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc
+		ctrl   *gomock.Controller
+		mockKS *testutil.MockKeyStore
 	)
 
 	BeforeEach(func() {
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		ctrl = gomock.NewController(GinkgoT())
+		mockKS = testutil.NewMockKeyStore(ctrl)
 	})
 
 	AfterEach(func() {
 		cancel()
+		ctrl.Finish()
 	})
 
 	// ===== PHASE 1: Constructor and Initialization =====
 	Describe("Phase 1: Constructor and Initialization", func() {
-		var ctrl *gomock.Controller
-		var mockKS *testutil.MockKeyStore
-
-		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
-		})
-
-		AfterEach(func() { ctrl.Finish() })
 
 		Context("with valid configuration", func() {
 			It("should create manager successfully", func() {
@@ -213,15 +209,9 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 3: Start =====
 	Describe("Phase 3: Start", func() {
-		var (
-			ctrl    *gomock.Controller
-			mockKS  *testutil.MockKeyStore
-			manager *keys.Manager
-		)
+		var manager *keys.Manager
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
 			var err error
 			manager, err = keys.NewManager(newTestConfig(mockKS))
 			Expect(err).NotTo(HaveOccurred())
@@ -233,7 +223,6 @@ var _ = Describe("Manager", func() {
 				defer cancel()
 				manager.Shutdown(shutdownCtx)
 			}
-			ctrl.Finish()
 		})
 
 		Context("when the store has existing keys", func() {
@@ -303,15 +292,9 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 4: GetCurrentSigningKey =====
 	Describe("Phase 4: GetCurrentSigningKey", func() {
-		var (
-			ctrl    *gomock.Controller
-			mockKS  *testutil.MockKeyStore
-			manager *keys.Manager
-		)
+		var manager *keys.Manager
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
 			var err error
 			manager, err = keys.NewManager(newTestConfig(mockKS))
 			Expect(err).NotTo(HaveOccurred())
@@ -323,7 +306,6 @@ var _ = Describe("Manager", func() {
 				defer cancel()
 				manager.Shutdown(shutdownCtx)
 			}
-			ctrl.Finish()
 		})
 
 		Context("when the manager is running", func() {
@@ -380,16 +362,12 @@ var _ = Describe("Manager", func() {
 	// ===== PHASE 5: GetPublicKey =====
 	Describe("Phase 5: GetPublicKey", func() {
 		var (
-			ctrl      *gomock.Controller
-			mockKS    *testutil.MockKeyStore
 			manager   *keys.Manager
 			testKey   *rsa.PrivateKey
 			testKeyID string
 		)
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
 			testKey = newTestKey()
 			testKeyID = "test-key-id"
 
@@ -414,7 +392,6 @@ var _ = Describe("Manager", func() {
 				defer cancel()
 				manager.Shutdown(shutdownCtx)
 			}
-			ctrl.Finish()
 		})
 
 		Context("cache hit", func() {
@@ -511,11 +488,7 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 6: GetJWKS =====
 	Describe("Phase 6: GetJWKS", func() {
-		var (
-			ctrl    *gomock.Controller
-			mockKS  *testutil.MockKeyStore
-			manager *keys.Manager
-		)
+		var manager *keys.Manager
 
 		AfterEach(func() {
 			if manager != nil && manager.IsRunning() {
@@ -523,15 +496,10 @@ var _ = Describe("Manager", func() {
 				defer cancel()
 				manager.Shutdown(shutdownCtx)
 			}
-			if ctrl != nil {
-				ctrl.Finish()
-			}
 		})
 
 		Context("when the manager is not running", func() {
 			BeforeEach(func() {
-				ctrl = gomock.NewController(GinkgoT())
-				mockKS = testutil.NewMockKeyStore(ctrl)
 				var err error
 				manager, err = keys.NewManager(newTestConfig(mockKS))
 				Expect(err).NotTo(HaveOccurred())
@@ -545,9 +513,6 @@ var _ = Describe("Manager", func() {
 
 		Context("when the context is already cancelled", func() {
 			BeforeEach(func() {
-				ctrl = gomock.NewController(GinkgoT())
-				mockKS = testutil.NewMockKeyStore(ctrl)
-
 				activeKey := newTestKey()
 				storedKeys := []*keys.StoredKey{
 					{
@@ -575,9 +540,6 @@ var _ = Describe("Manager", func() {
 
 		Context("with multiple keys", func() {
 			It("should return all non-expired keys", func() {
-				ctrl = gomock.NewController(GinkgoT())
-				mockKS = testutil.NewMockKeyStore(ctrl)
-
 				activeKey := newTestKey()
 				expiredKey := newTestKey()
 
@@ -618,16 +580,9 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 7: RotateKeys =====
 	Describe("Phase 7: RotateKeys", func() {
-		var (
-			ctrl    *gomock.Controller
-			mockKS  *testutil.MockKeyStore
-			manager *keys.Manager
-		)
+		var manager *keys.Manager
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
-
 			key := newTestKey()
 			storedKeys := []*keys.StoredKey{
 				{
@@ -650,7 +605,6 @@ var _ = Describe("Manager", func() {
 				defer cancel()
 				manager.Shutdown(shutdownCtx)
 			}
-			ctrl.Finish()
 		})
 
 		Context("successful rotation", func() {
@@ -726,18 +680,6 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 8: Shutdown =====
 	Describe("Phase 8: Shutdown", func() {
-		var (
-			ctrl   *gomock.Controller
-			mockKS *testutil.MockKeyStore
-		)
-
-		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
-		})
-
-		AfterEach(func() { ctrl.Finish() })
-
 		startManager := func() *keys.Manager {
 			mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
 			mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
@@ -797,20 +739,10 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 9: Metrics Recording =====
 	Describe("Phase 9: Metrics Recording", func() {
-		var (
-			ctrl   *gomock.Controller
-			mockM  *testutil.MockMetrics
-			mockKS *testutil.MockKeyStore
-		)
+		var mockM *testutil.MockMetrics
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
 			mockM = testutil.NewMockMetrics(ctrl)
-			mockKS = testutil.NewMockKeyStore(ctrl)
-		})
-
-		AfterEach(func() {
-			ctrl.Finish()
 		})
 
 		// newMetricManager creates and starts a Manager wired with mockM and mockKS.
@@ -1038,20 +970,12 @@ var _ = Describe("Manager", func() {
 	// ===== PHASE 11: Tracing =====
 	Describe("Phase 11: Tracing", func() {
 		var (
-			ctrl       *gomock.Controller
-			mockKS     *testutil.MockKeyStore
 			mockTracer *testutil.MockTracer
 			manager    *keys.Manager
 		)
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
 			mockTracer = testutil.NewMockTracer(ctrl)
-		})
-
-		AfterEach(func() {
-			ctrl.Finish()
 		})
 
 		// newTracingManager starts a manager wired with mockTracer. setupSpan is
@@ -1154,18 +1078,7 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 10: GetKeyInfo and GetCurrentKeyInfo =====
 	Describe("Phase 10: GetKeyInfo and GetCurrentKeyInfo", func() {
-		var (
-			ctrl   *gomock.Controller
-			mockKS *testutil.MockKeyStore
-			m      *keys.Manager
-		)
-
-		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
-		})
-
-		AfterEach(func() { ctrl.Finish() })
+		var m *keys.Manager
 
 		// startWithKeys starts the manager after loading the given StoredKeys.
 		startWithKeys := func(storedKeys []*keys.StoredKey) {
