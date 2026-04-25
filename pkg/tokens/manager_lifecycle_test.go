@@ -59,29 +59,12 @@ var _ = Describe("TokenManager", func() {
 		ctrl.Finish() // Verify all expectations were met
 	})
 
-	createService := func() *tokens.Manager {
-		config := tokens.TokenManagerConfig{
-			KeyManager:           mockKM,
-			RefreshStore:         mockStore,
-			Logger:               mockLogger,
-			AccessTokenDuration:  15 * time.Minute,
-			RefreshTokenDuration: 30 * 24 * time.Hour,
-			CleanupInterval:      100 * time.Millisecond,
-			Issuer:               "test-issuer",
-			Audience:             []string{"test-audience"},
-		}
-
-		mgr, err := tokens.NewManager(config)
-		Expect(err).NotTo(HaveOccurred())
-		return mgr
-	}
-
 	// ========================================================================
 	// START TESTS
 	// ========================================================================
 	Describe("Start", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 		})
 
 		It("should start successfully", func() {
@@ -219,7 +202,7 @@ var _ = Describe("TokenManager", func() {
 	// ========================================================================
 	Describe("Shutdown", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 
 			// Start the service
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
@@ -348,7 +331,7 @@ var _ = Describe("TokenManager", func() {
 	// ========================================================================
 	Describe("IsRunning", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 		})
 
 		It("should return false initially", func() {
@@ -400,7 +383,7 @@ var _ = Describe("TokenManager", func() {
 			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil).AnyTimes()
 			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
 
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 			// Start
 			err := service.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
