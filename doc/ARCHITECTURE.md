@@ -86,109 +86,19 @@ Build what's needed now:
 
 ## Project Structure
 
-```
-github.com/aetomala/jwtauth/
-├── pkg/                           # Public API packages
-│   ├── logging/                   # Logging abstraction
-│   │   ├── interface.go           # Logger interface
-│   │   ├── noop.go                # NoOp implementation
-│   │   ├── slog.go                # Standard library adapter
-│   │   ├── logger_test.go         # Logging tests (76 specs)
-│   │   └── README.md              # Usage documentation
-│   ├── metrics/                   # Metrics abstraction and implementations
-│   │   ├── interface.go           # Metrics interface
-│   │   ├── noop.go                # NoOp implementation
-│   │   ├── prometheus.go          # Prometheus implementation
-│   │   ├── metrics_suite_test.go  # Ginkgo bootstrap
-│   │   ├── prometheus_test.go     # 9-phase Prometheus test suite (66 specs)
-│   │   └── noop_test.go           # NoOp tests
-│   ├── tracing/                   # Distributed tracing abstraction ✅
-│   │   ├── interface.go           # Tracer and Span interfaces
-│   │   ├── noop.go                # NoOpTracer / NoOpSpan implementations
-│   │   ├── noop_test.go           # NoOp tests (36 specs)
-│   │   ├── otel.go                # OtelTracer adapter (go.opentelemetry.io/otel)
-│   │   └── otel_test.go           # OtelTracer tests
-│   ├── keys/                # Key rotation and management ✅
-│   │   ├── manager.go          # Manager: lifecycle, rotation, JWKS generation
-│   │   ├── interface.go           # Manager interface
-│   │   ├── keystore.go            # KeyStore interface, StoredKey type, sentinel errors
-│   │   ├── disk.go                # DiskKeyStore — filesystem-backed KeyStore
-│   │   ├── redis.go               # RedisKeyStore — Redis-backed KeyStore for distributed deployments
-│   │   ├── observability.go       # Metric name constants (KeyStore + Manager)
-│   │   ├── manager_test.go     # 9-phase Manager tests (52 specs, MockKeyStore)
-│   │   ├── disk_test.go           # 10-phase DiskKeyStore tests (42 specs)
-│   │   └── redis_test.go          # 10-phase RedisKeyStore tests (39 specs, miniredis)
-│   ├── tokens/                    # JWT token operations (Beta) 🟡
-│   │   ├── manager.go             # TokenManager implementation
-│   │   ├── claims.go              # Claims management
-│   │   ├── manager_test.go        # Token operations tests
-│   │   ├── manager_lifecycle_test.go  # Lifecycle management tests
-│   │   └── integration/           # Integration tests
-│   │       └── integration_test.go
-│   └── storage/                   # Refresh token storage ✅
-│       ├── interface.go           # RefreshStore interface
-│       ├── errors.go              # Sentinel error types
-│       ├── observability.go       # Metric name constants
-│       ├── memory.go              # In-memory implementation
-│       ├── memory_test.go         # Test runner for MemoryRefreshStore
-│       ├── redis.go               # Redis implementation
-│       ├── redis_test.go          # Test runner for RedisRefreshStore
-│       ├── storage_suite_test.go  # Ginkgo bootstrap
-│       └── suite_test.go          # Shared test suite (61 tests, runs against both implementations)
-├── internal/                      # Private packages
-│   └── testutil/                  # Shared test utilities
-│       ├── errors.go              # Shared test error helpers
-│       ├── mock_keys.go     # gomock-generated MockKeyManager
-│       ├── mock_keystore.go       # gomock-generated MockKeyStore
-│       ├── mock_logger.go         # Reusable MockLogger
-│       ├── mock_metrics.go        # gomock-generated MockMetrics
-│       ├── mock_refreshstore.go   # gomock-generated MockRefreshStore
-│       ├── mock_tracing.go        # gomock-generated MockTracer / MockSpan
-│       └── README.md              # Testutil usage guide
-├── doc/                           # Documentation
-│   ├── ARCHITECTURE.md            # This file
-│   ├── DEPLOYMENT.md              # Deployment guide
-│   ├── METRICS.md                 # Metrics reference
-│   ├── MIGRATION.md               # Migration guides from golang-jwt, gin-jwt, jwx
-│   └── adr/                       # Architecture Decision Records
-│       ├── README.md              # ADR index
-│       ├── 001-no-rate-limiting.md
-│       ├── 002-stateful-refresh-tokens.md
-│       ├── 003-rs256-only.md
-│       ├── 004-kid-validation.md
-│       └── 005-security-boundaries.md
-├── examples/                      # Framework usage examples
-│   ├── README.md                  # Examples overview
-│   ├── gin-example/               # Gin HTTP framework
-│   ├── echo-example/              # Echo HTTP framework
-│   ├── chi-example/               # Chi HTTP router
-│   ├── correlation-example/       # End-to-end correlation ID with stdlib net/http
-│   ├── health-check/              # Health check endpoint with KeyInfo
-│   └── prometheus-metrics/        # Prometheus metrics endpoint wiring
-└── jwtauth_suite_test.go          # Root Ginkgo suite bootstrap
-```
+| Package | Purpose | Status |
+|---------|---------|--------|
+| `pkg/keys` | Cryptographic key lifecycle, rotation, JWKS generation | ✅ Stable |
+| `pkg/tokens` | JWT token issuance and validation | 🟡 Beta |
+| `pkg/storage` | Refresh token storage — memory and Redis backends | ✅ Stable |
+| `pkg/logging` | Logging abstraction with slog adapter | ✅ Stable |
+| `pkg/metrics` | Metrics abstraction with Prometheus implementation | ✅ Stable |
+| `pkg/tracing` | Distributed tracing abstraction with OTel adapter | ✅ Stable |
 
-### Package Organization
+`internal/testutil` holds shared mocks and test utilities — not part of the public API.
 
-**`pkg/` (Public API)**
-- Code users import and use directly
-- Stable interfaces
-- Semantic versioning applies
-
-**`internal/` (Private)**
-- Implementation details
-- Test utilities
-- Not importable by external code
-
-**`docs/` (Documentation)**
-- Architecture decisions
-- Design patterns
-- Best practices
-
-**`examples/` (Usage Examples)**
-- Complete runnable examples
-- Real-world patterns
-- Copy-paste ready code
+> ✅ **Stable** — no breaking changes planned before v1.0.
+> 🟡 **Beta** — core operations complete; API may change before v1.0.
 
 ---
 
