@@ -73,23 +73,6 @@ var _ = Describe("TokenManager", func() {
 		ctrl.Finish() // Verify all expectations were met
 	})
 
-	createService := func() *tokens.Manager {
-		config := tokens.TokenManagerConfig{
-			KeyManager:           mockKM,
-			RefreshStore:         mockStore,
-			Logger:               mockLogger,
-			AccessTokenDuration:  15 * time.Minute,
-			RefreshTokenDuration: 30 * 24 * time.Hour,
-			CleanupInterval:      100 * time.Millisecond,
-			Issuer:               "test-issuer",
-			Audience:             []string{"test-audience"},
-		}
-
-		mgr, err := tokens.NewManager(config)
-		Expect(err).NotTo(HaveOccurred())
-		return mgr
-	}
-
 	// ========================================================================
 	// NEWSERVICE TESTS
 	// ========================================================================
@@ -242,7 +225,7 @@ var _ = Describe("TokenManager", func() {
 	// ========================================================================
 	Describe("IssueAccessToken", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
 			err := service.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -356,7 +339,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("IssueAccessTokenWithClaims guard conditions", func() {
 			It("should return ErrManagerNotRunning", func() {
-				mgr := createService()
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
 				_, err := mgr.IssueAccessTokenWithClaims(ctx, testUserID, nil)
 				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
@@ -398,7 +381,7 @@ var _ = Describe("TokenManager", func() {
 	// ========================================================================
 	Describe("IssueRefreshToken", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
 			err := service.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -504,7 +487,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("guard conditions", func() {
 			It("should return ErrManagerNotRunning", func() {
-				mgr := createService()
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
 				_, err := mgr.IssueRefreshToken(ctx, "user-123")
 				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
@@ -524,7 +507,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("IssueRefreshTokenWithClaims guards", func() {
 			It("should return error when service is not running", func() {
-				stoppedService := createService()
+				stoppedService := newTestManager(mockKM, mockStore, mockLogger)
 
 				_, err := stoppedService.IssueRefreshTokenWithClaims(ctx, testUserID, nil)
 
@@ -556,7 +539,7 @@ var _ = Describe("TokenManager", func() {
 	// ========================================================================
 	Describe("IssueTokenPair", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
 			err := service.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -641,7 +624,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("guard conditions", func() {
 			It("should return ErrManagerNotRunning", func() {
-				mgr := createService()
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
 				_, _, err := mgr.IssueTokenPair(ctx, "user-123")
 				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
@@ -666,7 +649,7 @@ var _ = Describe("TokenManager", func() {
 
 	Describe("IssueTokenPairWithClaims", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
 			err := service.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -779,7 +762,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("guard conditions", func() {
 			It("should return ErrManagerNotRunning", func() {
-				mgr := createService()
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
 				_, _, err := mgr.IssueTokenPairWithClaims(ctx, "user-123", nil, nil)
 				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
@@ -806,7 +789,7 @@ var _ = Describe("TokenManager", func() {
 		var validToken string
 
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 
 			// Start service first (required before token operations)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
@@ -1086,7 +1069,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("guard conditions", func() {
 			It("should return ErrManagerNotRunning", func() {
-				mgr := createService()
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
 				_, err := mgr.ValidateAccessToken(ctx, validToken)
 				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
@@ -1146,7 +1129,7 @@ var _ = Describe("TokenManager", func() {
 		var validRefreshToken string
 
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 
 			// Start the service first (required before token operations)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
@@ -1278,7 +1261,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("guard conditions", func() {
 			It("should return ErrManagerNotRunning when manager is not running", func() {
-				mgr := createService()
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
 				_, err := mgr.RefreshAccessToken(ctx, "any-token")
 				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
@@ -1301,7 +1284,7 @@ var _ = Describe("TokenManager", func() {
 		var validRefreshToken string
 
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
 			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
@@ -1419,7 +1402,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("guard conditions", func() {
 			It("should return ErrManagerNotRunning when manager is not running", func() {
-				mgr := createService()
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
 				_, err := mgr.RefreshAccessTokenWithClaims(ctx, "any-token", nil)
 				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
@@ -1444,7 +1427,7 @@ var _ = Describe("TokenManager", func() {
 
 	Describe("RevokeRefreshToken", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 
 			// Start the service first (required before token operations)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
@@ -1523,7 +1506,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("guard conditions", func() {
 			It("should return ErrManagerNotRunning when manager is not running", func() {
-				mgr := createService()
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
 				err := mgr.RevokeRefreshToken(ctx, "any-token")
 				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
@@ -1544,7 +1527,7 @@ var _ = Describe("TokenManager", func() {
 
 	Describe("RevokeAllUserTokens", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 
 			// Start the service first (required before token operations)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
@@ -1583,7 +1566,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("guard conditions", func() {
 			It("should return ErrManagerNotRunning when manager is not running", func() {
-				mgr := createService()
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
 				err := mgr.RevokeAllUserTokens(ctx, "user-123")
 				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
 			})
@@ -1610,7 +1593,7 @@ var _ = Describe("TokenManager", func() {
 		var refreshToken string
 
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 
 			// Start the service first (required before token operations)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
@@ -1707,7 +1690,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("when service is not running", func() {
 			It("should return error", func() {
-				stoppedService := createService()
+				stoppedService := newTestManager(mockKM, mockStore, mockLogger)
 
 				_, err := stoppedService.IntrospectToken(ctx, refreshToken)
 
@@ -1733,7 +1716,7 @@ var _ = Describe("TokenManager", func() {
 
 	Describe("CleanupExpiredTokens", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 			// Start the service first (required before token operations)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
 			Expect(service.Start(ctx)).To(Succeed())
@@ -1784,7 +1767,7 @@ var _ = Describe("TokenManager", func() {
 
 		Context("when service is not running", func() {
 			It("should return error", func() {
-				stoppedService := createService()
+				stoppedService := newTestManager(mockKM, mockStore, mockLogger)
 
 				_, err := stoppedService.CleanupExpiredTokens(ctx)
 
@@ -1813,7 +1796,7 @@ var _ = Describe("TokenManager", func() {
 	// TODO: Add concurrent lifecycle tests (Start/Shutdown races) when lifecycle work is complete.
 	Describe("Concurrent Operations", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
 			Expect(service.Start(ctx)).To(Succeed())
 		})
