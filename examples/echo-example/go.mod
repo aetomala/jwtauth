@@ -1,6 +1,6 @@
 module github.com/aetomala/jwtauth/examples/echo-example
 
-go 1.25.0
+go 1.26.2
 
 require (
 	github.com/aetomala/jwtauth v0.2.0-beta

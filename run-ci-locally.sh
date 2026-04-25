@@ -37,6 +37,7 @@ run_test() {
 echo -e "\n${YELLOW}====== LINT JOB ======${NC}"
 run_test "go vet" "go vet ./..."
 run_test "golangci-lint" "golangci-lint run ./..."
+run_test "govulncheck" "govulncheck ./..."
 
 # Test Job
 echo -e "\n${YELLOW}====== TEST JOB ======${NC}"

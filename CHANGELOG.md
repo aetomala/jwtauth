@@ -16,6 +16,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Minimum Go version raised to 1.26.2** — `go.mod` (root and all example modules), CI workflow, and README badge updated from 1.25 to 1.26.2. Driven by stdlib vulnerability fixes available only in the 1.26 lineage.
+
 - **`IssueAccessTokenWithClaims` parameter type changed** from `map[string]interface{}` to `CustomClaims` — update call sites: `map[string]interface{}{"k": v}` → `tokens.CustomClaims{"k": v}`.
 
 - **`IssueRefreshTokenWithMetadata` renamed to `IssueRefreshTokenWithClaims`** — parameter renamed from `metadata` to `claims` with type `CustomClaims`; span name updated to match. Update all call sites.
@@ -62,6 +64,8 @@ All notable changes to this project will be documented in this file.
   to `*tokens.TokenError` must be updated; `errors.Is()` behavior is unchanged.
 
 ### Added
+
+- **`govulncheck` added to CI and local pipeline** — runs as a lint-job step in `.github/workflows/CI.yml` and in `run-ci-locally.sh` after `golangci-lint`; checks all packages against the Go vulnerability database on every push.
 
 - **`CustomClaims` named type** (`map[string]interface{}`) in `pkg/tokens` — canonical type for caller-supplied custom claims across all `WithClaims` methods; reserved JWT field names (`sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, `jti`) are silently dropped at issuance time to prevent caller-controlled claim injection.
 
@@ -129,6 +133,12 @@ All notable changes to this project will be documented in this file.
 - **`examples/correlation-example/README.md`** — new file; full README matching the structure of Gin/Chi/Echo example READMEs. Covers setup, API testing with curl and expected JSON log output, implementation details (logger choice, `withCorrelation` middleware, `ctx`-as-first-kwarg convention, auto-generated IDs), and how to apply the same pattern to Gin, Chi, or Echo.
 
 - **`examples/README.md`** — added Correlation ID Example entry, cross-reference note in the Common Pattern section, updated Framework Comparison table with a Correlation ID column, corrected title (jwtauth is an engine, not a framework).
+
+### Testing
+
+- **`pkg/tokens` test DRY cleanup — shared `newTestManager` helper** — `createService` closure was independently defined in both `manager_test.go` and `manager_lifecycle_test.go`; extracted to `pkg/tokens/helpers_test.go` as `newTestManagerConfig` and `newTestManager` package-level helpers within the `tokens_test` package. 25 call sites updated across both files — no new dependency between packages. Fixes DRY violation M4.
+
+- **`pkg/keys` test DRY cleanup — hoisted `ctrl` and `mockKS` to outer `Describe` scope** — `var ctrl *gomock.Controller` and `var mockKS *testutil.MockKeyStore` were independently declared, initialized in `BeforeEach`, and torn down with `ctrl.Finish()` in `AfterEach` inside each phase-level `Describe` block. Both vars moved to the outer `Describe("Manager")` var block with a single shared `BeforeEach`/`AfterEach` pair. Equivalent declarations removed from Phases 1, 3, 4, 5, 6, 7, 8, 9, 10, and 11 — 11 insertions, 98 deletions. The locally-scoped `ctrl2` in Phase 7 is untouched. Fixes DRY violation M5.
 
 ---
 
