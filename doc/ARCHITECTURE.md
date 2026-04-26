@@ -1043,13 +1043,7 @@ func (c *Component) Operation() error {
 4. Write tests verifying logs/metrics
 5. Update documentation
 
-### Testing Requirements
-
-- ✅ All new code must have tests
-- ✅ Tests must pass race detector
-- ✅ Coverage >80% for critical paths
-- ✅ Integration tests for complex flows
-- ✅ Examples for new features
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for full testing requirements and development workflow.
 
 ---
 

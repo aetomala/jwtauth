@@ -1234,30 +1234,7 @@ See [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) for architecture guidance and configu
 
 ## Contributing
 
-Contributions welcome! This library follows strict quality standards:
-
-**Requirements**:
-- ✅ All code must have tests
-- ✅ Tests must pass with race detector (`-race` flag)
-- ✅ Coverage >80% for critical paths
-- ✅ Follow existing architecture patterns (see ARCHITECTURE.md)
-- ✅ Use Ginkgo/Gomega for BDD-style tests
-- ✅ Update documentation for new features
-
-**Development workflow**:
-```bash
-# Clone and setup
-git clone https://github.com/aetomala/jwtauth.git
-cd jwtauth
-
-# Run tests
-ginkgo -v -race ./...
-
-# Check for issues
-go vet ./...
-```
-
-See [ARCHITECTURE.md](doc/ARCHITECTURE.md) for contribution guidelines and architectural patterns.
+Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for requirements, development workflow, and guidelines. Architecture-specific patterns for adding new components and observability are in [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md).
 
 ## Requirements
 
