@@ -262,7 +262,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	// ===== STEP 1: Check If Already Running (Idempotent) =====
 	if !m.isRunning.CompareAndSwap(false, true) {
 		// Already running — idempotent no-op, no metric recorded
-		m.logger.Warn("start called but service already running", ctx)
+		m.logger.Debug("start called but service already running", ctx)
 		return nil // Already running, not an error
 	}
 
@@ -332,7 +332,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 	// ===== STEP 1: Check If Running (Idempotent) =====
 	if !m.isRunning.CompareAndSwap(true, false) {
-		m.logger.Warn("shutdown called but service not running", ctx)
+		m.logger.Debug("shutdown called but service not running", ctx)
 		span.SetStatus(tracing.StatusOK, "")
 		return nil // Already stopped, not an error
 	}
@@ -1311,7 +1311,7 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		m.logger.Info("context cancelled during token validation", ctx,
+		m.logger.Warn("context cancelled during token validation", ctx,
 			"error", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -1525,6 +1525,7 @@ func (m *Manager) ValidateAccessTokenWithClaims(ctx context.Context, tokenString
 		}
 	}
 
+	m.logger.Info("access token with custom claims validated", ctx)
 	span.SetStatus(tracing.StatusOK, "")
 	return registered, custom, nil
 }
@@ -1566,7 +1567,7 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		m.logger.Info("context cancelled during token refresh", ctx)
+		m.logger.Warn("context cancelled during token refresh", ctx)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return "", err
@@ -1701,7 +1702,7 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
-		m.logger.Info("context cancelled during token refresh", ctx)
+		m.logger.Warn("context cancelled during token refresh", ctx)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return "", err
@@ -1976,7 +1977,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
-		m.logger.Info("context cancelled during token introspection", ctx)
+		m.logger.Warn("context cancelled during token introspection", ctx)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, err
@@ -2051,7 +2052,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// ===== STEP 6: Record Success and Return Active Token Metadata =====
 	status = "success"
-	m.logger.Info("token introspection successfully", ctx,
+	m.logger.Info("token introspected", ctx,
 		"tokenID", token,
 		"userID", refreshToken.UserID,
 		"active", true)
