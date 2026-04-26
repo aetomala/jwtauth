@@ -65,6 +65,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **`CONTRIBUTING.md`** — new root-level contributor guide consolidating requirements, dev workflow (`run-ci-locally.sh`), branching/PR rules, and code standards. README Contributing section and ARCHITECTURE.md Testing Requirements block now point here instead of duplicating the content.
+
 - **`govulncheck` added to CI and local pipeline** — runs as a lint-job step in `.github/workflows/CI.yml` and in `run-ci-locally.sh` after `golangci-lint`; checks all packages against the Go vulnerability database on every push.
 
 - **`CustomClaims` named type** (`map[string]interface{}`) in `pkg/tokens` — canonical type for caller-supplied custom claims across all `WithClaims` methods; reserved JWT field names (`sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, `jti`) are silently dropped at issuance time to prevent caller-controlled claim injection.
