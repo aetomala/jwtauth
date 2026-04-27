@@ -105,6 +105,8 @@ All notable changes to this project will be documented in this file.
 
 - **`ListTokens` added to `RefreshStore` interface** — cursor-based token iteration for resumable reconciliation jobs. Pass an empty string for cursor to begin from the start; returns an empty cursor when iteration is exhausted. Count is a hint — actual page size may vary by implementation. Breaking change for any `RefreshStore` implementation outside this repository — add `ListTokens` to comply with the updated interface. See #105.
 
+- **`Namespace string` added to `KeyManagerConfig` and `TokenManagerConfig`** — optional opaque label stored in both manager structs at construction time. Zero value preserves current behavior — no label is attached to observability output. Intended for multi-instance deployments where log lines, trace spans, and metric labels from different manager instances must be disambiguated. Decoupled from `KeyPrefix` — both fields may be set independently. See ADR-007.
+
 ### Fixed
 
 - **`KeyInfo.KeySizeBits` now reports actual key size** — previously sourced from `KeyManagerConfig.KeySize` (caller-supplied), which could silently diverge from the actual RSA key on disk if the `DiskKeyStore` or `RedisKeyStore` was configured with a different key size. Now derived from `keyPair.PrivateKey.N.BitLen()` so the reported value always matches the real key material.

@@ -97,9 +97,10 @@ type TokenManagerConfig struct {
 	RefreshStore storage.RefreshStore  // Persists refresh tokens
 
 	// Optional
-	Logger  logging.Logger  // Optional; nil defaults to NoOpLogger.
-	Metrics metrics.Metrics // Optional; nil defaults to NoOpMetrics.
-	Tracer  tracing.Tracer  // Optional; nil defaults to NoOpTracer.
+	Logger    logging.Logger  // Optional; nil defaults to NoOpLogger.
+	Metrics   metrics.Metrics // Optional; nil defaults to NoOpMetrics.
+	Tracer    tracing.Tracer  // Optional; nil defaults to NoOpTracer.
+	Namespace string          // Optional; opaque label attached to observability output — empty disables labeling
 
 	// Token lifetimes — defaults applied by NewManager if zero
 	AccessTokenDuration  time.Duration // Default: 15 minutes
@@ -134,6 +135,7 @@ type Manager struct {
 	issuer               string        // JWT "iss" claim
 	audience             []string      // JWT "aud" claim
 	clockSkew            time.Duration // Leeway applied to exp and nbf validation
+	namespace            string        // Optional; opaque label for observability output
 
 	// ===== State Management =====
 	isRunning    atomic.Bool    // Thread-safe running state
@@ -238,6 +240,7 @@ func NewManager(config TokenManagerConfig) (*Manager, error) {
 		clockSkew:            config.ClockSkew,
 		issuer:               config.Issuer,
 		audience:             config.Audience,
+		namespace:            config.Namespace,
 		shutdownChan:         make(chan struct{}),
 	}
 
