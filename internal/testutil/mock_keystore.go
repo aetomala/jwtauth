@@ -87,6 +87,20 @@ func (mr *MockKeyStoreMockRecorder) LoadKey(ctx, keyID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadKey", reflect.TypeOf((*MockKeyStore)(nil).LoadKey), ctx, keyID)
 }
 
+// Namespace mocks base method.
+func (m *MockKeyStore) Namespace() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Namespace")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// Namespace indicates an expected call of Namespace.
+func (mr *MockKeyStoreMockRecorder) Namespace() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Namespace", reflect.TypeOf((*MockKeyStore)(nil).Namespace))
+}
+
 // Save mocks base method.
 func (m *MockKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta keys.KeyMetadata) error {
 	m.ctrl.T.Helper()

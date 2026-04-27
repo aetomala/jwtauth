@@ -10,6 +10,10 @@ All notable changes to this project will be documented in this file.
 
 - **`logging.Logger` gains `With(keysAndValues ...interface{}) Logger`** — existing third-party adapter implementations (Zap, Zerolog, Logrus, etc.) must add this method. Built-in implementations (`SlogAdapter`, `NoOpLogger`) and `MockLogger` are already updated. `With` is additive — chained calls accumulate fields. `NoOpLogger` may return the receiver unchanged.
 
+- **`keys.KeyStore` gains `Namespace() string`** — existing implementations must add this method. `RedisKeyStore` returns the configured `KeyPrefix`; `DiskKeyStore` returns `""`. `MockKeyStore` regenerated.
+
+- **`storage.RefreshStore` gains `Namespace() string`** — existing implementations must add this method. `RedisRefreshStore` returns the configured `KeyPrefix`; `MemoryRefreshStore` returns `""`. `MockRefreshStore` regenerated.
+
 ### Security
 
 - **`kid` path traversal fix** — `DiskKeyStore` and `RedisKeyStore` now validate the

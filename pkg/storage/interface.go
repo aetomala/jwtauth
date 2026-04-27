@@ -99,6 +99,11 @@ type RefreshStore interface {
 	//   - count: Number of tokens deleted
 	//   - error: If cleanup fails
 	Cleanup(ctx context.Context) (int, error)
+
+	// Namespace returns the namespace this store is operating in. For Redis-backed
+	// stores this matches the configured KeyPrefix. Implementations that do not
+	// support namespacing return empty string.
+	Namespace() string
 }
 
 // RefreshToken represents a stored refresh token.

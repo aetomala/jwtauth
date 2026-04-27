@@ -53,6 +53,11 @@ type KeyStore interface {
 	// Manager.cleanupExpiredKeys. If the key does not exist, no error is returned.
 	// Returns ErrKeyStoreInvalidKeyID if keyID is not a valid UUID v4 string.
 	Delete(ctx context.Context, keyID string) error
+
+	// Namespace returns the namespace this store is operating in. For Redis-backed
+	// stores this matches the configured KeyPrefix. Implementations that do not
+	// support namespacing return empty string.
+	Namespace() string
 }
 
 // Sentinel errors for KeyStore operations.
