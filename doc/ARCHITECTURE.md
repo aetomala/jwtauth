@@ -493,11 +493,11 @@ km, err := keys.NewManager(keys.KeyManagerConfig{
 
 Redis data layout:
 ```
-ks:pem:<keyID>   — PKCS#1 PEM-encoded RSA private key (string)
-ks:meta:<keyID>  — JSON-encoded KeyMetadata (string)
+[KeyPrefix]ks:pem:<keyID>   — PKCS#1 PEM-encoded RSA private key (string)
+[KeyPrefix]ks:meta:<keyID>  — JSON-encoded KeyMetadata (string)
 ```
 
-Keys carry no TTL — Manager owns the lifecycle and calls `Delete` explicitly via `cleanupExpiredKeys`. `LoadAll` uses `SCAN ks:pem:*` to enumerate all stored keys. `Save` writes both entries via a Redis Pipeline, so either both succeed or both fail — no partial state and no rollback code needed.
+Keys are optionally prefixed by `RedisKeyStoreConfig.KeyPrefix` (defaults to empty string — preserves current layout). Keys carry no TTL — Manager owns the lifecycle and calls `Delete` explicitly via `cleanupExpiredKeys`. `LoadAll` uses `SCAN {KeyPrefix}ks:pem:*` to enumerate all stored keys, scoping enumeration to the configured namespace. `Save` writes both entries via a Redis Pipeline, so either both succeed or both fail — no partial state and no rollback code needed.
 
 `ErrNilRedisClient` is returned by the constructor if client is nil. All other sentinel errors (`ErrKeyStoreKeyNotFound`, `ErrKeyStoreInvalidKeyID`) are shared with `DiskKeyStore` and defined in `keystore.go`.
 
@@ -622,9 +622,11 @@ type RedisRefreshStore struct {
 
 **Redis Data Structure**:
 ```
-tokens:{tokenID}        → Hash with fields: userID, expiresAt, createdAt, revoked, metadata
-user_tokens:{userID}    → Set of tokenIDs for that user
+[KeyPrefix]tokens:{tokenID}        → Hash with fields: userID, expiresAt, createdAt, revoked, metadata
+[KeyPrefix]user_tokens:{userID}    → Set of tokenIDs for that user
 ```
+
+Keys are optionally prefixed by `RedisRefreshStoreConfig.KeyPrefix`. `Cleanup` scans only `{KeyPrefix}tokens:*` — expired tokens from other namespaces are not affected.
 
 **Key Features**:
 - **Distributed**: Works across multiple instances (Redis is the shared backend)
