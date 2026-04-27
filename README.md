@@ -1254,7 +1254,7 @@ MIT License - see [LICENSE](LICENSE) for details
 
 ## Background
 
-Built by a Senior Platform Engineer with 28 years of experience in distributed systems. This library represents production-grade patterns learned from building authorization token systems at scale, with a focus on operational excellence, observability, and maintainability.
+Built by a Senior Platform Engineer with deep experience in distributed systems and production operations. This library represents production-grade patterns learned from building authorization token systems at scale, with a focus on operational excellence, observability, and maintainability.
 
 **Design Philosophy**: Software should be observable, testable, and maintainable. Good architecture makes these properties natural, not afterthoughts.
 

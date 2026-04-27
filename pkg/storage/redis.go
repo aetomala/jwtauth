@@ -18,10 +18,11 @@ import (
 
 // RedisRefreshStoreConfig holds configuration for a RedisRefreshStore instance.
 type RedisRefreshStoreConfig struct {
-	Client  *redis.Client   // Required. Redis client used for all operations.
-	Logger  logging.Logger  // Optional; nil defaults to NoOpLogger.
-	Metrics metrics.Metrics // Optional; nil defaults to NoOpMetrics.
-	Tracer  tracing.Tracer  // Optional; nil defaults to NoOpTracer.
+	Client    *redis.Client   // Required. Redis client used for all operations.
+	KeyPrefix string          // Optional; prepended to all Redis keys; empty preserves current behavior.
+	Logger    logging.Logger  // Optional; nil defaults to NoOpLogger.
+	Metrics   metrics.Metrics // Optional; nil defaults to NoOpMetrics.
+	Tracer    tracing.Tracer  // Optional; nil defaults to NoOpTracer.
 }
 
 // RedisRefreshStoreConfigDefault returns a RedisRefreshStoreConfig with
@@ -42,8 +43,12 @@ func RedisRefreshStoreConfigDefault() RedisRefreshStoreConfig {
 //
 // All methods are safe for concurrent use.
 type RedisRefreshStore struct {
-	// ===== Synchronization =====
+	// ===== Redis Client =====
 	client *redis.Client // Redis client; internally thread-safe
+
+	// ===== Key Prefixes =====
+	tokenPrefix   string // = cfg.KeyPrefix + tokenKeyPrefix;   applied to all token hash keys
+	userSetPrefix string // = cfg.KeyPrefix + userSetKeyPrefix; applied to all user-set keys
 
 	// ===== Observability =====
 	logger  logging.Logger  // never nil; defaults to NoOpLogger
@@ -73,11 +78,13 @@ func NewRedisRefreshStore(cfg RedisRefreshStoreConfig) (*RedisRefreshStore, erro
 	}
 
 	return &RedisRefreshStore{
-		client:  cfg.Client,
-		logger:  cfg.Logger,
-		metrics: cfg.Metrics,
-		tracer:  cfg.Tracer,
-		backend: "redis",
+		client:        cfg.Client,
+		tokenPrefix:   cfg.KeyPrefix + tokenKeyPrefix,
+		userSetPrefix: cfg.KeyPrefix + userSetKeyPrefix,
+		logger:        cfg.Logger,
+		metrics:       cfg.Metrics,
+		tracer:        cfg.Tracer,
+		backend:       "redis",
 	}, nil
 }
 
@@ -193,8 +200,8 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 	}
 
 	// ===== STEP 5: Execute Atomic Write via Pipeline =====
-	tokenKey := tokenKeyPrefix + tokenID
-	userSetKey := userSetKeyPrefix + userID
+	tokenKey := r.tokenPrefix + tokenID
+	userSetKey := r.userSetPrefix + userID
 	duration := time.Until(expiresAt)
 
 	pipe := r.client.Pipeline()
@@ -280,7 +287,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	}
 
 	// ===== STEP 3: Look Up Token from Redis =====
-	tokenKey := tokenKeyPrefix + tokenID
+	tokenKey := r.tokenPrefix + tokenID
 	hash, err := r.client.HGetAll(ctx, tokenKey).Result()
 	if err != nil {
 		r.logger.Error("retrieve failed: redis error", ctx,
@@ -436,7 +443,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	}
 
 	// ===== STEP 3: Check Token Existence =====
-	tokenKey := tokenKeyPrefix + tokenID
+	tokenKey := r.tokenPrefix + tokenID
 
 	exists, err := r.client.Exists(ctx, tokenKey).Result()
 	if err != nil {
@@ -527,7 +534,7 @@ func (r *RedisRefreshStore) RevokeAllForUser(ctx context.Context, userID string)
 	}
 
 	// ===== STEP 3: Get All Token IDs for User =====
-	userSetKey := userSetKeyPrefix + userID
+	userSetKey := r.userSetPrefix + userID
 	tokenIDs, err := r.client.SMembers(ctx, userSetKey).Result()
 	if err != nil {
 		r.logger.Error("revokeAllForUser failed: redis smembers error", ctx,
@@ -547,7 +554,7 @@ func (r *RedisRefreshStore) RevokeAllForUser(ctx context.Context, userID string)
 	if len(tokenIDs) > 0 {
 		pipe := r.client.Pipeline()
 		for _, tokenID := range tokenIDs {
-			tokenKey := tokenKeyPrefix + tokenID
+			tokenKey := r.tokenPrefix + tokenID
 			pipe.HSet(ctx, tokenKey, "revoked", "true")
 		}
 
@@ -623,7 +630,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	now := time.Now()
 	totalScanned := 0
 
-	iter := r.client.Scan(ctx, 0, tokenKeyPrefix+"*", 0).Iterator()
+	iter := r.client.Scan(ctx, 0, r.tokenPrefix+"*", 0).Iterator()
 
 	var expiredKeys []string
 	for iter.Next(ctx) {
@@ -651,8 +658,8 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 			expiredKeys = append(expiredKeys, key)
 
 			userID := hash["userID"]
-			tokenID := strings.TrimPrefix(key, tokenKeyPrefix)
-			userSetKey := userSetKeyPrefix + userID
+			tokenID := strings.TrimPrefix(key, r.tokenPrefix)
+			userSetKey := r.userSetPrefix + userID
 
 			_ = r.client.SRem(ctx, userSetKey, tokenID).Err()
 		}

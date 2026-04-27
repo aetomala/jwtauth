@@ -373,7 +373,7 @@ var _ = Describe("RedisKeyStore", func() {
 					Bytes: x509.MarshalPKCS1PrivateKey(key),
 				})
 				// Write PEM directly — no metadata entry
-				Expect(client.Set(ctx, "ks:pem:no-meta-key", string(pemBytes), 0).Err()).To(Succeed())
+				Expect(client.Set(ctx, rs.PemPrefix()+"no-meta-key", string(pemBytes), 0).Err()).To(Succeed())
 
 				keys, err := rs.LoadAll(ctx)
 				Expect(err).NotTo(HaveOccurred())
@@ -388,8 +388,8 @@ var _ = Describe("RedisKeyStore", func() {
 					Type:  "RSA PRIVATE KEY",
 					Bytes: x509.MarshalPKCS1PrivateKey(key),
 				})
-				Expect(client.Set(ctx, "ks:pem:bad-meta-key", string(pemBytes), 0).Err()).To(Succeed())
-				Expect(client.Set(ctx, "ks:meta:bad-meta-key", "NOT_VALID_JSON", 0).Err()).To(Succeed())
+				Expect(client.Set(ctx, rs.PemPrefix()+"bad-meta-key", string(pemBytes), 0).Err()).To(Succeed())
+				Expect(client.Set(ctx, rs.MetaPrefix()+"bad-meta-key", "NOT_VALID_JSON", 0).Err()).To(Succeed())
 
 				keys, err := rs.LoadAll(ctx)
 				Expect(err).NotTo(HaveOccurred())
@@ -405,7 +405,7 @@ var _ = Describe("RedisKeyStore", func() {
 					Bytes: x509.MarshalPKCS1PrivateKey(key),
 				})
 				// Write PEM only — no metadata
-				Expect(client.Set(ctx, "ks:pem:"+testKeyA, string(pemBytes), 0).Err()).To(Succeed())
+				Expect(client.Set(ctx, rs.PemPrefix()+testKeyA, string(pemBytes), 0).Err()).To(Succeed())
 
 				_, _, err := rs.LoadKey(ctx, testKeyA)
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
@@ -615,6 +615,109 @@ var _ = Describe("RedisKeyStore", func() {
 					_ = rs.UpdateMetadata(ctx, testKeyA, keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()})
 				}).NotTo(Panic())
 				Expect(func() { _ = rs.Delete(ctx, testKeyA) }).NotTo(Panic())
+			})
+		})
+	})
+
+	// ===== PHASE 11: KeyPrefix Namespace Isolation =====
+	Describe("Phase 11: KeyPrefix Namespace Isolation", func() {
+		Context("with a non-empty KeyPrefix", func() {
+			It("should store all keys under the configured prefix", func() {
+				store, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+					Client:    client,
+					KeyPrefix: "tenant:abc:",
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				key := newTestKey()
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				Expect(store.Save(ctx, testKeyA, key, metadata)).To(Succeed())
+
+				storedKeys, err := client.Keys(ctx, "*").Result()
+				Expect(err).NotTo(HaveOccurred())
+				for _, k := range storedKeys {
+					Expect(k).To(HavePrefix("tenant:abc:"))
+				}
+			})
+		})
+
+		Context("with an empty KeyPrefix", func() {
+			It("should use bare constants — backward compatible with existing deployments", func() {
+				store, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+					Client:    client,
+					KeyPrefix: "",
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				key := newTestKey()
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				Expect(store.Save(ctx, testKeyA, key, metadata)).To(Succeed())
+
+				storedKeys, err := client.Keys(ctx, "*").Result()
+				Expect(err).NotTo(HaveOccurred())
+				for _, k := range storedKeys {
+					Expect(k).To(Or(HavePrefix("ks:pem:"), HavePrefix("ks:meta:")))
+				}
+			})
+		})
+
+		Context("two stores with different prefixes against the same Redis", func() {
+			var (
+				storeA *keys.RedisKeyStore
+				storeB *keys.RedisKeyStore
+			)
+
+			BeforeEach(func() {
+				var err error
+				storeA, err = keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+					Client:    client,
+					KeyPrefix: "ns:a:",
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				storeB, err = keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+					Client:    client,
+					KeyPrefix: "ns:b:",
+				})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("LoadAll should not see keys from the other namespace", func() {
+				keyA := newTestKey()
+				Expect(storeA.Save(ctx, testKeyA, keyA, keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()})).To(Succeed())
+
+				keyB := newTestKey()
+				Expect(storeB.Save(ctx, testKeyB, keyB, keys.KeyMetadata{ID: testKeyB, CreatedAt: time.Now()})).To(Succeed())
+
+				loadedA, err := storeA.LoadAll(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(loadedA).To(HaveLen(1))
+				Expect(loadedA[0].KeyID).To(Equal(testKeyA))
+
+				loadedB, err := storeB.LoadAll(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(loadedB).To(HaveLen(1))
+				Expect(loadedB[0].KeyID).To(Equal(testKeyB))
+			})
+
+			It("LoadKey on store A should not find a key saved by store B", func() {
+				keyB := newTestKey()
+				Expect(storeB.Save(ctx, testKeyA, keyB, keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()})).To(Succeed())
+
+				_, _, err := storeA.LoadKey(ctx, testKeyA)
+				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
+			})
+
+			It("Delete on store A should not affect store B's key with the same ID", func() {
+				keyA := newTestKey()
+				Expect(storeA.Save(ctx, testKeyA, keyA, keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()})).To(Succeed())
+				keyB := newTestKey()
+				Expect(storeB.Save(ctx, testKeyA, keyB, keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()})).To(Succeed())
+
+				Expect(storeA.Delete(ctx, testKeyA)).To(Succeed())
+
+				_, _, err := storeB.LoadKey(ctx, testKeyA)
+				Expect(err).NotTo(HaveOccurred())
 			})
 		})
 	})

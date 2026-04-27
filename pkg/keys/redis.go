@@ -20,10 +20,11 @@ import (
 
 // RedisKeyStoreConfig holds configuration for a RedisKeyStore instance.
 type RedisKeyStoreConfig struct {
-	Client  *redis.Client   // Required; must not be nil.
-	Logger  logging.Logger  // Optional; nil defaults to NoOpLogger.
-	Metrics metrics.Metrics // Optional; nil defaults to NoOpMetrics.
-	Tracer  tracing.Tracer  // Optional; nil defaults to NoOpTracer.
+	Client    *redis.Client   // Required; must not be nil.
+	KeyPrefix string          // Optional; prepended to all Redis keys; empty preserves current behavior.
+	Logger    logging.Logger  // Optional; nil defaults to NoOpLogger.
+	Metrics   metrics.Metrics // Optional; nil defaults to NoOpMetrics.
+	Tracer    tracing.Tracer  // Optional; nil defaults to NoOpTracer.
 }
 
 // RedisKeyStoreConfigDefault returns a RedisKeyStoreConfig with NoOp defaults
@@ -45,6 +46,10 @@ func RedisKeyStoreConfigDefault() RedisKeyStoreConfig {
 type RedisKeyStore struct {
 	// ===== Redis Client =====
 	client *redis.Client // Thread-safe Redis client
+
+	// ===== Key Prefixes =====
+	pemPrefix  string // = cfg.KeyPrefix + keyPEMPrefix;  applied to all PEM keys
+	metaPrefix string // = cfg.KeyPrefix + keyMetaPrefix; applied to all metadata keys
 
 	// ===== Observability =====
 	logger  logging.Logger  // never nil; defaults to NoOpLogger
@@ -75,11 +80,13 @@ func NewRedisKeyStore(cfg RedisKeyStoreConfig) (*RedisKeyStore, error) {
 
 	// ===== STEP 3: Return Initialized Store =====
 	return &RedisKeyStore{
-		client:  cfg.Client,
-		logger:  cfg.Logger,
-		metrics: cfg.Metrics,
-		tracer:  cfg.Tracer,
-		backend: "redis",
+		client:     cfg.Client,
+		pemPrefix:  cfg.KeyPrefix + keyPEMPrefix,
+		metaPrefix: cfg.KeyPrefix + keyMetaPrefix,
+		logger:     cfg.Logger,
+		metrics:    cfg.Metrics,
+		tracer:     cfg.Tracer,
+		backend:    "redis",
 	}, nil
 }
 
@@ -131,12 +138,12 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 	}
 
 	// ===== STEP 2: Scan PEM Keys =====
-	iter := r.client.Scan(ctx, 0, keyPEMPrefix+"*", 0).Iterator()
+	iter := r.client.Scan(ctx, 0, r.pemPrefix+"*", 0).Iterator()
 
 	keys := make([]*StoredKey, 0)
 	for iter.Next(ctx) {
 		redisKey := iter.Val()
-		keyID := strings.TrimPrefix(redisKey, keyPEMPrefix)
+		keyID := strings.TrimPrefix(redisKey, r.pemPrefix)
 
 		// ===== STEP 3: Load PEM =====
 		pemStr, err := r.client.Get(ctx, redisKey).Result()
@@ -156,7 +163,7 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 		}
 
 		// ===== STEP 4: Load Metadata =====
-		metaStr, err := r.client.Get(ctx, keyMetaPrefix+keyID).Result()
+		metaStr, err := r.client.Get(ctx, r.metaPrefix+keyID).Result()
 		if err != nil {
 			r.logger.Warn("skipping key: failed to load metadata", ctx,
 				"keyID", keyID,
@@ -263,8 +270,8 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 
 	// ===== STEP 5: Write via Atomic Pipeline =====
 	pipe := r.client.Pipeline()
-	pipe.Set(ctx, keyPEMPrefix+keyID, pemStr, 0)
-	pipe.Set(ctx, keyMetaPrefix+keyID, string(metaBytes), 0)
+	pipe.Set(ctx, r.pemPrefix+keyID, pemStr, 0)
+	pipe.Set(ctx, r.metaPrefix+keyID, string(metaBytes), 0)
 
 	if _, err := pipe.Exec(ctx); err != nil {
 		r.logger.Error("failed to save key to redis", ctx,
@@ -327,7 +334,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 	}
 
 	// ===== STEP 3: Verify Key Exists =====
-	exists, err := r.client.Exists(ctx, keyPEMPrefix+keyID).Result()
+	exists, err := r.client.Exists(ctx, r.pemPrefix+keyID).Result()
 	if err != nil {
 		r.logger.Error("failed to check key existence", ctx,
 			"keyID", keyID,
@@ -355,7 +362,7 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 		return fmt.Errorf("marshal key metadata: %w", err)
 	}
 
-	if err := r.client.Set(ctx, keyMetaPrefix+keyID, string(metaBytes), 0).Err(); err != nil {
+	if err := r.client.Set(ctx, r.metaPrefix+keyID, string(metaBytes), 0).Err(); err != nil {
 		r.logger.Error("failed to update metadata in redis", ctx,
 			"keyID", keyID,
 			"error", err)
@@ -416,7 +423,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	}
 
 	// ===== STEP 3: Load PEM =====
-	pemStr, err := r.client.Get(ctx, keyPEMPrefix+keyID).Result()
+	pemStr, err := r.client.Get(ctx, r.pemPrefix+keyID).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			status = "not_found"
@@ -444,7 +451,7 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 	}
 
 	// ===== STEP 4: Load Metadata =====
-	metaStr, err := r.client.Get(ctx, keyMetaPrefix+keyID).Result()
+	metaStr, err := r.client.Get(ctx, r.metaPrefix+keyID).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			status = "not_found"
@@ -522,7 +529,7 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 	}
 
 	// ===== STEP 3: Delete Both Keys =====
-	if err := r.client.Del(ctx, keyPEMPrefix+keyID, keyMetaPrefix+keyID).Err(); err != nil {
+	if err := r.client.Del(ctx, r.pemPrefix+keyID, r.metaPrefix+keyID).Err(); err != nil {
 		r.logger.Error("failed to delete key from redis", ctx,
 			"keyID", keyID,
 			"error", err)
