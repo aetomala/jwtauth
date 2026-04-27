@@ -21,3 +21,4 @@ Each ADR includes:
 - [ADR-003: RS256 Only](003-rs256-only.md)
 - [ADR-004: Key ID (kid) Validation at the KeyStore Boundary](004-kid-validation.md)
 - [ADR-005: Security Boundaries — Attacker-Controlled Token Fields](005-security-boundaries.md)
+- [ADR-006: KeyPrefix — Namespace Isolation in Redis Backends](006-keyprefix-namespace-isolation.md)

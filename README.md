@@ -1208,6 +1208,7 @@ This library follows SOLID principles and clean architecture patterns. For detai
 | [ADR-003](doc/adr/003-rs256-only.md) | RS256 only — prevents algorithm confusion attacks | 2026-04-01 |
 | [ADR-004](doc/adr/004-kid-validation.md) | `kid` UUID validation at every `KeyStore` boundary — path traversal prevention | 2026-04-21 |
 | [ADR-005](doc/adr/005-security-boundaries.md) | Security boundaries — explicit validation gate for every attacker-controlled token field | 2026-04-21 |
+| [ADR-006](doc/adr/006-keyprefix-namespace-isolation.md) | `KeyPrefix` — optional namespace isolation for Redis backends; opaque separator for any multi-instance deployment | 2026-04-27 |
 
 ## Rate Limiting
 
