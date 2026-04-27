@@ -107,6 +107,112 @@ var _ = Describe("RedisRefreshStore — Constructor", func() {
 	})
 })
 
+// ===== PHASE 11: KeyPrefix Namespace Isolation =====
+var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix Namespace Isolation", func() {
+	var (
+		mr  *miniredis.Miniredis
+		ctx context.Context
+	)
+
+	BeforeEach(func() {
+		var err error
+		mr, err = miniredis.Run()
+		Expect(err).NotTo(HaveOccurred())
+		ctx = context.Background()
+	})
+
+	AfterEach(func() { mr.Close() })
+
+	newStore := func(prefix string) *storage.RedisRefreshStore {
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		store, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{
+			Client:    client,
+			KeyPrefix: prefix,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		return store
+	}
+
+	Context("with a non-empty KeyPrefix", func() {
+		It("should store all keys under the configured prefix", func() {
+			store := newStore("tenant:abc:")
+			client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+			Expect(store.Store(ctx, "tok1", "user1", time.Now().Add(time.Hour), nil)).To(Succeed())
+
+			storedKeys, err := client.Keys(ctx, "*").Result()
+			Expect(err).NotTo(HaveOccurred())
+			for _, k := range storedKeys {
+				Expect(k).To(HavePrefix("tenant:abc:"))
+			}
+		})
+	})
+
+	Context("with an empty KeyPrefix", func() {
+		It("should use bare constants — backward compatible with existing deployments", func() {
+			store := newStore("")
+			client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+			Expect(store.Store(ctx, "tok1", "user1", time.Now().Add(time.Hour), nil)).To(Succeed())
+
+			storedKeys, err := client.Keys(ctx, "*").Result()
+			Expect(err).NotTo(HaveOccurred())
+			for _, k := range storedKeys {
+				Expect(k).To(Or(HavePrefix("tokens:"), HavePrefix("user_tokens:")))
+			}
+		})
+	})
+
+	Context("two stores with different prefixes against the same Redis", func() {
+		It("Retrieve should not find a token stored in the other namespace", func() {
+			storeA := newStore("ns:a:")
+			storeB := newStore("ns:b:")
+
+			Expect(storeA.Store(ctx, "shared-token", "user1", time.Now().Add(time.Hour), nil)).To(Succeed())
+
+			_, err := storeB.Retrieve(ctx, "shared-token")
+			Expect(err).To(MatchError(storage.ErrTokenNotFound))
+		})
+
+		It("RevokeAllForUser in namespace A should not revoke tokens in namespace B", func() {
+			storeA := newStore("ns:a:")
+			storeB := newStore("ns:b:")
+
+			Expect(storeA.Store(ctx, "tok-a", "user1", time.Now().Add(time.Hour), nil)).To(Succeed())
+			Expect(storeB.Store(ctx, "tok-b", "user1", time.Now().Add(time.Hour), nil)).To(Succeed())
+
+			Expect(storeA.RevokeAllForUser(ctx, "user1")).To(Succeed())
+
+			// tok-a should now be revoked
+			_, err := storeA.Retrieve(ctx, "tok-a")
+			Expect(err).To(MatchError(storage.ErrTokenRevoked))
+
+			// tok-b in namespace B should be unaffected
+			tok, err := storeB.Retrieve(ctx, "tok-b")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tok.TokenID).To(Equal("tok-b"))
+		})
+
+		It("Cleanup in namespace A should not remove expired tokens in namespace B", func() {
+			storeA := newStore("ns:a:")
+			storeB := newStore("ns:b:")
+
+			// Store an already-expired token directly via miniredis manipulation:
+			// Store with a 1-second TTL, then fast-forward time.
+			Expect(storeB.Store(ctx, "expired-b", "user2", time.Now().Add(time.Hour), nil)).To(Succeed())
+			mr.FastForward(2 * time.Hour)
+
+			// Store a live token in A so A has something to scan
+			Expect(storeA.Store(ctx, "live-a", "user2", time.Now().Add(time.Hour), nil)).To(Succeed())
+
+			// Cleanup on A must not touch B's expired token (it's outside A's scan pattern)
+			removed, err := storeA.Cleanup(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(removed).To(Equal(0))
+		})
+	})
+})
+
 // ===== PHASE 10: Tracing =====
 var _ = Describe("RedisRefreshStore — Phase 10: Tracing", func() {
 	var (

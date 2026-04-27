@@ -93,6 +93,10 @@ All notable changes to this project will be documented in this file.
 
 - **Integration tests for `GetCurrentKeyInfo` and `GetKeyInfo`** — three new cases added to `RunTokenManagerIntegrationTests` and run against all storage backends (DiskKeyStore+MemoryRefreshStore, RedisKeyStore+RedisRefreshStore): verifies accurate field values after `Start()`; verifies that `GetCurrentKeyInfo` reflects the new key after `RotateKeys()` while the old key remains accessible via `GetKeyInfo`; verifies that 20 concurrent `GetCurrentKeyInfo` calls during an active `RotateKeys()` produce no data races (real `Manager.mu` lock path exercised under `-race`).
 
+- **`KeyPrefix` field added to `RedisKeyStoreConfig` and `RedisRefreshStoreConfig`** — optional string prepended to all Redis keys, enabling per-tenant namespace isolation when multiple `Manager` instances share a single Redis instance. Defaults to empty string — fully backward compatible. See #104.
+
+- **`ListTokens` added to `RefreshStore` interface** — cursor-based token iteration for resumable reconciliation jobs. Pass an empty string for cursor to begin from the start; returns an empty cursor when iteration is exhausted. Count is a hint — actual page size may vary by implementation. Breaking change for any `RefreshStore` implementation outside this repository — add `ListTokens` to comply with the updated interface. See #105.
+
 ### Fixed
 
 - **`KeyInfo.KeySizeBits` now reports actual key size** — previously sourced from `KeyManagerConfig.KeySize` (caller-supplied), which could silently diverge from the actual RSA key on disk if the `DiskKeyStore` or `RedisKeyStore` was configured with a different key size. Now derived from `keyPair.PrivateKey.N.BitLen()` so the reported value always matches the real key material.
