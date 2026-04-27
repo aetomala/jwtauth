@@ -57,6 +57,20 @@ func (mr *MockRefreshStoreMockRecorder) Cleanup(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cleanup", reflect.TypeOf((*MockRefreshStore)(nil).Cleanup), ctx)
 }
 
+// Namespace mocks base method.
+func (m *MockRefreshStore) Namespace() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Namespace")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// Namespace indicates an expected call of Namespace.
+func (mr *MockRefreshStoreMockRecorder) Namespace() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Namespace", reflect.TypeOf((*MockRefreshStore)(nil).Namespace))
+}
+
 // Retrieve mocks base method.
 func (m *MockRefreshStore) Retrieve(ctx context.Context, tokenID string) (*storage.RefreshToken, error) {
 	m.ctrl.T.Helper()

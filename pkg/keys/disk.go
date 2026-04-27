@@ -96,6 +96,10 @@ func NewDiskKeyStore(cfg DiskKeyStoreConfig) (*DiskKeyStore, error) {
 	}, nil
 }
 
+// Namespace returns empty string — DiskKeyStore uses directory-level isolation
+// and does not support the namespace concept.
+func (d *DiskKeyStore) Namespace() string { return "" }
+
 // startSpan begins a new tracing span with storage.backend pre-set to "disk".
 func (d *DiskKeyStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
 	return d.tracer.Start(ctx, "DiskKeyStore."+operation,

@@ -76,6 +76,10 @@ func NewMemoryRefreshStore(cfg MemoryRefreshStoreConfig) *MemoryRefreshStore {
 	}
 }
 
+// Namespace returns empty string — MemoryRefreshStore is development-only and
+// does not support multi-tenant namespace isolation.
+func (m *MemoryRefreshStore) Namespace() string { return "" }
+
 // startSpan starts a new span for the given operation name, pre-seeded with
 // the storage.backend attribute.
 func (m *MemoryRefreshStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {

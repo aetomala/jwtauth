@@ -48,6 +48,7 @@ type RedisKeyStore struct {
 	client *redis.Client // Thread-safe Redis client
 
 	// ===== Key Prefixes =====
+	namespace  string // = cfg.KeyPrefix; returned by Namespace()
 	pemPrefix  string // = cfg.KeyPrefix + keyPEMPrefix;  applied to all PEM keys
 	metaPrefix string // = cfg.KeyPrefix + keyMetaPrefix; applied to all metadata keys
 
@@ -81,6 +82,7 @@ func NewRedisKeyStore(cfg RedisKeyStoreConfig) (*RedisKeyStore, error) {
 	// ===== STEP 3: Return Initialized Store =====
 	return &RedisKeyStore{
 		client:     cfg.Client,
+		namespace:  cfg.KeyPrefix,
 		pemPrefix:  cfg.KeyPrefix + keyPEMPrefix,
 		metaPrefix: cfg.KeyPrefix + keyMetaPrefix,
 		logger:     cfg.Logger,
@@ -89,6 +91,10 @@ func NewRedisKeyStore(cfg RedisKeyStoreConfig) (*RedisKeyStore, error) {
 		backend:    "redis",
 	}, nil
 }
+
+// Namespace returns the KeyPrefix this store was configured with. An empty
+// string indicates an unscoped (single-tenant) deployment.
+func (r *RedisKeyStore) Namespace() string { return r.namespace }
 
 // startSpan starts a new span for the given operation name, pre-seeded with
 // the storage.backend attribute.
