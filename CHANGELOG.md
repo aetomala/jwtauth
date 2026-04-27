@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased] — v0.4.0
 
+### Breaking
+
+- **`logging.Logger` gains `With(keysAndValues ...interface{}) Logger`** — existing third-party adapter implementations (Zap, Zerolog, Logrus, etc.) must add this method. Built-in implementations (`SlogAdapter`, `NoOpLogger`) and `MockLogger` are already updated. `With` is additive — chained calls accumulate fields. `NoOpLogger` may return the receiver unchanged.
+
 ### Security
 
 - **`kid` path traversal fix** — `DiskKeyStore` and `RedisKeyStore` now validate the

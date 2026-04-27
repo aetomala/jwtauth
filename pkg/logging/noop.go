@@ -28,3 +28,7 @@ func (n *NoOpLogger) Warn(msg string, keysAndValues ...interface{}) {}
 
 // Error discards the log message.
 func (n *NoOpLogger) Error(msg string, keysAndValues ...interface{}) {}
+
+// With returns the receiver unchanged — NoOpLogger discards all output so there
+// are no fields to bind.
+func (n *NoOpLogger) With(keysAndValues ...interface{}) Logger { return n }

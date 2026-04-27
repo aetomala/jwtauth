@@ -102,6 +102,13 @@ func (s *SlogAdapter) Error(msg string, keysAndValues ...interface{}) {
 	s.logger.Error(msg, keysAndValues...)
 }
 
+// With returns a new SlogAdapter with the given key-value pairs pre-bound to every
+// subsequent log call. The ctx-first convention in Debug/Info/Warn/Error continues
+// to work on the returned adapter — context detection lives in those methods, not here.
+func (s *SlogAdapter) With(keysAndValues ...interface{}) Logger {
+	return &SlogAdapter{logger: s.logger.With(keysAndValues...)}
+}
+
 // Helper functions for common slog configurations
 
 // NewJSONLogger creates a production-ready JSON logger that writes to stdout.
