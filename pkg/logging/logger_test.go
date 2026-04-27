@@ -862,6 +862,82 @@ var _ = Describe("Integration", func() {
 })
 
 // ============================================================================
+// Logger.With Tests
+// ============================================================================
+
+var _ = Describe("Logger.With", func() {
+	Describe("SlogAdapter.With", func() {
+		var buf *bytes.Buffer
+
+		newAdapter := func() *logging.SlogAdapter {
+			return logging.NewSlogAdapter(slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		}
+
+		BeforeEach(func() {
+			buf = &bytes.Buffer{}
+		})
+
+		It("should pre-bind fields to all subsequent log calls", func() {
+			enriched := newAdapter().With("namespace", "tenant-a")
+			enriched.Info("token issued", "user_id", "u-1")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry["namespace"]).To(Equal("tenant-a"))
+			Expect(entry["user_id"]).To(Equal("u-1"))
+		})
+
+		It("should be additive — chained With calls accumulate fields", func() {
+			enriched := newAdapter().With("namespace", "tenant-b").With("component", "keymanager")
+			enriched.Info("rotation started")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry["namespace"]).To(Equal("tenant-b"))
+			Expect(entry["component"]).To(Equal("keymanager"))
+		})
+
+		It("should not affect the original adapter", func() {
+			base := newAdapter()
+			_ = base.With("namespace", "tenant-c")
+			base.Info("unaffected")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry).NotTo(HaveKey("namespace"))
+		})
+
+		It("should still honour ctx-first convention after With", func() {
+			inner := slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+			base := logging.NewSlogAdapter(slog.New(logging.NewCorrelationIDHandler(inner)))
+			enriched := base.With("namespace", "tenant-d")
+
+			ctx := logging.WithCorrelationID(context.Background(), "corr-with-1")
+			enriched.Info("enriched ctx log", ctx, "key", "val")
+
+			var entry map[string]interface{}
+			Expect(json.Unmarshal(buf.Bytes(), &entry)).To(Succeed())
+			Expect(entry["namespace"]).To(Equal("tenant-d"))
+			Expect(entry["correlation_id"]).To(Equal("corr-with-1"))
+			Expect(entry["key"]).To(Equal("val"))
+		})
+	})
+
+	Describe("NoOpLogger.With", func() {
+		It("should return the same instance — no allocation", func() {
+			n := &logging.NoOpLogger{}
+			result := n.With("namespace", "x")
+			Expect(result).To(BeIdenticalTo(n))
+		})
+
+		It("should not panic on subsequent log calls after With", func() {
+			enriched := (&logging.NoOpLogger{}).With("k", "v")
+			Expect(func() { enriched.Info("msg", "extra", "field") }).NotTo(Panic())
+		})
+	})
+})
+
+// ============================================================================
 // SlogAdapter — Context Detection Tests
 // ============================================================================
 

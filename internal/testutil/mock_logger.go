@@ -6,8 +6,11 @@ import (
 	"github.com/aetomala/jwtauth/pkg/logging"
 )
 
-// Ensure MockLogger implements logging.Logger at compile time
-var _ logging.Logger = (*MockLogger)(nil)
+// Ensure MockLogger and withMockLogger implement logging.Logger at compile time.
+var (
+	_ logging.Logger = (*MockLogger)(nil)
+	_ logging.Logger = (*withMockLogger)(nil)
+)
 
 // MockLogger implements the logging.Logger interface for testing.
 // It records all log calls in memory for verification in tests.
@@ -270,4 +273,41 @@ func (m *MockLogger) IsEnabled() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.enable
+}
+
+// With returns a withMockLogger that pre-injects bound fields into every log call
+// and delegates storage to the parent MockLogger so callers can inspect all entries
+// — including those from enriched loggers — on the original mock.
+func (m *MockLogger) With(keysAndValues ...interface{}) logging.Logger {
+	return &withMockLogger{parent: m, bound: keysAndValues}
+}
+
+// withMockLogger wraps a MockLogger and pre-injects bound fields into every call.
+// It shares the parent's log store so all entries are visible on the original MockLogger.
+type withMockLogger struct {
+	parent *MockLogger
+	bound  []interface{}
+}
+
+func (w *withMockLogger) With(keysAndValues ...interface{}) logging.Logger {
+	merged := make([]interface{}, len(w.bound)+len(keysAndValues))
+	copy(merged, w.bound)
+	copy(merged[len(w.bound):], keysAndValues)
+	return &withMockLogger{parent: w.parent, bound: merged}
+}
+
+func (w *withMockLogger) Debug(msg string, kvs ...interface{}) {
+	w.parent.Debug(msg, append(w.bound, kvs...)...)
+}
+
+func (w *withMockLogger) Info(msg string, kvs ...interface{}) {
+	w.parent.Info(msg, append(w.bound, kvs...)...)
+}
+
+func (w *withMockLogger) Warn(msg string, kvs ...interface{}) {
+	w.parent.Warn(msg, append(w.bound, kvs...)...)
+}
+
+func (w *withMockLogger) Error(msg string, kvs ...interface{}) {
+	w.parent.Error(msg, append(w.bound, kvs...)...)
 }
