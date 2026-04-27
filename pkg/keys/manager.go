@@ -151,6 +151,7 @@ type KeyManagerConfig struct {
 	KeyRotationInterval time.Duration   // How often to rotate to a new signing key
 	KeyOverlapDuration  time.Duration   // How long old keys remain valid after rotation
 	KeySize             int             // RSA key size in bits (minimum 2048)
+	Namespace           string          // Optional; opaque label attached to observability output — empty disables labeling
 }
 
 // DefaultKeyManagerConfig returns a KeyManagerConfig with sensible defaults suitable for
