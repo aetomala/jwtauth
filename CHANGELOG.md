@@ -14,6 +14,8 @@ All notable changes to this project will be documented in this file.
 
 - **`storage.RefreshStore` gains `Namespace() string`** — existing implementations must add this method. `RedisRefreshStore` returns the configured `KeyPrefix`; `MemoryRefreshStore` returns `""`. `MockRefreshStore` regenerated.
 
+- **`storage.RefreshStore` gains `ListTokens(ctx, cursor, count)` method** — existing third-party implementations must add this method. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. See #105.
+
 ### Security
 
 - **`kid` path traversal fix** — `DiskKeyStore` and `RedisKeyStore` now validate the
@@ -103,7 +105,13 @@ All notable changes to this project will be documented in this file.
 
 - **`KeyPrefix` field added to `RedisKeyStoreConfig` and `RedisRefreshStoreConfig`** — optional string prepended to all Redis keys, enabling per-tenant namespace isolation when multiple `Manager` instances share a single Redis instance. Defaults to empty string — fully backward compatible. See #104.
 
-- **`ListTokens` added to `RefreshStore` interface** — cursor-based token iteration for resumable reconciliation jobs. Pass an empty string for cursor to begin from the start; returns an empty cursor when iteration is exhausted. Count is a hint — actual page size may vary by implementation. Breaking change for any `RefreshStore` implementation outside this repository — add `ListTokens` to comply with the updated interface. See #105.
+- **`ListTokens(ctx, cursor, count)` added to `RefreshStore` interface and both implementations** — cursor-based token iteration for resumable reconciliation jobs, audit pipelines, and bulk operations. `MemoryRefreshStore` uses a sorted tokenID cursor; `RedisRefreshStore` uses Redis SCAN cursor passthrough. Pass an empty string for cursor to begin from the start; returns an empty cursor when iteration is exhausted. Count is a hint — actual page size may vary. All tokens are returned regardless of revocation or expiry status — caller is responsible for filtering. `MockRefreshStore` regenerated. See #105.
+
+- **`Manager.ListTokens(ctx, cursor, count)` added to `tokens.Manager`** — thin delegation to the underlying `RefreshStore.ListTokens` following the established `CleanupExpiredTokens` pattern. Emits a `token.list_tokens` span (attrs: `token.namespace`, `token.cursor`, `token.count`, `token.result_count`), logs success and failure, and records `jwtauth_tokens_list_total` counter and `jwtauth_tokens_list_duration_seconds` histogram with `namespace` and `error_type` labels.
+
+- **Compile-time `var _ RefreshStore` assertions added to `MemoryRefreshStore` and `RedisRefreshStore`** — interface compliance is now verified at compile time. Closes #106.
+
+- **4 new Prometheus metrics registered in `PrometheusMetrics`** — storage-layer metrics (`jwtauth_storage_list_tokens_total`, `jwtauth_storage_list_tokens_duration_seconds`) and token-manager-layer metrics (`jwtauth_tokens_list_total`, `jwtauth_tokens_list_duration_seconds`); all carry `namespace` and `error_type` labels.
 
 - **`Namespace string` added to `KeyManagerConfig` and `TokenManagerConfig`** — optional opaque label stored in both manager structs at construction time. Zero value preserves current behavior — no label is attached to observability output. Intended for multi-instance deployments where log lines, trace spans, and metric labels from different manager instances must be disambiguated. Decoupled from `KeyPrefix` — both fields may be set independently. See ADR-007.
 

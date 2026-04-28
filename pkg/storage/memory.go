@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/tracing"
 )
+
+var _ RefreshStore = (*MemoryRefreshStore)(nil)
 
 // MemoryRefreshStoreConfig holds configuration for a MemoryRefreshStore instance.
 type MemoryRefreshStoreConfig struct {
@@ -556,6 +559,113 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	span.SetStatus(tracing.StatusOK, "")
 
 	return count, nil
+}
+
+// ListTokens returns a page of refresh tokens starting from cursor. Pass an
+// empty string for cursor to begin from the start. Returns the next cursor and
+// a nil error on success. Returns an empty next cursor when iteration is
+// exhausted.
+//
+// All tokens are returned regardless of revocation or expiry status — the
+// caller is responsible for filtering. Cursor semantics are best-effort: a
+// non-empty cursor resumes after the last token ID seen on the previous page.
+// Returns the context error if the context is cancelled.
+func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, count int) ([]*RefreshToken, string, error) {
+	ctx, span := m.startSpan(ctx, "ListTokens")
+	defer span.End()
+	span.SetAttribute("storage.cursor", cursor)
+	span.SetAttribute("storage.count", count)
+
+	start := time.Now()
+	errorType := "error"
+	resultCount := 0
+	defer func() {
+		m.metrics.IncrementCounter(metricListTokensTotal, map[string]string{
+			"storage_backend": m.backend,
+			"namespace":       "",
+			"error_type":      errorType,
+		})
+		m.metrics.RecordDuration(metricListTokensDuration, time.Since(start), map[string]string{
+			"storage_backend": m.backend,
+			"namespace":       "",
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		errorType = "cancelled"
+		m.logger.Warn("listTokens aborted: context cancelled", ctx, "reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 2: Acquire Read Lock and Snapshot =====
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// ===== STEP 3: Sort Token IDs for Stable Iteration =====
+	tokenIDs := make([]string, 0, len(m.tokens))
+	for id := range m.tokens {
+		tokenIDs = append(tokenIDs, id)
+	}
+	sort.Strings(tokenIDs)
+
+	// ===== STEP 4: Advance Past Cursor =====
+	start2 := 0
+	if cursor != "" {
+		for i, id := range tokenIDs {
+			if id > cursor {
+				start2 = i
+				break
+			}
+			// cursor was the last element — exhausted
+			start2 = len(tokenIDs)
+		}
+	}
+
+	// ===== STEP 5: Build Page =====
+	end := start2 + count
+	if count <= 0 || end > len(tokenIDs) {
+		end = len(tokenIDs)
+	}
+	page := tokenIDs[start2:end]
+
+	tokens := make([]*RefreshToken, 0, len(page))
+	for _, id := range page {
+		t := m.tokens[id]
+		copy := &RefreshToken{
+			TokenID:   t.TokenID,
+			UserID:    t.UserID,
+			ExpiresAt: t.ExpiresAt,
+			CreatedAt: t.CreatedAt,
+			Revoked:   t.Revoked,
+		}
+		if t.Metadata != nil {
+			copy.Metadata = make(map[string]interface{}, len(t.Metadata))
+			for k, v := range t.Metadata {
+				copy.Metadata[k] = v
+			}
+		}
+		tokens = append(tokens, copy)
+	}
+
+	// ===== STEP 6: Compute Next Cursor =====
+	nextCursor := ""
+	if end < len(tokenIDs) {
+		nextCursor = tokenIDs[end-1]
+	}
+
+	// ===== STEP 7: Log and Return =====
+	errorType = ""
+	resultCount = len(tokens)
+	span.SetAttribute("storage.result_count", resultCount)
+	span.SetStatus(tracing.StatusOK, "")
+	m.logger.Info("listTokens: page returned", ctx,
+		"result_count", resultCount,
+		"next_cursor", nextCursor)
+
+	return tokens, nextCursor, nil
 }
 
 func (m *MemoryRefreshStore) removeFromUserTokens(userID, tokenID string) {
