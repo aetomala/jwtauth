@@ -111,6 +111,8 @@ All notable changes to this project will be documented in this file.
 
 - **`KeyManager` emits namespace across all three signal types** — every span carries a `key.namespace` attribute, every log line carries a `namespace` field (via `Logger.With` in the constructor), and every Prometheus label on key management metrics (`key_rotations_total`, `key_signing_operations_total`, `key_validation_operations_total`, `key_operation_duration_seconds`, `key_active_versions_count`) includes `namespace`. Zero-value `Namespace` emits an empty string label, preserving backward compatibility. Closes #112 (Phase 4).
 
+- **`TokenManager` emits namespace across all three signal types** — every span carries a `token.namespace` attribute, every log line carries a `namespace` field (via `Logger.With` in the constructor), and every Prometheus label on token management metrics (`tokens_issued_total`, `tokens_validated_total`, `tokens_refreshed_total`, `tokens_revoked_total`, `tokens_introspected_total`, `operations_total`, `operation_duration_seconds`, `active_tokens`) includes `namespace`. Zero-value `Namespace` emits an empty string label, preserving backward compatibility. Closes #112 (Phase 5).
+
 ### Fixed
 
 - **`KeyInfo.KeySizeBits` now reports actual key size** — previously sourced from `KeyManagerConfig.KeySize` (caller-supplied), which could silently diverge from the actual RSA key on disk if the `DiskKeyStore` or `RedisKeyStore` was configured with a different key size. Now derived from `keyPair.PrivateKey.N.BitLen()` so the reported value always matches the real key material.

@@ -223,6 +223,7 @@ var _ = Describe("Prometheus", func() {
 				labels := map[string]string{
 					"operation": "validate",
 					"status":    "success",
+					"namespace": "",
 				}
 
 				pm.IncrementCounter("jwtauth_operations_total", labels)
@@ -233,8 +234,8 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should handle different label combinations independently", func() {
-				successLabels := map[string]string{"operation": "issue", "status": "success"}
-				failureLabels := map[string]string{"operation": "issue", "status": "failure"}
+				successLabels := map[string]string{"operation": "issue", "status": "success", "namespace": ""}
+				failureLabels := map[string]string{"operation": "issue", "status": "failure", "namespace": ""}
 
 				pm.IncrementCounter("jwtauth_operations_total", successLabels)
 				pm.IncrementCounter("jwtauth_operations_total", failureLabels)
@@ -245,14 +246,14 @@ var _ = Describe("Prometheus", func() {
 
 			Context("AddCounter", func() {
 				It("should add specific value to counter", func() {
-					labels := map[string]string{"operation": "batch", "status": "success"}
+					labels := map[string]string{"operation": "batch", "status": "success", "namespace": ""}
 					pm.AddCounter("jwtauth_operations_total", 5.0, labels)
 
 					Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(5.0))
 				})
 
 				It("should accumulate values across multiple calls", func() {
-					labels := map[string]string{"operation": "batch", "status": "success"}
+					labels := map[string]string{"operation": "batch", "status": "success", "namespace": ""}
 
 					pm.AddCounter("jwtauth_operations_total", 5.0, labels)
 					pm.AddCounter("jwtauth_operations_total", 3.0, labels)
@@ -261,7 +262,7 @@ var _ = Describe("Prometheus", func() {
 				})
 
 				It("should handle fractional values", func() {
-					labels := map[string]string{"operation": "partial", "status": "success"}
+					labels := map[string]string{"operation": "partial", "status": "success", "namespace": ""}
 					pm.AddCounter("jwtauth_operations_total", 0.5, labels)
 
 					Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(0.5))
@@ -274,14 +275,14 @@ var _ = Describe("Prometheus", func() {
 	Describe("Phase 2: Counter Operations - Happy Path", func() {
 		Context("IncrementCounter", func() {
 			It("should increment counter by 1", func() {
-				labels := map[string]string{"operation": "issue", "status": "success"}
+				labels := map[string]string{"operation": "issue", "status": "success", "namespace": ""}
 				pm.IncrementCounter("jwtauth_operations_total", labels)
 
 				Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(1.0))
 			})
 
 			It("should support multiple increments", func() {
-				labels := map[string]string{"operation": "validate", "status": "success"}
+				labels := map[string]string{"operation": "validate", "status": "success", "namespace": ""}
 
 				pm.IncrementCounter("jwtauth_operations_total", labels)
 				pm.IncrementCounter("jwtauth_operations_total", labels)
@@ -291,8 +292,8 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should handle different label combinations independently", func() {
-				successLabels := map[string]string{"operation": "issue", "status": "success"}
-				failureLabels := map[string]string{"operation": "issue", "status": "failure"}
+				successLabels := map[string]string{"operation": "issue", "status": "success", "namespace": ""}
+				failureLabels := map[string]string{"operation": "issue", "status": "failure", "namespace": ""}
 
 				pm.IncrementCounter("jwtauth_operations_total", successLabels)
 				pm.IncrementCounter("jwtauth_operations_total", failureLabels)
@@ -307,14 +308,14 @@ var _ = Describe("Prometheus", func() {
 	Describe("Phase 3: Gauge Operations", func() {
 		Context("SetGauge - basic usage", func() {
 			It("should set gauge to specific value", func() {
-				labels := map[string]string{"storage_backend": "memory"}
+				labels := map[string]string{"storage_backend": "memory", "namespace": ""}
 				pm.SetGauge("jwtauth_active_tokens", 100, labels)
 
 				Expect(gaugeValue(registry, "jwtauth_active_tokens", labels)).To(Equal(100.0))
 			})
 
 			It("should overwrite previous gauge value", func() {
-				labels := map[string]string{"storage_backend": "redis"}
+				labels := map[string]string{"storage_backend": "redis", "namespace": ""}
 
 				pm.SetGauge("jwtauth_active_tokens", 50, labels)
 				pm.SetGauge("jwtauth_active_tokens", 75, labels)
@@ -325,7 +326,7 @@ var _ = Describe("Prometheus", func() {
 
 		Context("SetGauge - value changes", func() {
 			It("should allow gauge to increase", func() {
-				labels := map[string]string{"storage_backend": "memory"}
+				labels := map[string]string{"storage_backend": "memory", "namespace": ""}
 
 				pm.SetGauge("jwtauth_active_tokens", 50, labels)
 				pm.SetGauge("jwtauth_active_tokens", 100, labels)
@@ -334,7 +335,7 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should allow gauge to decrease", func() {
-				labels := map[string]string{"storage_backend": "memory"}
+				labels := map[string]string{"storage_backend": "memory", "namespace": ""}
 
 				pm.SetGauge("jwtauth_active_tokens", 100, labels)
 				pm.SetGauge("jwtauth_active_tokens", 50, labels)
@@ -363,7 +364,7 @@ var _ = Describe("Prometheus", func() {
 	Describe("Phase 4: Histogram Operations", func() {
 		Context("RecordHistogram", func() {
 			It("should record single value", func() {
-				labels := map[string]string{"operation": "issue"}
+				labels := map[string]string{"operation": "issue", "namespace": ""}
 				pm.RecordHistogram("jwtauth_operation_duration_seconds", 0.123, labels)
 
 				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", labels)).To(Equal(uint64(1)))
@@ -371,7 +372,7 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should record distribution of values", func() {
-				labels := map[string]string{"operation": "validate"}
+				labels := map[string]string{"operation": "validate", "namespace": ""}
 
 				pm.RecordHistogram("jwtauth_operation_duration_seconds", 0.001, labels)
 				pm.RecordHistogram("jwtauth_operation_duration_seconds", 0.005, labels)
@@ -384,7 +385,7 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should place values in correct buckets", func() {
-				labels := map[string]string{"operation": "refresh"}
+				labels := map[string]string{"operation": "refresh", "namespace": ""}
 				pm.RecordHistogram("jwtauth_operation_duration_seconds", 0.025, labels)
 
 				// 0.025 should appear in the ≤0.025 bucket and all larger buckets
@@ -395,7 +396,7 @@ var _ = Describe("Prometheus", func() {
 
 		Context("RecordDuration", func() {
 			It("should convert duration to seconds", func() {
-				labels := map[string]string{"operation": "issue"}
+				labels := map[string]string{"operation": "issue", "namespace": ""}
 				pm.RecordDuration("jwtauth_operation_duration_seconds", 250*time.Millisecond, labels)
 
 				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", labels)).To(Equal(uint64(1)))
@@ -411,7 +412,7 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should handle long durations", func() {
-				labels := map[string]string{"operation": "cleanup"}
+				labels := map[string]string{"operation": "cleanup", "namespace": ""}
 				pm.RecordDuration("jwtauth_operation_duration_seconds", 5*time.Second, labels)
 
 				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", labels)).To(Equal(uint64(1)))
@@ -506,6 +507,7 @@ var _ = Describe("Prometheus", func() {
 							pm.IncrementCounter("jwtauth_operations_total", map[string]string{
 								"operation": "concurrent",
 								"status":    "success",
+								"namespace": "",
 							})
 						}
 						done <- true
@@ -517,7 +519,7 @@ var _ = Describe("Prometheus", func() {
 					<-done
 				}
 
-				labels := map[string]string{"operation": "concurrent", "status": "success"}
+				labels := map[string]string{"operation": "concurrent", "status": "success", "namespace": ""}
 				Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(float64(goroutines * incrementsPerGoroutine)))
 			})
 
@@ -530,6 +532,7 @@ var _ = Describe("Prometheus", func() {
 						pm.AddCounter("jwtauth_operations_total", 10.0, map[string]string{
 							"operation": "concurrent_add",
 							"status":    "success",
+							"namespace": "",
 						})
 						done <- true
 					}()
@@ -539,7 +542,7 @@ var _ = Describe("Prometheus", func() {
 					<-done
 				}
 
-				labels := map[string]string{"operation": "concurrent_add", "status": "success"}
+				labels := map[string]string{"operation": "concurrent_add", "status": "success", "namespace": ""}
 				Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(50.0))
 			})
 		})
@@ -553,6 +556,7 @@ var _ = Describe("Prometheus", func() {
 						defer GinkgoRecover()
 						pm.SetGauge("jwtauth_active_tokens", value, map[string]string{
 							"storage_backend": "concurrent",
+							"namespace":       "",
 						})
 						done <- true
 					}(float64(i))
@@ -563,7 +567,7 @@ var _ = Describe("Prometheus", func() {
 				}
 
 				// Last write wins — value must be one of the 10 values written
-				labels := map[string]string{"storage_backend": "concurrent"}
+				labels := map[string]string{"storage_backend": "concurrent", "namespace": ""}
 				Expect(gaugeValue(registry, "jwtauth_active_tokens", labels)).To(BeNumerically(">=", 0))
 				Expect(gaugeValue(registry, "jwtauth_active_tokens", labels)).To(BeNumerically("<", 10))
 			})
@@ -579,6 +583,7 @@ var _ = Describe("Prometheus", func() {
 						for j := 0; j < 100; j++ {
 							pm.RecordHistogram("jwtauth_operation_duration_seconds", 0.001, map[string]string{
 								"operation": "concurrent",
+								"namespace": "",
 							})
 						}
 						done <- true
@@ -589,7 +594,7 @@ var _ = Describe("Prometheus", func() {
 					<-done
 				}
 
-				labels := map[string]string{"operation": "concurrent"}
+				labels := map[string]string{"operation": "concurrent", "namespace": ""}
 				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", labels)).To(Equal(uint64(1000)))
 			})
 		})
@@ -607,9 +612,11 @@ var _ = Describe("Prometheus", func() {
 				pm.IncrementCounter("jwtauth_operations_total", map[string]string{
 					"operation": "issue",
 					"status":    "success",
+					"namespace": "",
 				})
 				pm.SetGauge("jwtauth_active_tokens", 42, map[string]string{
 					"storage_backend": "memory",
+					"namespace":       "",
 				})
 
 				req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
@@ -637,6 +644,7 @@ var _ = Describe("Prometheus", func() {
 				pm.IncrementCounter("jwtauth_operations_total", map[string]string{
 					"operation": "test",
 					"status":    "success",
+					"namespace": "",
 				})
 
 				metricFamilies, err := pm.Registry().Gather()
@@ -654,41 +662,48 @@ var _ = Describe("Prometheus", func() {
 				pm.IncrementCounter("jwtauth_tokens_issued_total", map[string]string{
 					"status":     "success",
 					"error_type": "",
+					"namespace":  "",
 				})
 				pm.RecordDuration("jwtauth_operation_duration_seconds", 50*time.Millisecond, map[string]string{
 					"operation": "issue",
+					"namespace": "",
 				})
 
 				// Validate token
 				pm.IncrementCounter("jwtauth_tokens_validated_total", map[string]string{
 					"status":     "success",
 					"error_type": "",
+					"namespace":  "",
 				})
 				pm.RecordDuration("jwtauth_operation_duration_seconds", 5*time.Millisecond, map[string]string{
 					"operation": "validate",
+					"namespace": "",
 				})
 
 				// Refresh token
 				pm.IncrementCounter("jwtauth_tokens_refreshed_total", map[string]string{
 					"status":     "success",
 					"error_type": "",
+					"namespace":  "",
 				})
 				pm.RecordDuration("jwtauth_operation_duration_seconds", 30*time.Millisecond, map[string]string{
 					"operation": "refresh",
+					"namespace": "",
 				})
 
 				// Update active tokens
 				pm.SetGauge("jwtauth_active_tokens", 150, map[string]string{
 					"storage_backend": "redis",
+					"namespace":       "",
 				})
 
-				Expect(counterValue(registry, "jwtauth_tokens_issued_total", map[string]string{"status": "success", "error_type": ""})).To(Equal(1.0))
-				Expect(counterValue(registry, "jwtauth_tokens_validated_total", map[string]string{"status": "success", "error_type": ""})).To(Equal(1.0))
-				Expect(counterValue(registry, "jwtauth_tokens_refreshed_total", map[string]string{"status": "success", "error_type": ""})).To(Equal(1.0))
-				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", map[string]string{"operation": "issue"})).To(Equal(uint64(1)))
-				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", map[string]string{"operation": "validate"})).To(Equal(uint64(1)))
-				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", map[string]string{"operation": "refresh"})).To(Equal(uint64(1)))
-				Expect(gaugeValue(registry, "jwtauth_active_tokens", map[string]string{"storage_backend": "redis"})).To(Equal(150.0))
+				Expect(counterValue(registry, "jwtauth_tokens_issued_total", map[string]string{"status": "success", "error_type": "", "namespace": ""})).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_tokens_validated_total", map[string]string{"status": "success", "error_type": "", "namespace": ""})).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_tokens_refreshed_total", map[string]string{"status": "success", "error_type": "", "namespace": ""})).To(Equal(1.0))
+				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", map[string]string{"operation": "issue", "namespace": ""})).To(Equal(uint64(1)))
+				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", map[string]string{"operation": "validate", "namespace": ""})).To(Equal(uint64(1)))
+				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", map[string]string{"operation": "refresh", "namespace": ""})).To(Equal(uint64(1)))
+				Expect(gaugeValue(registry, "jwtauth_active_tokens", map[string]string{"storage_backend": "redis", "namespace": ""})).To(Equal(150.0))
 			})
 		})
 
