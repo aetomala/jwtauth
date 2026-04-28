@@ -204,6 +204,10 @@ func NewManager(config TokenManagerConfig) (*Manager, error) {
 		config.Tracer = DefaultTokenManagerConfig().Tracer
 	}
 
+	if config.Namespace != "" {
+		config.Logger = config.Logger.With("namespace", config.Namespace)
+	}
+
 	if config.KeyManager == nil {
 		return nil, ErrInvalidConfig("KeyManager is required")
 	}
@@ -249,6 +253,11 @@ func NewManager(config TokenManagerConfig) (*Manager, error) {
 
 // startSpan begins a new tracing span for the given Manager operation.
 func (m *Manager) startSpan(ctx context.Context, operation string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
+	opts = append([]tracing.SpanOption{
+		tracing.WithAttributes(map[string]any{
+			"token.namespace": m.namespace,
+		}),
+	}, opts...)
 	return m.tracer.Start(ctx, "TokenManager."+operation, opts...)
 }
 
@@ -399,9 +408,11 @@ func (m *Manager) IssueAccessToken(ctx context.Context, userID string) (string, 
 		m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 			"status":     status,
 			"error_type": errorType,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "issue_access_token",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -543,9 +554,11 @@ func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 		m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 			"status":     status,
 			"error_type": errorType,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "issue_access_token",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -694,9 +707,11 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string) (string,
 		m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 			"status":     status,
 			"error_type": errorType,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "issue_refresh_token",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -814,9 +829,11 @@ func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string
 		m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 			"status":     status,
 			"error_type": errorType,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "issue_refresh_token",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -937,9 +954,11 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string) (string, st
 		m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 			"status":     status,
 			"error_type": errorType,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "issue_token_pair",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -1115,9 +1134,11 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 		m.metrics.IncrementCounter(metricTokensIssuedTotal, map[string]string{
 			"status":     status,
 			"error_type": errorType,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "issue_token_pair",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -1294,9 +1315,11 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 		m.metrics.IncrementCounter(metricTokensValidatedTotal, map[string]string{
 			"status":     status,
 			"error_type": errorType,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "validate_access_token",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -1550,9 +1573,11 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		m.metrics.IncrementCounter(metricTokensRefreshedTotal, map[string]string{
 			"status":     status,
 			"error_type": errorType,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "refresh_access_token",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -1685,9 +1710,11 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 		m.metrics.IncrementCounter(metricTokensRefreshedTotal, map[string]string{
 			"status":     status,
 			"error_type": errorType,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "refresh_access_token",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -1816,9 +1843,11 @@ func (m *Manager) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 		m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
 			"operation": "single",
 			"status":    status,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "revoke_token",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -1886,9 +1915,11 @@ func (m *Manager) RevokeAllUserTokens(ctx context.Context, userID string) error 
 		m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
 			"operation": "all_user",
 			"status":    status,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "revoke_all_user_tokens",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -1962,9 +1993,11 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	defer func() {
 		m.metrics.IncrementCounter(metricTokensIntrospectedTotal, map[string]string{
 			"status": status,
+			"namespace": m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "introspect_token",
+			"namespace":  m.namespace,
 		})
 	}()
 
@@ -2085,9 +2118,11 @@ func (m *Manager) CleanupExpiredTokens(ctx context.Context) (int, error) {
 		m.metrics.IncrementCounter(metricOperationsTotal, map[string]string{
 			"operation": "cleanup",
 			"status":    status,
+			"namespace":  m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "cleanup",
+			"namespace":  m.namespace,
 		})
 	}()
 

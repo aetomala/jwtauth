@@ -77,36 +77,36 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "tokens_issued_total",
 		"Total number of tokens issued",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerCounter(namespace, "tokens_validated_total",
 		"Total number of tokens validated",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerCounter(namespace, "tokens_refreshed_total",
 		"Total number of tokens refreshed",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerCounter(namespace, "tokens_revoked_total",
 		"Total number of tokens revoked",
-		[]string{"operation", "status"})
+		[]string{"operation", "status", "namespace"})
 
 	pm.registerCounter(namespace, "tokens_introspected_total",
 		"Total number of token introspections",
-		[]string{"status"})
+		[]string{"status", "namespace"})
 
 	pm.registerCounter(namespace, "operations_total",
 		"Total number of operations",
-		[]string{"operation", "status"})
+		[]string{"operation", "status", "namespace"})
 
 	pm.registerHistogram(namespace, "operation_duration_seconds",
 		"Duration of operations in seconds",
-		[]string{"operation"},
+		[]string{"operation", "namespace"},
 		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
 
 	pm.registerGauge(namespace, "active_tokens",
 		"Number of active tokens",
-		[]string{"storage_backend"})
+		[]string{"storage_backend", "namespace"})
 
 	pm.registerGauge(namespace, "service_running",
 		"Whether the service is running (1) or stopped (0)",
