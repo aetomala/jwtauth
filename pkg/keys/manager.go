@@ -127,8 +127,9 @@ type Manager struct {
 	currentKeyID string              // ID of the key currently used for signing
 
 	// ===== Observability =====
-	metrics metrics.Metrics // never nil; defaults to NoOpMetrics
-	tracer  tracing.Tracer  // never nil; defaults to NoOpTracer
+	metrics   metrics.Metrics // never nil; defaults to NoOpMetrics
+	tracer    tracing.Tracer  // never nil; defaults to NoOpTracer
+	namespace string          // = cfg.Namespace; emitted across all three signal types
 
 	// ===== Synchronization =====
 	mu sync.RWMutex // Protects keys, currentKeyID
@@ -294,6 +295,9 @@ func NewManager(config KeyManagerConfig) (*Manager, error) {
 	if config.Tracer == nil {
 		config.Tracer = defaults.Tracer
 	}
+	if config.Namespace != "" {
+		config.Logger = config.Logger.With("namespace", config.Namespace)
+	}
 
 	// ===== STEP 4: Validate Ranges (After Defaults) =====
 	if config.KeySize < 2048 {
@@ -306,6 +310,7 @@ func NewManager(config KeyManagerConfig) (*Manager, error) {
 		keys:           make(map[string]*KeyPair),
 		metrics:        config.Metrics,
 		tracer:         config.Tracer,
+		namespace:      config.Namespace,
 		stopRotationCh: make(chan struct{}),
 	}, nil
 }
@@ -372,7 +377,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.config.Logger.Info("loaded existing keys from store", ctx,
 			"keyID", m.currentKeyID,
 			"keyCount", len(storedKeys))
-		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(keyCount), nil)
+		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(keyCount), map[string]string{"namespace": m.namespace})
 	} else {
 		// ===== STEP 4b: Generate Initial Key Pair =====
 		privateKey, err := rsa.GenerateKey(rand.Reader, m.config.KeySize)
@@ -414,7 +419,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.config.Logger.Info("generated new RSA key pair", ctx,
 			"keyID", keyID,
 			"keySize", m.config.KeySize)
-		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(keyCount), nil)
+		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(keyCount), map[string]string{"namespace": m.namespace})
 	}
 
 	// ===== STEP 5: Start Rotation Scheduler =====
@@ -439,7 +444,7 @@ func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, st
 
 	// ===== STEP 1: Check Manager is Running =====
 	if !m.IsRunning() {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error"})
+		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error", "namespace": m.namespace})
 		span.RecordError(ErrManagerNotRunning)
 		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
 		return nil, "", ErrManagerNotRunning
@@ -447,7 +452,7 @@ func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, st
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "cancelled", "error_type": "cancelled"})
+		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "cancelled", "error_type": "cancelled", "namespace": m.namespace})
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, "", err
@@ -461,14 +466,14 @@ func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, st
 	keyPair, found := m.keys[m.currentKeyID]
 
 	if !found {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error"})
+		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error", "namespace": m.namespace})
 		span.RecordError(ErrKeyNotFound)
 		span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
 		return nil, "", ErrKeyNotFound
 	}
 
 	// ===== STEP 4: Return Key and ID =====
-	m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "success", "error_type": ""})
+	m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "success", "error_type": "", "namespace": m.namespace})
 	span.SetAttribute("key_id", m.currentKeyID)
 	span.SetStatus(tracing.StatusOK, "")
 	return keyPair.PrivateKey, m.currentKeyID, nil
@@ -535,7 +540,7 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	status := "error"
 	errorType := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricKeyValidationOpsTotal, map[string]string{"status": status, "error_type": errorType})
+		m.metrics.IncrementCounter(metricKeyValidationOpsTotal, map[string]string{"status": status, "error_type": errorType, "namespace": m.namespace})
 	}()
 
 	// ===== STEP 1: Validate Key ID =====
@@ -751,8 +756,8 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 	status := "error"
 	errorType := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricKeyRotationsTotal, map[string]string{"status": status, "error_type": errorType})
-		m.metrics.RecordDuration(metricKeyOpDuration, time.Since(start), map[string]string{"operation": "rotate"})
+		m.metrics.IncrementCounter(metricKeyRotationsTotal, map[string]string{"status": status, "error_type": errorType, "namespace": m.namespace})
+		m.metrics.RecordDuration(metricKeyOpDuration, time.Since(start), map[string]string{"operation": "rotate", "namespace": m.namespace})
 	}()
 
 	// ===== STEP 1: Check Context =====
@@ -837,7 +842,7 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 
 	status = "success"
 	errorType = ""
-	m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), nil)
+	m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), map[string]string{"namespace": m.namespace})
 	m.config.Logger.Info("key rotation successful", ctx,
 		"newKeyID", keyID,
 		"oldKeyID", oldKeyID,
@@ -947,7 +952,7 @@ func (m *Manager) cleanupExpiredKeys(ctx context.Context) {
 
 	// ===== STEP 6: Update Active Keys Gauge (only when keys were removed) =====
 	if count > 0 {
-		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), nil)
+		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), map[string]string{"namespace": m.namespace})
 	}
 }
 
@@ -955,8 +960,14 @@ func base64urlEncode(data []byte) string {
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
-// startSpan begins a new tracing span for the given Manager operation.
+// startSpan begins a new tracing span for the given Manager operation,
+// pre-seeded with the key.namespace attribute.
 func (m *Manager) startSpan(ctx context.Context, operation string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
+	opts = append([]tracing.SpanOption{
+		tracing.WithAttributes(map[string]any{
+			"key.namespace": m.namespace,
+		}),
+	}, opts...)
 	return m.tracer.Start(ctx, "KeyManager."+operation, opts...)
 }
 

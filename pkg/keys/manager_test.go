@@ -759,7 +759,7 @@ var _ = Describe("Manager", func() {
 				},
 			}
 			mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
-			mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", float64(1), gomock.Nil())
+			mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", float64(1), map[string]string{"namespace": ""})
 
 			m, err := keys.NewManager(keys.KeyManagerConfig{
 				KeyStore:            mockKS,
@@ -780,10 +780,10 @@ var _ = Describe("Manager", func() {
 			if status == "success" {
 				errorType = ""
 			}
-			mockM.EXPECT().IncrementCounter("jwtauth_key_rotations_total", map[string]string{"status": status, "error_type": errorType})
-			mockM.EXPECT().RecordDuration("jwtauth_key_operation_duration_seconds", gomock.Any(), map[string]string{"operation": "rotate"})
+			mockM.EXPECT().IncrementCounter("jwtauth_key_rotations_total", map[string]string{"status": status, "error_type": errorType, "namespace": ""})
+			mockM.EXPECT().RecordDuration("jwtauth_key_operation_duration_seconds", gomock.Any(), map[string]string{"operation": "rotate", "namespace": ""})
 			if status == "success" {
-				mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", gomock.Any(), gomock.Nil())
+				mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", gomock.Any(), map[string]string{"namespace": ""})
 			}
 		}
 
@@ -842,7 +842,7 @@ var _ = Describe("Manager", func() {
 					_ = m.Shutdown(shutdownCtx)
 				}()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "success", "error_type": ""})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "success", "error_type": "", "namespace": ""})
 
 				_, _, err := m.GetCurrentSigningKey(ctx)
 				Expect(err).NotTo(HaveOccurred())
@@ -858,7 +858,7 @@ var _ = Describe("Manager", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "error", "error_type": "error"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "error", "error_type": "error", "namespace": ""})
 
 				_, _, err = m.GetCurrentSigningKey(ctx)
 				Expect(err).To(MatchError(keys.ErrManagerNotRunning))
@@ -875,7 +875,7 @@ var _ = Describe("Manager", func() {
 				cancelledCtx, cancelFn := context.WithCancel(context.Background())
 				cancelFn()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "cancelled", "error_type": "cancelled"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "cancelled", "error_type": "cancelled", "namespace": ""})
 
 				_, _, err := m.GetCurrentSigningKey(cancelledCtx)
 				Expect(err).To(MatchError(context.Canceled))
@@ -891,7 +891,7 @@ var _ = Describe("Manager", func() {
 					_ = m.Shutdown(shutdownCtx)
 				}()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "success", "error_type": ""})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "success", "error_type": "", "namespace": ""})
 
 				_, err := m.GetPublicKey(ctx, "existing-metric-key")
 				Expect(err).NotTo(HaveOccurred())
@@ -905,7 +905,7 @@ var _ = Describe("Manager", func() {
 					_ = m.Shutdown(shutdownCtx)
 				}()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "not_found", "error_type": "not_found"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "not_found", "error_type": "not_found", "namespace": ""})
 				mockKS.EXPECT().LoadKey(gomock.Any(), "ghost-key").Return(nil, nil, keys.ErrKeyStoreKeyNotFound)
 
 				_, err := m.GetPublicKey(ctx, "ghost-key")
@@ -923,7 +923,7 @@ var _ = Describe("Manager", func() {
 				cancelledCtx, cancelFn := context.WithCancel(context.Background())
 				cancelFn()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "cancelled", "error_type": "cancelled"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "cancelled", "error_type": "cancelled", "namespace": ""})
 
 				_, err := m.GetPublicKey(cancelledCtx, "some-key")
 				Expect(err).To(MatchError(context.Canceled))
