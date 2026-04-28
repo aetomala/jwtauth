@@ -16,6 +16,8 @@ All notable changes to this project will be documented in this file.
 
 - **`storage.RefreshStore` gains `ListTokens(ctx, cursor, count)` method** — existing third-party implementations must add this method. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. See #105.
 
+- **`storage.RefreshStore` gains `ListTokensForUser(ctx, userID, cursor, count)` method** — existing third-party implementations must add this method. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. See #105.
+
 ### Security
 
 - **`kid` path traversal fix** — `DiskKeyStore` and `RedisKeyStore` now validate the
@@ -112,6 +114,12 @@ All notable changes to this project will be documented in this file.
 - **Compile-time `var _ RefreshStore` assertions added to `MemoryRefreshStore` and `RedisRefreshStore`** — interface compliance is now verified at compile time. Closes #106.
 
 - **4 new Prometheus metrics registered in `PrometheusMetrics`** — storage-layer metrics (`jwtauth_storage_list_tokens_total`, `jwtauth_storage_list_tokens_duration_seconds`) and token-manager-layer metrics (`jwtauth_tokens_list_total`, `jwtauth_tokens_list_duration_seconds`); all carry `namespace` and `error_type` labels.
+
+- **`ListTokensForUser(ctx, userID, cursor, count)` added to `RefreshStore` interface and both implementations** — user-scoped cursor-based token iteration. `MemoryRefreshStore` uses an integer offset cursor into the user's insertion-order token slice; `RedisRefreshStore` uses Redis SSCAN cursor passthrough on the user set key, hydrating tokens via the existing `fetchTokensByIDs` pipeline helper. Returns `ErrInvalidUserID` if `userID` is empty. All other cursor and filtering semantics are identical to `ListTokens`. `MockRefreshStore` regenerated. See #105.
+
+- **`Manager.ListTokensForUser(ctx, userID, cursor, count)` added to `tokens.Manager`** — thin delegation to `RefreshStore.ListTokensForUser` following the same pattern as `Manager.ListTokens`. Emits a `token.list_tokens_for_user` span (attrs: `token.namespace`, `token.user_id`, `token.cursor`, `token.count`, `token.result_count`), logs success and failure, and records `jwtauth_tokens_list_for_user_total` counter and `jwtauth_tokens_list_for_user_duration_seconds` histogram with `namespace` and `error_type` labels.
+
+- **4 additional Prometheus metrics registered in `PrometheusMetrics`** — storage-layer metrics (`jwtauth_storage_list_tokens_for_user_total`, `jwtauth_storage_list_tokens_for_user_duration_seconds`) and token-manager-layer metrics (`jwtauth_tokens_list_for_user_total`, `jwtauth_tokens_list_for_user_duration_seconds`); all carry `namespace` and `error_type` labels.
 
 - **`Namespace string` added to `KeyManagerConfig` and `TokenManagerConfig`** — optional opaque label stored in both manager structs at construction time. Zero value preserves current behavior — no label is attached to observability output. Intended for multi-instance deployments where log lines, trace spans, and metric labels from different manager instances must be disambiguated. Decoupled from `KeyPrefix` — both fields may be set independently. See ADR-007.
 

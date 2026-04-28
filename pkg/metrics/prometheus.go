@@ -113,6 +113,15 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 		[]string{"namespace"},
 		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
 
+	pm.registerCounter(namespace, "tokens_list_for_user_total",
+		"Total number of list-tokens-for-user operations on the token manager",
+		[]string{"namespace", "error_type"})
+
+	pm.registerHistogram(namespace, "tokens_list_for_user_duration_seconds",
+		"Duration of list-tokens-for-user operations on the token manager in seconds",
+		[]string{"namespace"},
+		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
+
 	pm.registerGauge(namespace, "active_tokens",
 		"Number of active tokens",
 		[]string{"storage_backend", "namespace"})
@@ -146,6 +155,15 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerHistogram(namespace, "storage_list_tokens_duration_seconds",
 		"Duration of list-tokens operations in seconds",
+		[]string{"storage_backend", "namespace"},
+		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
+
+	pm.registerCounter(namespace, "storage_list_tokens_for_user_total",
+		"Total number of list-tokens-for-user operations",
+		[]string{"storage_backend", "namespace", "error_type"})
+
+	pm.registerHistogram(namespace, "storage_list_tokens_for_user_duration_seconds",
+		"Duration of list-tokens-for-user operations in seconds",
 		[]string{"storage_backend", "namespace"},
 		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
 
