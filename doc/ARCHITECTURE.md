@@ -238,6 +238,10 @@ type Metrics interface {
 | `jwtauth_tokens_refreshed_total` | Counter | status, error_type |
 | `jwtauth_tokens_revoked_total` | Counter | operation, status |
 | `jwtauth_tokens_introspected_total` | Counter | status |
+| `jwtauth_tokens_list_total` | Counter | namespace, error_type |
+| `jwtauth_tokens_list_duration_seconds` | Histogram | namespace |
+| `jwtauth_tokens_list_for_user_total` | Counter | namespace, error_type |
+| `jwtauth_tokens_list_for_user_duration_seconds` | Histogram | namespace |
 | `jwtauth_operations_total` | Counter | operation, status |
 | `jwtauth_operation_duration_seconds` | Histogram | operation |
 | `jwtauth_active_tokens` | Gauge | storage_backend |
@@ -246,6 +250,10 @@ type Metrics interface {
 | `jwtauth_storage_cleanup_tokens_removed_total` | Counter | storage_backend |
 | `jwtauth_storage_operation_duration_seconds` | Histogram | operation, storage_backend |
 | `jwtauth_storage_tokens_count` | Gauge | storage_backend |
+| `jwtauth_storage_list_tokens_total` | Counter | storage_backend, namespace, error_type |
+| `jwtauth_storage_list_tokens_duration_seconds` | Histogram | storage_backend, namespace |
+| `jwtauth_storage_list_tokens_for_user_total` | Counter | storage_backend, namespace, error_type |
+| `jwtauth_storage_list_tokens_for_user_duration_seconds` | Histogram | storage_backend, namespace |
 | `jwtauth_keystore_operations_total` | Counter | operation, status, error_type, storage_backend |
 | `jwtauth_keystore_operation_duration_seconds` | Histogram | operation, storage_backend |
 | `jwtauth_keystore_keys_count` | Gauge | storage_backend |
@@ -577,6 +585,7 @@ Created → Start() → Running → Shutdown() → Stopped
 - Store refresh tokens with expiration and revocation tracking
 - Retrieve tokens with validation checks (expiry, revocation)
 - Revoke individual or bulk tokens (by userID)
+- Enumerate all tokens or tokens for a specific user via cursor-based pagination (`ListTokens`, `ListTokensForUser`)
 - Clean up expired tokens
 - Maintain lookups optimized for each implementation
 
@@ -597,9 +606,10 @@ type MemoryRefreshStore struct {
 ```
 
 **Key Features**:
-- **Dual-index data structure**: `tokens` map for O(1) lookup, `userTokens` set for O(1) bulk revocation
+- **Dual-index data structure**: `tokens` map for O(1) lookup, `userTokens` slice for O(1) bulk revocation and insertion-order enumeration
+- **Cursor-based enumeration**: `ListTokens` iterates all tokens; `ListTokensForUser` iterates a single user's tokens — both use integer offsets as cursors for stable, allocation-free pagination
 - **Defensive copying**: Metadata and token structs isolated from caller mutations
-- **RWMutex locking**: RLock for Retrieve (concurrent reads), Lock for mutations
+- **RWMutex locking**: RLock for Retrieve and listing (concurrent reads), Lock for mutations
 - **Idempotent operations**: Revoke returns nil if token doesn't exist
 - **Expiration/Revocation checks**: Retrieve validates expiry and revocation at request time
 - **Cleanup**: Removes expired tokens from both maps and userTokens index
@@ -630,6 +640,7 @@ Keys are optionally prefixed by `RedisRefreshStoreConfig.KeyPrefix`. `Cleanup` s
 
 **Key Features**:
 - **Distributed**: Works across multiple instances (Redis is the shared backend)
+- **Cursor-based enumeration**: `ListTokens` uses `SCAN` over the token hash namespace; `ListTokensForUser` uses `SSCAN` over the per-user token set — both pass Redis cursors through directly for stable pagination without extra round-trips
 - **Pipeline atomicity**: Multi-operation transactions via Redis pipelines
 - **Millisecond-precision timestamps**: Stored as UnixMilli (preserves precision across serialization)
 - **Efficient cleanup**: SCAN-based key iteration for expired token sweeps
@@ -650,13 +661,14 @@ Keys are optionally prefixed by `RedisRefreshStoreConfig.KeyPrefix`. `Cleanup` s
 
 | Aspect | Details |
 |--------|---------|
-| **Error Handling** | `ErrInvalidTokenID` / `ErrInvalidUserID`, `ErrTokenNotFound`, `ErrTokenExpired`, `ErrTokenRevoked` |
+| **Error Handling** | `ErrInvalidTokenID` / `ErrInvalidUserID`, `ErrInvalidCursor`, `ErrTokenNotFound`, `ErrTokenExpired`, `ErrTokenRevoked` |
 | **Validation** | Empty/whitespace input rejection, expiry checks, revocation checks |
+| **Enumeration** | `ListTokens(ctx, cursor, count)` for global iteration; `ListTokensForUser(ctx, userID, cursor, count)` for user-scoped iteration — both use best-effort cursors; pass `""` to start from the beginning |
 | **Idempotence** | Revoke returns nil if token doesn't exist (safe to call multiple times) |
 | **Context** | Full support for context.Context cancellation propagation |
 | **Logging** | Structured key-value logs with operation names and fields |
-| **Metrics** | Counter + duration on every operation; cleanup records removed count and token-count gauge |
-| **Testing** | Identical comprehensive test suite (61 tests per implementation, 122 total) |
+| **Metrics** | Counter + duration on every operation; cleanup records removed count and token-count gauge; dedicated counters + histograms for each list operation |
+| **Testing** | Identical comprehensive test suite (77 tests per implementation, 154 total) |
 
 #### Storage Metrics Instrumentation
 
@@ -754,7 +766,7 @@ The right choice depends on profiled evidence. Start with option 1 if the benchm
 **Solution**: Single parameterized test suite runs against all implementations:
 
 ```go
-// suite_test.go defines 61 comprehensive tests across 10 phases
+// suite_test.go defines 77 comprehensive tests across 13 phases
 // StoreFactory accepts optional MockMetrics — nil for phases 1–9, live mock for Phase 10
 type StoreFactory func(logger *testutil.MockLogger, m metrics.Metrics) storage.RefreshStore
 
