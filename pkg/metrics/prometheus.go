@@ -150,19 +150,19 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "key_rotations_total",
 		"Total number of key rotations",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerCounter(namespace, "key_signing_operations_total",
 		"Total number of key signing operations",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerCounter(namespace, "key_validation_operations_total",
 		"Total number of key validation operations",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerHistogram(namespace, "key_operation_duration_seconds",
 		"Duration of key operations in seconds",
-		[]string{"operation"},
+		[]string{"operation", "namespace"},
 		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05})
 
 	pm.registerGauge(namespace, "key_current_version",
@@ -171,7 +171,7 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerGauge(namespace, "key_active_versions_count",
 		"Number of active key versions",
-		[]string{})
+		[]string{"namespace"})
 }
 
 // registerCounter creates a CounterVec with the given namespace, name, help

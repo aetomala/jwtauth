@@ -749,41 +749,47 @@ var _ = Describe("Prometheus", func() {
 				pm.IncrementCounter("jwtauth_key_rotations_total", map[string]string{
 					"status":     "success",
 					"error_type": "",
+					"namespace":  "",
 				})
 				pm.RecordDuration("jwtauth_key_operation_duration_seconds", 100*time.Millisecond, map[string]string{
 					"operation": "rotate",
+					"namespace": "",
 				})
 
 				// Update key gauges
 				pm.SetGauge("jwtauth_key_current_version", 5, map[string]string{})
-				pm.SetGauge("jwtauth_key_active_versions_count", 2, map[string]string{})
+				pm.SetGauge("jwtauth_key_active_versions_count", 2, map[string]string{"namespace": ""})
 
 				// Signing operations
 				pm.IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{
 					"status":     "success",
 					"error_type": "",
+					"namespace":  "",
 				})
 				pm.RecordDuration("jwtauth_key_operation_duration_seconds", 500*time.Microsecond, map[string]string{
 					"operation": "sign",
+					"namespace": "",
 				})
 
 				// Validation operations
 				pm.IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{
 					"status":     "success",
 					"error_type": "",
+					"namespace":  "",
 				})
 				pm.RecordDuration("jwtauth_key_operation_duration_seconds", 300*time.Microsecond, map[string]string{
 					"operation": "validate",
+					"namespace": "",
 				})
 
-				Expect(counterValue(registry, "jwtauth_key_rotations_total", map[string]string{"status": "success", "error_type": ""})).To(Equal(1.0))
-				Expect(counterValue(registry, "jwtauth_key_signing_operations_total", map[string]string{"status": "success", "error_type": ""})).To(Equal(1.0))
-				Expect(counterValue(registry, "jwtauth_key_validation_operations_total", map[string]string{"status": "success", "error_type": ""})).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_key_rotations_total", map[string]string{"status": "success", "error_type": "", "namespace": ""})).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_key_signing_operations_total", map[string]string{"status": "success", "error_type": "", "namespace": ""})).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_key_validation_operations_total", map[string]string{"status": "success", "error_type": "", "namespace": ""})).To(Equal(1.0))
 				Expect(gaugeValue(registry, "jwtauth_key_current_version", map[string]string{})).To(Equal(5.0))
-				Expect(gaugeValue(registry, "jwtauth_key_active_versions_count", map[string]string{})).To(Equal(2.0))
-				Expect(histogramSampleCount(registry, "jwtauth_key_operation_duration_seconds", map[string]string{"operation": "rotate"})).To(Equal(uint64(1)))
-				Expect(histogramSampleCount(registry, "jwtauth_key_operation_duration_seconds", map[string]string{"operation": "sign"})).To(Equal(uint64(1)))
-				Expect(histogramSampleCount(registry, "jwtauth_key_operation_duration_seconds", map[string]string{"operation": "validate"})).To(Equal(uint64(1)))
+				Expect(gaugeValue(registry, "jwtauth_key_active_versions_count", map[string]string{"namespace": ""})).To(Equal(2.0))
+				Expect(histogramSampleCount(registry, "jwtauth_key_operation_duration_seconds", map[string]string{"operation": "rotate", "namespace": ""})).To(Equal(uint64(1)))
+				Expect(histogramSampleCount(registry, "jwtauth_key_operation_duration_seconds", map[string]string{"operation": "sign", "namespace": ""})).To(Equal(uint64(1)))
+				Expect(histogramSampleCount(registry, "jwtauth_key_operation_duration_seconds", map[string]string{"operation": "validate", "namespace": ""})).To(Equal(uint64(1)))
 			})
 		})
 	})

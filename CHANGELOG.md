@@ -109,6 +109,8 @@ All notable changes to this project will be documented in this file.
 
 - **`RedisKeyStore` and `RedisRefreshStore` emit namespace across all three signal types** — when `KeyPrefix` is non-empty, every span carries a `storage.namespace` attribute, every log line carries a `namespace` field (via `Logger.With` in the constructor — no per-call-site changes), and every Prometheus metric carries a `namespace` label. Zero-value `KeyPrefix` emits an empty string label, preserving backward compatibility. Closes #112 (Phase 3).
 
+- **`KeyManager` emits namespace across all three signal types** — every span carries a `key.namespace` attribute, every log line carries a `namespace` field (via `Logger.With` in the constructor), and every Prometheus label on key management metrics (`key_rotations_total`, `key_signing_operations_total`, `key_validation_operations_total`, `key_operation_duration_seconds`, `key_active_versions_count`) includes `namespace`. Zero-value `Namespace` emits an empty string label, preserving backward compatibility. Closes #112 (Phase 4).
+
 ### Fixed
 
 - **`KeyInfo.KeySizeBits` now reports actual key size** — previously sourced from `KeyManagerConfig.KeySize` (caller-supplied), which could silently diverge from the actual RSA key on disk if the `DiskKeyStore` or `RedisKeyStore` was configured with a different key size. Now derived from `keyPair.PrivateKey.N.BitLen()` so the reported value always matches the real key material.
