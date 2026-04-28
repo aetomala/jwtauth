@@ -77,6 +77,9 @@ func NewRedisRefreshStore(cfg RedisRefreshStoreConfig) (*RedisRefreshStore, erro
 	if cfg.Tracer == nil {
 		cfg.Tracer = defaults.Tracer
 	}
+	if cfg.KeyPrefix != "" {
+		cfg.Logger = cfg.Logger.With("namespace", cfg.KeyPrefix)
+	}
 
 	return &RedisRefreshStore{
 		client:        cfg.Client,
@@ -95,10 +98,13 @@ func NewRedisRefreshStore(cfg RedisRefreshStoreConfig) (*RedisRefreshStore, erro
 func (r *RedisRefreshStore) Namespace() string { return r.namespace }
 
 // startSpan starts a new span for the given operation name, pre-seeded with
-// the storage.backend attribute.
+// the storage.backend and storage.namespace attributes.
 func (r *RedisRefreshStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
 	return r.tracer.Start(ctx, "RedisRefreshStore."+operation,
-		tracing.WithAttributes(map[string]any{"storage.backend": r.backend}),
+		tracing.WithAttributes(map[string]any{
+			"storage.backend":   r.backend,
+			"storage.namespace": r.namespace,
+		}),
 	)
 }
 
@@ -123,10 +129,12 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		r.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
 			"operation":       "store",
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 	}()
 
@@ -263,10 +271,12 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		r.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
 			"operation":       "retrieve",
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 	}()
 
@@ -420,10 +430,12 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		r.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
 			"operation":       "revoke",
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 	}()
 
@@ -510,10 +522,12 @@ func (r *RedisRefreshStore) RevokeAllForUser(ctx context.Context, userID string)
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		r.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
 			"operation":       "revoke_all",
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 	}()
 
@@ -606,17 +620,21 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		r.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
 			"operation":       "cleanup",
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		if status == "success" {
 			r.metrics.AddCounter(metricStorageRemovedTotal, float64(removed), map[string]string{
 				"storage_backend": r.backend,
+				"namespace":       r.namespace,
 			})
 			r.metrics.SetGauge(metricStorageTokensCount, float64(remaining), map[string]string{
 				"storage_backend": r.backend,
+				"namespace":       r.namespace,
 			})
 		}
 	}()

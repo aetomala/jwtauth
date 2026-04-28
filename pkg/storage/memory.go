@@ -110,14 +110,17 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": m.backend,
+			"namespace":       "",
 		})
 		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
 			"operation":       "store",
 			"storage_backend": m.backend,
+			"namespace":       "",
 		})
 		if status == "success" {
 			m.metrics.SetGauge(metricStorageTokensCount, float64(tokenCount), map[string]string{
 				"storage_backend": m.backend,
+				"namespace":       "",
 			})
 		}
 	}()
@@ -228,10 +231,12 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": m.backend,
+			"namespace":       "",
 		})
 		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
 			"operation":       "retrieve",
 			"storage_backend": m.backend,
+			"namespace":       "",
 		})
 	}()
 
@@ -343,10 +348,12 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": m.backend,
+			"namespace":       "",
 		})
 		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
 			"operation":       "revoke",
 			"storage_backend": m.backend,
+			"namespace":       "",
 		})
 	}()
 
@@ -416,10 +423,12 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": m.backend,
+			"namespace":       "",
 		})
 		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
 			"operation":       "revoke_all",
 			"storage_backend": m.backend,
+			"namespace":       "",
 		})
 	}()
 
@@ -490,17 +499,21 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": m.backend,
+			"namespace":       "",
 		})
 		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
 			"operation":       "cleanup",
 			"storage_backend": m.backend,
+			"namespace":       "",
 		})
 		if status == "success" {
 			m.metrics.AddCounter(metricStorageRemovedTotal, float64(removed), map[string]string{
 				"storage_backend": m.backend,
+				"namespace":       "",
 			})
 			m.metrics.SetGauge(metricStorageTokensCount, float64(remaining), map[string]string{
 				"storage_backend": m.backend,
+				"namespace":       "",
 			})
 		}
 	}()

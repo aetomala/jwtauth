@@ -107,6 +107,8 @@ All notable changes to this project will be documented in this file.
 
 - **`Namespace string` added to `KeyManagerConfig` and `TokenManagerConfig`** — optional opaque label stored in both manager structs at construction time. Zero value preserves current behavior — no label is attached to observability output. Intended for multi-instance deployments where log lines, trace spans, and metric labels from different manager instances must be disambiguated. Decoupled from `KeyPrefix` — both fields may be set independently. See ADR-007.
 
+- **`RedisKeyStore` and `RedisRefreshStore` emit namespace across all three signal types** — when `KeyPrefix` is non-empty, every span carries a `storage.namespace` attribute, every log line carries a `namespace` field (via `Logger.With` in the constructor — no per-call-site changes), and every Prometheus metric carries a `namespace` label. Zero-value `KeyPrefix` emits an empty string label, preserving backward compatibility. Closes #112 (Phase 3).
+
 ### Fixed
 
 - **`KeyInfo.KeySizeBits` now reports actual key size** — previously sourced from `KeyManagerConfig.KeySize` (caller-supplied), which could silently diverge from the actual RSA key on disk if the `DiskKeyStore` or `RedisKeyStore` was configured with a different key size. Now derived from `keyPair.PrivateKey.N.BitLen()` so the reported value always matches the real key material.

@@ -403,7 +403,7 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should handle microsecond precision", func() {
-				labels := map[string]string{"operation": "retrieve", "storage_backend": "memory"}
+				labels := map[string]string{"operation": "retrieve", "storage_backend": "memory", "namespace": ""}
 				pm.RecordDuration("jwtauth_storage_operation_duration_seconds", 100*time.Microsecond, labels)
 
 				Expect(histogramSampleCount(registry, "jwtauth_storage_operation_duration_seconds", labels)).To(Equal(uint64(1)))
@@ -700,10 +700,12 @@ var _ = Describe("Prometheus", func() {
 					"status":          "success",
 					"error_type":      "",
 					"storage_backend": "redis",
+					"namespace":       "",
 				})
 				pm.RecordDuration("jwtauth_storage_operation_duration_seconds", 2*time.Millisecond, map[string]string{
 					"operation":       "store",
 					"storage_backend": "redis",
+					"namespace":       "",
 				})
 
 				// Retrieve operation
@@ -712,28 +714,32 @@ var _ = Describe("Prometheus", func() {
 					"status":          "success",
 					"error_type":      "",
 					"storage_backend": "redis",
+					"namespace":       "",
 				})
 				pm.RecordDuration("jwtauth_storage_operation_duration_seconds", 1*time.Millisecond, map[string]string{
 					"operation":       "retrieve",
 					"storage_backend": "redis",
+					"namespace":       "",
 				})
 
 				// Cleanup
 				pm.AddCounter("jwtauth_storage_cleanup_tokens_removed_total", 25.0, map[string]string{
 					"storage_backend": "redis",
+					"namespace":       "",
 				})
 
 				// Update storage size
 				pm.SetGauge("jwtauth_storage_tokens_count", 975, map[string]string{
 					"storage_backend": "redis",
+					"namespace":       "",
 				})
 
-				Expect(counterValue(registry, "jwtauth_storage_operations_total", map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": "redis"})).To(Equal(1.0))
-				Expect(counterValue(registry, "jwtauth_storage_operations_total", map[string]string{"operation": "retrieve", "status": "success", "error_type": "", "storage_backend": "redis"})).To(Equal(1.0))
-				Expect(counterValue(registry, "jwtauth_storage_cleanup_tokens_removed_total", map[string]string{"storage_backend": "redis"})).To(Equal(25.0))
-				Expect(histogramSampleCount(registry, "jwtauth_storage_operation_duration_seconds", map[string]string{"operation": "store", "storage_backend": "redis"})).To(Equal(uint64(1)))
-				Expect(histogramSampleCount(registry, "jwtauth_storage_operation_duration_seconds", map[string]string{"operation": "retrieve", "storage_backend": "redis"})).To(Equal(uint64(1)))
-				Expect(gaugeValue(registry, "jwtauth_storage_tokens_count", map[string]string{"storage_backend": "redis"})).To(Equal(975.0))
+				Expect(counterValue(registry, "jwtauth_storage_operations_total", map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": "redis", "namespace": ""})).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_storage_operations_total", map[string]string{"operation": "retrieve", "status": "success", "error_type": "", "storage_backend": "redis", "namespace": ""})).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_storage_cleanup_tokens_removed_total", map[string]string{"storage_backend": "redis", "namespace": ""})).To(Equal(25.0))
+				Expect(histogramSampleCount(registry, "jwtauth_storage_operation_duration_seconds", map[string]string{"operation": "store", "storage_backend": "redis", "namespace": ""})).To(Equal(uint64(1)))
+				Expect(histogramSampleCount(registry, "jwtauth_storage_operation_duration_seconds", map[string]string{"operation": "retrieve", "storage_backend": "redis", "namespace": ""})).To(Equal(uint64(1)))
+				Expect(gaugeValue(registry, "jwtauth_storage_tokens_count", map[string]string{"storage_backend": "redis", "namespace": ""})).To(Equal(975.0))
 			})
 		})
 
