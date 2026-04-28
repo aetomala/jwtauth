@@ -2165,6 +2165,66 @@ func (m *Manager) CleanupExpiredTokens(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// ListTokens returns a page of refresh tokens from the underlying store.
+// See storage.RefreshStore.ListTokens for cursor and filtering semantics.
+// Returns the context error if the context is cancelled.
+func (m *Manager) ListTokens(ctx context.Context, cursor string, count int) ([]*storage.RefreshToken, string, error) {
+	ctx, span := m.startSpan(ctx, "ListTokens")
+	defer span.End()
+	span.SetAttribute("token.namespace", m.namespace)
+	span.SetAttribute("token.cursor", cursor)
+	span.SetAttribute("token.count", count)
+
+	start := time.Now()
+	errorType := "error"
+	defer func() {
+		m.metrics.IncrementCounter(metricTokensListTotal, map[string]string{
+			"namespace":  m.namespace,
+			"error_type": errorType,
+		})
+		m.metrics.RecordDuration(metricTokensListDuration, time.Since(start), map[string]string{
+			"namespace": m.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Service State Check =====
+	if !m.isRunning.Load() {
+		errorType = "not_running"
+		m.logger.Warn("attempted listTokens while service stopped", ctx)
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
+		return nil, "", ErrManagerNotRunning
+	}
+
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		errorType = "cancelled"
+		m.logger.Info("context cancelled during listTokens", ctx, "error", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 3: Delegate to Store =====
+	tokens, nextCursor, err := m.refreshStore.ListTokens(ctx, cursor, count)
+	if err != nil {
+		m.logger.Error("failed to list tokens", ctx, "error", err)
+		wrapped := fmt.Errorf("list tokens failed: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return nil, "", wrapped
+	}
+
+	// ===== STEP 4: Record Success and Log =====
+	errorType = ""
+	span.SetAttribute("token.result_count", len(tokens))
+	span.SetStatus(tracing.StatusOK, "")
+	m.logger.Info("tokens listed", ctx,
+		"result_count", len(tokens),
+		"next_cursor", nextCursor)
+	return tokens, nextCursor, nil
+}
+
 // generateTokenID creates a cryptographically random token identifier.
 //
 // The token ID (jti claim) is used for:

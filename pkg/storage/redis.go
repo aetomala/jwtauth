@@ -728,6 +728,165 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// ListTokens returns a page of refresh tokens starting from cursor. Pass an
+// empty string for cursor to begin from the start. Returns the next cursor and
+// a nil error on success. Returns an empty next cursor when iteration is
+// exhausted.
+//
+// All tokens are returned regardless of revocation or expiry status — the
+// caller is responsible for filtering. Cursor semantics mirror Redis SCAN:
+// tokens inserted or deleted between pages may appear, be skipped, or
+// duplicated. Returns the context error if the context is cancelled.
+func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count int) ([]*RefreshToken, string, error) {
+	ctx, span := r.startSpan(ctx, "ListTokens")
+	defer span.End()
+	span.SetAttribute("storage.cursor", cursor)
+	span.SetAttribute("storage.count", count)
+
+	start := time.Now()
+	errorType := "error"
+	resultCount := 0
+	defer func() {
+		r.metrics.IncrementCounter(metricListTokensTotal, map[string]string{
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+			"error_type":      errorType,
+		})
+		r.metrics.RecordDuration(metricListTokensDuration, time.Since(start), map[string]string{
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		errorType = "cancelled"
+		r.logger.Warn("listTokens aborted: context cancelled", ctx, "reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 2: Parse Cursor =====
+	var redisCursor uint64
+	if cursor != "" {
+		parsed, err := strconv.ParseUint(cursor, 10, 64)
+		if err != nil {
+			errorType = "invalid_cursor"
+			r.logger.Warn("listTokens: invalid cursor — starting from 0", ctx, "cursor", cursor)
+		} else {
+			redisCursor = parsed
+		}
+	}
+
+	// ===== STEP 3: SCAN for Token Keys =====
+	scanCount := int64(count)
+	if scanCount <= 0 {
+		scanCount = 10
+	}
+	keys, nextRedisCursor, err := r.client.Scan(ctx, redisCursor, r.tokenPrefix+"*", scanCount).Result()
+	if err != nil {
+		errorType = "redis_error"
+		r.logger.Error("listTokens failed: redis scan error", ctx, "error", err)
+		wrapped := fmt.Errorf("failed to scan tokens: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return nil, "", wrapped
+	}
+
+	// ===== STEP 4: Strip Prefix to Get Token IDs =====
+	tokenIDs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		tokenIDs = append(tokenIDs, strings.TrimPrefix(k, r.tokenPrefix))
+	}
+
+	// ===== STEP 5: Hydrate Token IDs =====
+	tokens, err := r.fetchTokensByIDs(ctx, tokenIDs)
+	if err != nil {
+		errorType = "redis_error"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 6: Compute Next Cursor =====
+	nextCursor := ""
+	if nextRedisCursor != 0 {
+		nextCursor = strconv.FormatUint(nextRedisCursor, 10)
+	}
+
+	// ===== STEP 7: Log and Return =====
+	errorType = ""
+	resultCount = len(tokens)
+	span.SetAttribute("storage.result_count", resultCount)
+	span.SetStatus(tracing.StatusOK, "")
+	r.logger.Info("listTokens: page returned", ctx,
+		"result_count", resultCount,
+		"next_cursor", nextCursor)
+
+	return tokens, nextCursor, nil
+}
+
+// fetchTokensByIDs retrieves RefreshToken records for the given tokenIDs using
+// a pipelined HGETALL. Missing or unparseable tokens are skipped with a warning.
+func (r *RedisRefreshStore) fetchTokensByIDs(ctx context.Context, tokenIDs []string) ([]*RefreshToken, error) {
+	if len(tokenIDs) == 0 {
+		return nil, nil
+	}
+
+	pipe := r.client.Pipeline()
+	cmds := make([]*redis.MapStringStringCmd, len(tokenIDs))
+	for i, id := range tokenIDs {
+		cmds[i] = pipe.HGetAll(ctx, r.tokenPrefix+id)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("failed to fetch tokens: %w", err)
+	}
+
+	tokens := make([]*RefreshToken, 0, len(tokenIDs))
+	for i, cmd := range cmds {
+		hash, err := cmd.Result()
+		if err != nil || len(hash) == 0 {
+			continue
+		}
+
+		expiresAtMillis, err := strconv.ParseInt(hash["expiresAt"], 10, 64)
+		if err != nil {
+			r.logger.Warn("fetchTokensByIDs: skipping token with invalid expiresAt", ctx,
+				"tokenID", tokenIDs[i], "error", err)
+			continue
+		}
+		createdAtMillis, err := strconv.ParseInt(hash["createdAt"], 10, 64)
+		if err != nil {
+			r.logger.Warn("fetchTokensByIDs: skipping token with invalid createdAt", ctx,
+				"tokenID", tokenIDs[i], "error", err)
+			continue
+		}
+
+		t := &RefreshToken{
+			TokenID:   tokenIDs[i],
+			UserID:    hash["userID"],
+			ExpiresAt: time.UnixMilli(expiresAtMillis),
+			CreatedAt: time.UnixMilli(createdAtMillis),
+			Revoked:   hash["revoked"] == "true",
+		}
+		if metadataJSON, ok := hash["metadata"]; ok && metadataJSON != "" {
+			var meta map[string]interface{}
+			if err := json.Unmarshal([]byte(metadataJSON), &meta); err != nil {
+				r.logger.Warn("fetchTokensByIDs: skipping metadata for token", ctx,
+					"tokenID", tokenIDs[i], "error", err)
+			} else {
+				t.Metadata = meta
+			}
+		}
+		tokens = append(tokens, t)
+	}
+
+	return tokens, nil
+}
+
+var _ RefreshStore = (*RedisRefreshStore)(nil)
+
 // Sentinel errors for RedisRefreshStore operations.
 var (
 	ErrNilClient = errors.New("redis client must not be nil")

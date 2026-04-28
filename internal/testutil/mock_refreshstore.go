@@ -57,6 +57,22 @@ func (mr *MockRefreshStoreMockRecorder) Cleanup(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cleanup", reflect.TypeOf((*MockRefreshStore)(nil).Cleanup), ctx)
 }
 
+// ListTokens mocks base method.
+func (m *MockRefreshStore) ListTokens(ctx context.Context, cursor string, count int) ([]*storage.RefreshToken, string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListTokens", ctx, cursor, count)
+	ret0, _ := ret[0].([]*storage.RefreshToken)
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListTokens indicates an expected call of ListTokens.
+func (mr *MockRefreshStoreMockRecorder) ListTokens(ctx, cursor, count any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokens", reflect.TypeOf((*MockRefreshStore)(nil).ListTokens), ctx, cursor, count)
+}
+
 // Namespace mocks base method.
 func (m *MockRefreshStore) Namespace() string {
 	m.ctrl.T.Helper()
