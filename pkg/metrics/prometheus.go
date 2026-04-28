@@ -116,35 +116,35 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "storage_operations_total",
 		"Total number of storage operations",
-		[]string{"operation", "status", "error_type", "storage_backend"})
+		[]string{"operation", "status", "error_type", "storage_backend", "namespace"})
 
 	pm.registerCounter(namespace, "storage_cleanup_tokens_removed_total",
 		"Total number of tokens removed during cleanup",
-		[]string{"storage_backend"})
+		[]string{"storage_backend", "namespace"})
 
 	pm.registerHistogram(namespace, "storage_operation_duration_seconds",
 		"Duration of storage operations in seconds",
-		[]string{"operation", "storage_backend"},
+		[]string{"operation", "storage_backend", "namespace"},
 		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
 
 	pm.registerGauge(namespace, "storage_tokens_count",
 		"Number of tokens in storage",
-		[]string{"storage_backend"})
+		[]string{"storage_backend", "namespace"})
 
 	// ===== KeyStore Metrics =====
 
 	pm.registerCounter(namespace, "keystore_operations_total",
 		"Total number of key store operations",
-		[]string{"operation", "status", "error_type", "storage_backend"})
+		[]string{"operation", "status", "error_type", "storage_backend", "namespace"})
 
 	pm.registerHistogram(namespace, "keystore_operation_duration_seconds",
 		"Duration of key store operations in seconds",
-		[]string{"operation", "storage_backend"},
+		[]string{"operation", "storage_backend", "namespace"},
 		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
 
 	pm.registerGauge(namespace, "keystore_keys_count",
 		"Number of keys in the key store",
-		[]string{"storage_backend"})
+		[]string{"storage_backend", "namespace"})
 
 	// ===== KeyManager Metrics =====
 

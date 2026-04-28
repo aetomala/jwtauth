@@ -78,6 +78,9 @@ func NewRedisKeyStore(cfg RedisKeyStoreConfig) (*RedisKeyStore, error) {
 	if cfg.Tracer == nil {
 		cfg.Tracer = defaults.Tracer
 	}
+	if cfg.KeyPrefix != "" {
+		cfg.Logger = cfg.Logger.With("namespace", cfg.KeyPrefix)
+	}
 
 	// ===== STEP 3: Return Initialized Store =====
 	return &RedisKeyStore{
@@ -97,10 +100,13 @@ func NewRedisKeyStore(cfg RedisKeyStoreConfig) (*RedisKeyStore, error) {
 func (r *RedisKeyStore) Namespace() string { return r.namespace }
 
 // startSpan starts a new span for the given operation name, pre-seeded with
-// the storage.backend attribute.
+// the storage.backend and storage.namespace attributes.
 func (r *RedisKeyStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
 	return r.tracer.Start(ctx, "RedisKeyStore."+operation,
-		tracing.WithAttributes(map[string]any{"storage.backend": r.backend}),
+		tracing.WithAttributes(map[string]any{
+			"storage.backend":   r.backend,
+			"storage.namespace": r.namespace,
+		}),
 	)
 }
 
@@ -122,14 +128,17 @@ func (r *RedisKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
 			"operation":       "load_all",
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		if status == "success" {
 			r.metrics.SetGauge(metricKeyStoreKeysCount, float64(keyCount), map[string]string{
 				"storage_backend": r.backend,
+				"namespace":       r.namespace,
 			})
 		}
 	}()
@@ -235,10 +244,12 @@ func (r *RedisKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
 			"operation":       "save",
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 	}()
 
@@ -314,10 +325,12 @@ func (r *RedisKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta K
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
 			"operation":       "update_metadata",
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 	}()
 
@@ -403,10 +416,12 @@ func (r *RedisKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.Private
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
 			"operation":       "load_key",
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 	}()
 
@@ -509,10 +524,12 @@ func (r *RedisKeyStore) Delete(ctx context.Context, keyID string) error {
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 		r.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
 			"operation":       "delete",
 			"storage_backend": r.backend,
+			"namespace":       r.namespace,
 		})
 	}()
 

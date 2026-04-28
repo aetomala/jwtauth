@@ -521,10 +521,12 @@ var _ = Describe("RedisKeyStore", func() {
 				"status":          status,
 				"error_type":      errorType,
 				"storage_backend": "redis",
+				"namespace":       "",
 			})
 			mockM.EXPECT().RecordDuration("jwtauth_keystore_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation":       operation,
 				"storage_backend": "redis",
+				"namespace":       "",
 			})
 		}
 
@@ -544,6 +546,7 @@ var _ = Describe("RedisKeyStore", func() {
 				expectOpsMetrics("load_all", "success")
 				mockM.EXPECT().SetGauge("jwtauth_keystore_keys_count", gomock.Any(), map[string]string{
 					"storage_backend": "redis",
+					"namespace":       "",
 				})
 				store := newMetricStore()
 				_, err := store.LoadAll(ctx)
