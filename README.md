@@ -272,6 +272,7 @@ You've already verified identity and need **production-grade token machinery** f
 - **Token refresh flow** (RefreshAccessToken, RefreshAccessTokenWithClaims) with expiration and revocation checks
 - **Token revocation** (RevokeRefreshToken, RevokeAllUserTokens) for logout and security scenarios
 - **Token introspection** (IntrospectToken) per RFC 7662 — returns active/inactive status with metadata
+- **Cursor-based token enumeration** (ListTokens, ListTokensForUser) for reconciliation jobs, audit pipelines, and bulk operations — pagination over global or per-user token sets
 - **Manual token cleanup** (CleanupExpiredTokens) for on-demand expiration sweeps
 - **RS256 signing** with custom claims support and reserved claim protection
 - **Clock skew tolerance** (`ClockSkew` field) for distributed deployments with NTP drift
@@ -286,21 +287,22 @@ You've already verified identity and need **production-grade token machinery** f
   - Perfect for single-instance deployments and testing
   - Dual-index lookups (tokenID → token, userID → []tokenID) for O(1) retrieval
   - Defensive copying for isolation from caller mutations
-  - 61 comprehensive tests with 100% statement coverage
+  - 77 comprehensive tests with 100% statement coverage
 - **RedisRefreshStore**: Distributed storage for multi-instance deployments
   - Uses go-redis/v9 with pipeline support for atomic operations
   - Millisecond-precision timestamp storage
   - Efficient SCAN-based cleanup for expired tokens
   - Production-ready error handling and logging
-  - 61 comprehensive tests (identical test suite as Memory implementation)
-- **Shared test suite** pattern: Single suite (61 tests) runs against both implementations
+  - 77 comprehensive tests (identical test suite as Memory implementation)
+- **Shared test suite** pattern: Single suite (77 tests) runs against both implementations
 - **Common features** (both implementations):
   - Token lifecycle management (Store, Retrieve, Revoke, RevokeAllForUser, Cleanup)
+  - **Cursor-based enumeration**: `ListTokens` iterates all tokens globally; `ListTokensForUser` iterates a single user's tokens — pass `""` as cursor to start from the beginning
   - Expiration and revocation checks with per-request validation
   - Idempotent revocation (safe to call multiple times)
   - Comprehensive context handling with cancellation propagation
   - Structured logging for audit trail
-  - **122 total storage tests** (61 × 2 implementations)
+  - **154 total storage tests** (77 × 2 implementations)
 
 ### 🚧 In Development (v0.4.0)
 
@@ -1087,8 +1089,8 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - CleanupExpiredTokens: manual sweep with error handling
 - **Concurrent Operations**: parallel token issuance and service state safety
 
-**RefreshStore** (122 total tests: 61 per implementation × 2):
-- **Shared Test Suite** (51 tests, runs against both Memory and Redis):
+**RefreshStore** (154 total tests: 77 per implementation × 2):
+- **Shared Test Suite** (77 tests, runs against both Memory and Redis):
   - **Phase 1**: Constructor initialization
   - **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
   - **Phase 3**: Input validation (empty/whitespace tokenID/userID, expired tokens, metadata defensive copy)
@@ -1099,6 +1101,8 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - **Phase 8**: Cleanup (expired token removal, mixed expiration states)
   - **Phase 8.5**: Edge cases (unicode characters, large-scale operations, far-future timestamps)
   - **Phase 9**: Context cancellation handling across all operations
+  - **Phase 12**: `ListTokens` — global cursor-based pagination (empty store, single page, multi-page, empty cursor, exhausted cursor, cancelled context)
+  - **Phase 13**: `ListTokensForUser` — user-scoped cursor-based pagination (user isolation, empty userID validation, multi-page, cancelled context)
 - **Test Suite Architecture**: Single parameterized suite eliminates 800+ lines of duplication, ensures both implementations have identical semantics
 
 **Test Organization**:
