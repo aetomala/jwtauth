@@ -1001,5 +1001,131 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				Expect(tokenIDs[expired]).To(BeTrue(), "expired token missing from ListTokens")
 			})
 		})
+
+		// PHASE 13: ListTokensForUser — User-scoped Cursor-based Pagination
+		//
+		// Verifies that ListTokensForUser correctly scopes iteration to a single
+		// user's tokens and that cursor-based pagination exhausts the set cleanly.
+
+		Describe("Phase 13: ListTokensForUser", func() {
+			It("should return empty result for user with no tokens", func() {
+				tokens, next, err := store.ListTokensForUser(ctx, "ghost-user", "", 10)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tokens).To(BeEmpty())
+				Expect(next).To(BeEmpty())
+			})
+
+			It("should return all tokens for a user in a single page", func() {
+				user := "user-single-page"
+				ids := []string{"tok-a", "tok-b", "tok-c"}
+				for _, id := range ids {
+					Expect(store.Store(ctx, id, user, expiresAt, nil)).To(Succeed())
+				}
+
+				tokens, next, err := store.ListTokensForUser(ctx, user, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(next).To(BeEmpty())
+				got := make(map[string]bool)
+				for _, t := range tokens {
+					got[t.TokenID] = true
+				}
+				for _, id := range ids {
+					Expect(got[id]).To(BeTrue(), "expected token %s in result", id)
+				}
+			})
+
+			It("should paginate across multiple pages and exhaust the set", func() {
+				user := "user-paginate"
+				total := 7
+				for i := 0; i < total; i++ {
+					Expect(store.Store(ctx, fmt.Sprintf("page-tok-%d", i), user, expiresAt, nil)).To(Succeed())
+				}
+
+				var all []*storage.RefreshToken
+				cursor := ""
+				for {
+					page, next, err := store.ListTokensForUser(ctx, user, cursor, 3)
+					Expect(err).NotTo(HaveOccurred())
+					all = append(all, page...)
+					cursor = next
+					if cursor == "" {
+						break
+					}
+				}
+				Expect(all).To(HaveLen(total))
+			})
+
+			It("should isolate tokens between different users", func() {
+				userA := "user-isolation-a"
+				userB := "user-isolation-b"
+				Expect(store.Store(ctx, "tok-iso-a1", userA, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-iso-a2", userA, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-iso-b1", userB, expiresAt, nil)).To(Succeed())
+
+				tokensA, _, err := store.ListTokensForUser(ctx, userA, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tokensA).To(HaveLen(2))
+				for _, t := range tokensA {
+					Expect(t.UserID).To(Equal(userA))
+				}
+
+				tokensB, _, err := store.ListTokensForUser(ctx, userB, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tokensB).To(HaveLen(1))
+				Expect(tokensB[0].UserID).To(Equal(userB))
+			})
+
+			It("should return ErrInvalidUserID for empty userID", func() {
+				_, _, err := store.ListTokensForUser(ctx, "", "", 10)
+				Expect(err).To(MatchError(storage.ErrInvalidUserID))
+			})
+
+			It("should return empty next cursor when iteration is exhausted", func() {
+				user := "user-exhaust"
+				Expect(store.Store(ctx, "tok-exhaust-1", user, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-exhaust-2", user, expiresAt, nil)).To(Succeed())
+
+				_, finalCursor, err := store.ListTokensForUser(ctx, user, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(finalCursor).To(BeEmpty())
+			})
+
+			It("should return context error on cancelled context", func() {
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				_, _, err := store.ListTokensForUser(cancelledCtx, userID, "", 10)
+				Expect(err).To(MatchError(context.Canceled))
+			})
+
+			It("should return revoked and active tokens for the user", func() {
+				user := "user-mixed"
+				active := "tok-user-active"
+				revoked := "tok-user-revoked"
+
+				Expect(store.Store(ctx, active, user, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, revoked, user, expiresAt, nil)).To(Succeed())
+				Expect(store.Revoke(ctx, revoked)).To(Succeed())
+
+				var all []*storage.RefreshToken
+				cursor := ""
+				for {
+					page, next, err := store.ListTokensForUser(ctx, user, cursor, 100)
+					Expect(err).NotTo(HaveOccurred())
+					all = append(all, page...)
+					cursor = next
+					if cursor == "" {
+						break
+					}
+				}
+
+				tokenIDs := map[string]bool{}
+				for _, t := range all {
+					tokenIDs[t.TokenID] = true
+				}
+				Expect(tokenIDs[active]).To(BeTrue(), "active token missing from ListTokensForUser")
+				Expect(tokenIDs[revoked]).To(BeTrue(), "revoked token missing from ListTokensForUser")
+			})
+		})
 	})
 }

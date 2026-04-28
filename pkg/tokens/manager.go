@@ -2225,6 +2225,69 @@ func (m *Manager) ListTokens(ctx context.Context, cursor string, count int) ([]*
 	return tokens, nextCursor, nil
 }
 
+// ListTokensForUser returns a page of refresh tokens belonging to userID from
+// the underlying store. See storage.RefreshStore.ListTokensForUser for cursor
+// and filtering semantics. Returns ErrInvalidUserID if userID is empty.
+// Returns the context error if the context is cancelled.
+func (m *Manager) ListTokensForUser(ctx context.Context, userID string, cursor string, count int) ([]*storage.RefreshToken, string, error) {
+	ctx, span := m.startSpan(ctx, "ListTokensForUser")
+	defer span.End()
+	span.SetAttribute("token.namespace", m.namespace)
+	span.SetAttribute("token.user_id", userID)
+	span.SetAttribute("token.cursor", cursor)
+	span.SetAttribute("token.count", count)
+
+	start := time.Now()
+	errorType := "error"
+	defer func() {
+		m.metrics.IncrementCounter(metricTokensListForUserTotal, map[string]string{
+			"namespace":  m.namespace,
+			"error_type": errorType,
+		})
+		m.metrics.RecordDuration(metricTokensListForUserDuration, time.Since(start), map[string]string{
+			"namespace": m.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Service State Check =====
+	if !m.isRunning.Load() {
+		errorType = "not_running"
+		m.logger.Warn("attempted listTokensForUser while service stopped", ctx)
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
+		return nil, "", ErrManagerNotRunning
+	}
+
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		errorType = "cancelled"
+		m.logger.Info("context cancelled during listTokensForUser", ctx, "error", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 3: Delegate to Store =====
+	tokens, nextCursor, err := m.refreshStore.ListTokensForUser(ctx, userID, cursor, count)
+	if err != nil {
+		m.logger.Error("failed to list tokens for user", ctx, "user_id", userID, "error", err)
+		wrapped := fmt.Errorf("list tokens for user failed: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return nil, "", wrapped
+	}
+
+	// ===== STEP 4: Record Success and Log =====
+	errorType = ""
+	span.SetAttribute("token.result_count", len(tokens))
+	span.SetStatus(tracing.StatusOK, "")
+	m.logger.Info("tokens listed for user", ctx,
+		"user_id", userID,
+		"result_count", len(tokens),
+		"next_cursor", nextCursor)
+	return tokens, nextCursor, nil
+}
+
 // generateTokenID creates a cryptographically random token identifier.
 //
 // The token ID (jti claim) is used for:

@@ -827,6 +827,113 @@ func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count
 	return tokens, nextCursor, nil
 }
 
+// ListTokensForUser returns a page of refresh tokens belonging to userID
+// starting from cursor. Pass an empty string for cursor to begin from the
+// start. Returns the next cursor and a nil error on success. Returns an empty
+// next cursor when iteration is exhausted.
+//
+// All tokens are returned regardless of revocation or expiry status — the
+// caller is responsible for filtering. Cursor semantics mirror Redis SSCAN:
+// tokens inserted or deleted between pages may appear, be skipped, or
+// duplicated. Returns ErrInvalidUserID if userID is empty. Returns the context
+// error if the context is cancelled.
+func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string, cursor string, count int) ([]*RefreshToken, string, error) {
+	ctx, span := r.startSpan(ctx, "ListTokensForUser")
+	defer span.End()
+	span.SetAttribute("storage.user_id", userID)
+	span.SetAttribute("storage.cursor", cursor)
+	span.SetAttribute("storage.count", count)
+
+	start := time.Now()
+	errorType := "error"
+	resultCount := 0
+	defer func() {
+		r.metrics.IncrementCounter(metricListTokensForUserTotal, map[string]string{
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+			"error_type":      errorType,
+		})
+		r.metrics.RecordDuration(metricListTokensForUserDuration, time.Since(start), map[string]string{
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		errorType = "cancelled"
+		r.logger.Warn("listTokensForUser aborted: context cancelled", ctx, "reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 2: Validate Inputs =====
+	if len(strings.TrimSpace(userID)) == 0 {
+		errorType = "validation_error"
+		r.logger.Warn("listTokensForUser rejected: userID is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidUserID)
+		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
+		return nil, "", ErrInvalidUserID
+	}
+
+	// ===== STEP 3: Parse Cursor =====
+	var redisCursor uint64
+	if cursor != "" {
+		parsed, err := strconv.ParseUint(cursor, 10, 64)
+		if err != nil {
+			errorType = "invalid_cursor"
+			r.logger.Warn("listTokensForUser: invalid cursor — starting from 0", ctx, "cursor", cursor)
+		} else {
+			redisCursor = parsed
+		}
+	}
+
+	// ===== STEP 4: SSCAN the User's Token Set =====
+	scanCount := int64(count)
+	if scanCount <= 0 {
+		scanCount = 10
+	}
+	userSetKey := r.userSetPrefix + userID
+	tokenIDs, nextRedisCursor, err := r.client.SScan(ctx, userSetKey, redisCursor, "*", scanCount).Result()
+	if err != nil {
+		errorType = "redis_error"
+		r.logger.Error("listTokensForUser failed: redis sscan error", ctx,
+			"user_id", userID, "error", err)
+		wrapped := fmt.Errorf("failed to scan user tokens: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return nil, "", wrapped
+	}
+
+	// ===== STEP 5: Hydrate Token IDs =====
+	tokens, err := r.fetchTokensByIDs(ctx, tokenIDs)
+	if err != nil {
+		errorType = "redis_error"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 6: Compute Next Cursor =====
+	nextCursor := ""
+	if nextRedisCursor != 0 {
+		nextCursor = strconv.FormatUint(nextRedisCursor, 10)
+	}
+
+	// ===== STEP 7: Log and Return =====
+	errorType = ""
+	resultCount = len(tokens)
+	span.SetAttribute("storage.result_count", resultCount)
+	span.SetStatus(tracing.StatusOK, "")
+	r.logger.Info("listTokensForUser: page returned", ctx,
+		"user_id", userID,
+		"result_count", resultCount,
+		"next_cursor", nextCursor)
+
+	return tokens, nextCursor, nil
+}
+
 // fetchTokensByIDs retrieves RefreshToken records for the given tokenIDs using
 // a pipelined HGETALL. Missing or unparseable tokens are skipped with a warning.
 func (r *RedisRefreshStore) fetchTokensByIDs(ctx context.Context, tokenIDs []string) ([]*RefreshToken, error) {
