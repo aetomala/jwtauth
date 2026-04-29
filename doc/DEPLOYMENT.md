@@ -25,8 +25,8 @@ if err := redisClient.Ping(ctx).Err(); err != nil {
     log.Fatalf("Redis unavailable: %v", err)
 }
 
-ks, _ := keys.NewRedisKeyStore(redisClient, logger, pm)
-store := storage.NewRedisRefreshStore(redisClient, logger, pm)
+ks, _    := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: redisClient, Logger: logger, Metrics: pm})
+store, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: redisClient, Logger: logger, Metrics: pm})
 ```
 
 ### Service Start Order
@@ -104,9 +104,9 @@ pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
     Namespace: "myapp",  // prefix for all metric names; defaults to "jwtauth"
 })
 
-ks, _   := keys.NewDiskKeyStore("./keys", 2048, logger, pm)
-km, _   := keys.NewManager(keys.KeyManagerConfig{KeyStore: ks, Metrics: pm})
-store   := storage.NewMemoryRefreshStore(logger, pm)
+ks, _    := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: pm})
+km, _    := keys.NewManager(keys.KeyManagerConfig{KeyStore: ks, Metrics: pm})
+store, _ := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: pm})
 mgr, _  := tokens.NewManager(tokens.TokenManagerConfig{
     KeyManager:   km,
     RefreshStore: store,
@@ -284,7 +284,7 @@ if err := km.Shutdown(shutdownCtx); err != nil {
 
 **Single-instance** (development, small deployments):
 ```go
-store := storage.NewMemoryRefreshStore(logger, pm)
+store, _ := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: pm})
 ```
 
 **Multi-instance** (Kubernetes, load-balanced):
@@ -292,7 +292,7 @@ store := storage.NewMemoryRefreshStore(logger, pm)
 redisClient := redis.NewClient(&redis.Options{
     Addr: os.Getenv("REDIS_ADDR"),
 })
-store := storage.NewRedisRefreshStore(redisClient, logger, pm)
+store, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: redisClient, Logger: logger, Metrics: pm})
 ```
 
 ---

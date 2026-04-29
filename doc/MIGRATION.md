@@ -45,7 +45,7 @@ import (
 )
 
 // Step 1: Create KeyManager (handles keys + rotation)
-ks, _ := keys.NewDiskKeyStore("./keys", 2048, nil, nil)
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048})
 km, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour,
@@ -53,7 +53,7 @@ km, _ := keys.NewManager(keys.KeyManagerConfig{
 })
 
 // Step 2: Create RefreshStore (handles refresh tokens)
-refreshStore := storage.NewMemoryRefreshStore(nil, nil)
+refreshStore, _ := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{})
 
 // Step 3: Create TokenManager (coordinates everything)
 mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
@@ -302,8 +302,8 @@ km, _ := keys.NewManager(keys.KeyManagerConfig{
 **Development/Single-Instance:**
 ```go
 // Use in-memory storage
-ks, _ := keys.NewDiskKeyStore("./keys", 2048, nil, nil)
-refreshStore := storage.NewMemoryRefreshStore(nil, nil)
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048})
+refreshStore, _ := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{})
 ```
 
 **Production/Multi-Instance:**
@@ -314,10 +314,10 @@ import "github.com/redis/go-redis/v9"
 client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
 
 // Shared key storage
-ks, _ := keys.NewRedisKeyStore(client, logger, metrics)
+ks, _ := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client, Logger: logger, Metrics: metrics})
 
 // Shared refresh token storage
-refreshStore := storage.NewRedisRefreshStore(client, logger, metrics)
+refreshStore, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client, Logger: logger, Metrics: metrics})
 ```
 
 **No code changes** — just swap the storage backend.

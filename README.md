@@ -827,6 +827,7 @@ type Logger interface {
     Info(msg string, args ...interface{})
     Warn(msg string, args ...interface{})
     Error(msg string, args ...interface{})
+    With(keysAndValues ...interface{}) Logger
 }
 
 // Adapt your existing logger
@@ -840,7 +841,7 @@ func (m *MyZapAdapter) Debug(msg string, args ...interface{}) {
 func (m *MyZapAdapter) Info(msg string, args ...interface{}) {
     m.logger.Sugar().Infow(msg, args...)
 }
-// ... implement Warn, Error
+// ... implement Warn, Error, With
 ```
 
 ### Correlation ID
