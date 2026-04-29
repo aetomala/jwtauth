@@ -2047,6 +2047,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 			TokenType: "refresh_token",
 			ExpiresAt: time.Time{},
 			IssuedAt:  time.Time{},
+			TokenID:   token,
 		}, nil
 	}
 
@@ -2067,6 +2068,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 			TokenType: "refresh_token",
 			ExpiresAt: refreshToken.ExpiresAt,
 			IssuedAt:  refreshToken.CreatedAt,
+			TokenID:   refreshToken.TokenID,
 		}, nil
 	}
 
@@ -2083,6 +2085,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 			TokenType: "refresh_token",
 			ExpiresAt: refreshToken.ExpiresAt,
 			IssuedAt:  refreshToken.CreatedAt,
+			TokenID:   refreshToken.TokenID,
 		}, nil
 	}
 
@@ -2100,6 +2103,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 		TokenType: "refresh_token",
 		ExpiresAt: refreshToken.ExpiresAt,
 		IssuedAt:  refreshToken.CreatedAt,
+		TokenID:   refreshToken.TokenID,
 	}, nil
 }
 
