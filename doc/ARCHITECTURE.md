@@ -1072,6 +1072,9 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 | [003](adr/003-rs256-only.md) | RS256 Only (No Algorithm Flexibility) | 2026-04-01 |
 | [004](adr/004-kid-validation.md) | `kid` UUID Validation at KeyStore Boundary | 2026-04-21 |
 | [005](adr/005-security-boundaries.md) | Security Boundaries — Attacker-Controlled Token Fields | 2026-04-21 |
+| [006](adr/006-keyprefix-namespace-isolation.md) | `KeyPrefix` — Namespace Isolation in Redis Backends | 2026-04-27 |
+| [007](adr/007-namespace-consistency-contract.md) | Namespace Field on Manager Configs for Observability Consistency | 2026-04-27 |
+| [008](adr/008-reserved-claims-at-issuance.md) | Reserved Claims Protection at Token Issuance | 2026-04-29 |
 
 ---
 

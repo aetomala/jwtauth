@@ -23,3 +23,4 @@ Each ADR includes:
 - [ADR-005: Security Boundaries — Attacker-Controlled Token Fields](005-security-boundaries.md)
 - [ADR-006: KeyPrefix — Namespace Isolation in Redis Backends](006-keyprefix-namespace-isolation.md)
 - [ADR-007: Namespace Field on Manager Configs for Observability Consistency](007-namespace-consistency-contract.md)
+- [ADR-008: Reserved Claims Protection at Token Issuance](008-reserved-claims-at-issuance.md)

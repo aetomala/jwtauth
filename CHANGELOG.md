@@ -20,7 +20,7 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
-- **`aud` added to reserved claims guard in `IssueAccessTokenWithClaims` and `IssueTokenPairWithClaims`** — callers can no longer override the manager's configured audience via custom claims. The warn-log path already covered this case; only the guard map needed updating. See #109.
+- **`aud` added to reserved claims guard in `IssueAccessTokenWithClaims` and `IssueTokenPairWithClaims`** — callers can no longer override the manager's configured audience via custom claims. The warn-log path already covered this case; only the guard map needed updating. See #109 and ADR-008.
 
 - **`kid` path traversal fix** — `DiskKeyStore` and `RedisKeyStore` now validate the
   `kid` header value against a UUID v4 format at every method boundary (`Save`,
