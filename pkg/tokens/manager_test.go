@@ -1606,6 +1606,7 @@ var _ = Describe("TokenManager", func() {
 		Context("with valid refresh token", func() {
 			It("should return token metadata", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), refreshToken).Return(&storage.RefreshToken{
+					TokenID:   refreshToken,
 					UserID:    testUserID,
 					ExpiresAt: time.Now().Add(1 * time.Hour),
 					CreatedAt: time.Now(),
@@ -1618,6 +1619,7 @@ var _ = Describe("TokenManager", func() {
 				Expect(metadata.Active).To(BeTrue())
 				Expect(metadata.Subject).To(Equal(testUserID))
 				Expect(metadata.TokenType).To(Equal("refresh_token"))
+				Expect(metadata.TokenID).To(Equal(refreshToken))
 			})
 
 			It("should include expiration info", func() {
@@ -1638,6 +1640,7 @@ var _ = Describe("TokenManager", func() {
 		Context("with expired token", func() {
 			It("should return inactive status", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), refreshToken).Return(&storage.RefreshToken{
+					TokenID:   refreshToken,
 					UserID:    testUserID,
 					ExpiresAt: time.Now().Add(-1 * time.Hour),
 					CreatedAt: time.Now().Add(-25 * time.Hour),
@@ -1648,6 +1651,7 @@ var _ = Describe("TokenManager", func() {
 
 				Expect(err).NotTo(HaveOccurred())
 				Expect(metadata.Active).To(BeFalse())
+				Expect(metadata.TokenID).To(Equal(refreshToken))
 			})
 		})
 
@@ -1660,12 +1664,14 @@ var _ = Describe("TokenManager", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(metadata.Active).To(BeFalse())
 				Expect(metadata.Subject).To(BeEmpty())
+				Expect(metadata.TokenID).To(Equal("invalid-token"))
 			})
 		})
 
 		Context("with revoked token", func() {
 			It("should return inactive status", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), refreshToken).Return(&storage.RefreshToken{
+					TokenID:   refreshToken,
 					UserID:    testUserID,
 					ExpiresAt: time.Now().Add(1 * time.Hour),
 					CreatedAt: time.Now(),
@@ -1677,6 +1683,7 @@ var _ = Describe("TokenManager", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(metadata.Active).To(BeFalse())
 				Expect(metadata.Subject).To(Equal(testUserID))
+				Expect(metadata.TokenID).To(Equal(refreshToken))
 			})
 		})
 

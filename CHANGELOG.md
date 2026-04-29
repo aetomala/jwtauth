@@ -129,6 +129,8 @@ All notable changes to this project will be documented in this file.
 
 - **`TokenManager` emits namespace across all three signal types** — every span carries a `token.namespace` attribute, every log line carries a `namespace` field (via `Logger.With` in the constructor), and every Prometheus label on token management metrics (`tokens_issued_total`, `tokens_validated_total`, `tokens_refreshed_total`, `tokens_revoked_total`, `tokens_introspected_total`, `operations_total`, `operation_duration_seconds`, `active_tokens`) includes `namespace`. Zero-value `Namespace` emits an empty string label, preserving backward compatibility. Closes #112 (Phase 5).
 
+- **`TokenMetadata.TokenID` (`jti`) populated by `IntrospectToken`** — callers can now revoke a token by ID directly from introspection results without parsing the JWT themselves (closes #108). Per RFC 7662 §2.2; set from `refreshToken.TokenID` for found tokens and from the caller-supplied token string for the not-found path.
+
 ### Fixed
 
 - **`KeyInfo.KeySizeBits` now reports actual key size** — previously sourced from `KeyManagerConfig.KeySize` (caller-supplied), which could silently diverge from the actual RSA key on disk if the `DiskKeyStore` or `RedisKeyStore` was configured with a different key size. Now derived from `keyPair.PrivateKey.N.BitLen()` so the reported value always matches the real key material.

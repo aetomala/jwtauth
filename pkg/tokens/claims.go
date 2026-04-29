@@ -162,6 +162,9 @@ type TokenMetadata struct {
 	// Scope contains OAuth2 scopes if present
 	Scope string `json:"scope,omitempty"`
 
+	// TokenID is the unique identifier for this token (jti claim), per RFC 7662.
+	TokenID string `json:"jti,omitempty"`
+
 	// Custom contains any custom claims
 	Custom map[string]interface{} `json:"custom,omitempty"`
 }
