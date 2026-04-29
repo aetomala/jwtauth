@@ -292,8 +292,133 @@ store, _ := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logge
 redisClient := redis.NewClient(&redis.Options{
     Addr: os.Getenv("REDIS_ADDR"),
 })
-store, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: redisClient, Logger: logger, Metrics: pm})
+store, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{
+    Client:    redisClient,
+    Logger:    logger,
+    Metrics:   pm,
+    KeyPrefix: "myapp:",  // Optional; isolates keys when sharing a Redis cluster
+})
 ```
+
+---
+
+## Namespace Isolation
+
+When running multiple `Manager` instances against the same Redis cluster — for example, two
+services sharing infrastructure, or multiple tenants on a single deployment — configure
+`KeyPrefix` and `Namespace` to keep their data and observability output separate.
+
+`KeyPrefix` is set on the Redis store configs and prepended to every Redis key written by that
+instance. Two managers with different prefixes can share one Redis cluster without key collision:
+
+```go
+// Tenant A
+ksA, _ := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+    Client:    redisClient,
+    KeyPrefix: "tenant-a:",
+})
+storeA, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{
+    Client:    redisClient,
+    KeyPrefix: "tenant-a:",
+})
+kmA, _ := keys.NewManager(keys.KeyManagerConfig{
+    KeyStore:  ksA,
+    Namespace: "tenant-a",
+})
+mgrA, _ := tokens.NewManager(tokens.TokenManagerConfig{
+    KeyManager:   kmA,
+    RefreshStore: storeA,
+    Namespace:    "tenant-a",
+})
+
+// Tenant B — same Redis, no data overlap
+ksB, _ := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+    Client:    redisClient,
+    KeyPrefix: "tenant-b:",
+})
+storeB, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{
+    Client:    redisClient,
+    KeyPrefix: "tenant-b:",
+})
+kmB, _ := keys.NewManager(keys.KeyManagerConfig{
+    KeyStore:  ksB,
+    Namespace: "tenant-b",
+})
+mgrB, _ := tokens.NewManager(tokens.TokenManagerConfig{
+    KeyManager:   kmB,
+    RefreshStore: storeB,
+    Namespace:    "tenant-b",
+})
+```
+
+`Namespace` is set on the manager configs and flows through all three observability signals:
+
+- **Logs** — a `namespace` field is pre-bound to every log line via `Logger.With`
+- **Spans** — a `namespace` attribute is attached to every trace span
+- **Metrics** — a `namespace` label is added to every Prometheus counter and histogram
+
+This lets you filter dashboards, traces, and logs to a single Manager instance without changing
+metric names or adding routing logic.
+
+See [ADR-006](adr/006-keyprefix-namespace-isolation.md) and
+[ADR-007](adr/007-namespace-consistency-contract.md).
+
+---
+
+## Token Enumeration
+
+`ListTokens` and `ListTokensForUser` expose the full token inventory in the `RefreshStore`
+via cursor-based pagination. Operational use cases include:
+
+- **Compliance exports** — audit all active sessions for a user or the entire system
+- **Bulk revocation** — revoke all tokens for a decommissioned user or tenant
+- **Session dashboards** — surface active token counts in admin tooling
+- **Reconciliation jobs** — verify no orphaned tokens remain after a migration
+
+**Pagination pattern:**
+
+```go
+var cursor string
+for {
+    page, next, err := mgr.ListTokens(ctx, cursor, 100)
+    if err != nil {
+        return err
+    }
+    for _, t := range page {
+        // Tokens are returned regardless of expiry or revocation — filter as needed.
+        if t.ExpiresAt.After(time.Now()) {
+            process(t)
+        }
+    }
+    if next == "" {
+        break // exhausted
+    }
+    cursor = next
+}
+```
+
+To enumerate tokens for a specific user, replace the first line of the loop body:
+
+```go
+page, next, err := mgr.ListTokensForUser(ctx, userID, cursor, 100)
+```
+
+`count` is a hint — the actual page size may vary. Cursor semantics are best-effort under
+concurrent mutation: tokens created or deleted between pages may appear, disappear, or shift.
+
+See `examples/token-audit/` for a runnable reference.
+
+---
+
+## Reserved Claims
+
+The fields `sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, and `jti` are silently removed from any
+`CustomClaims` map before a token is signed. These fields are under jwtauth's control — setting
+them through custom claims would produce tokens that violate the configured `Issuer`, `Audience`,
+or lifetime constraints. To set audience and issuer, use `TokenManagerConfig.Audience` and
+`TokenManagerConfig.Issuer` instead.
+
+See [ADR-008](adr/008-reserved-claims-at-issuance.md).
 
 ---
 
