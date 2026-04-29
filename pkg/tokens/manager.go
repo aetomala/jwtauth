@@ -639,7 +639,7 @@ func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 
 	// Merge custom claims — reserved keys are silently dropped.
 	reservedClaims := map[string]bool{
-		"sub": true, "iss": true, "exp": true,
+		"sub": true, "iss": true, "aud": true, "exp": true,
 		"iat": true, "nbf": true, "jti": true,
 	}
 
@@ -1216,7 +1216,7 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 
 	// Merge access claims — reserved keys are silently dropped.
 	reservedClaims := map[string]bool{
-		"sub": true, "iss": true, "exp": true,
+		"sub": true, "iss": true, "aud": true, "exp": true,
 		"iat": true, "nbf": true, "jti": true,
 	}
 
