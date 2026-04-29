@@ -1088,6 +1088,6 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 
 ---
 
-**Last Updated**: April 18, 2026
-**Version**: v0.4.0 (in progress)
-**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] + Distributed Tracing — all stable and fully instrumented; TokenManager in beta)
+**Last Updated**: April 29, 2026
+**Version**: v0.4.0
+**Status**: Stable (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] + Distributed Tracing + TokenManager — all stable and fully instrumented)
