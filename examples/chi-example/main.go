@@ -93,7 +93,12 @@ func main() {
 
 	// Public endpoints
 	r.Post("/login", issueTokensHandler(mgr))
+	r.Post("/login/rich", issueTokensWithClaimsHandler(mgr))
 	r.Post("/refresh", refreshHandler(mgr))
+	r.Post("/refresh/claims", refreshWithClaimsHandler(mgr))
+
+	// Protected endpoints demonstrating custom claims extraction
+	r.Get("/protected/role", roleHandler(mgr))
 
 	// Health check
 	r.Get("/health", healthHandler)
@@ -241,6 +246,115 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"status": "healthy",
 	})
+}
+
+// issueTokensWithClaimsHandler issues a token pair with hard-coded custom claims
+// (role=admin, tier=premium) — demonstrating IssueTokenPairWithClaims.
+func issueTokensWithClaimsHandler(mgr *tokens.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req LoginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.UserID == "" {
+			http.Error(w, "user_id is required", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		accessToken, refreshToken, err := mgr.IssueTokenPairWithClaims(
+			ctx,
+			req.UserID,
+			tokens.CustomClaims{"role": "admin", "tier": "premium"},
+			nil,
+		)
+		if err != nil {
+			http.Error(w, "failed to issue tokens", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(TokenResponse{
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+			ExpiresIn:    900,
+		})
+	}
+}
+
+// RefreshWithClaimsRequest is the request body for a claims-aware refresh.
+type RefreshWithClaimsRequest struct {
+	RefreshToken string `json:"refresh_token"`
+	Role         string `json:"role"`
+}
+
+// refreshWithClaimsHandler exchanges a refresh token for a new access token that
+// carries the caller-supplied role claim — demonstrating RefreshAccessTokenWithClaims.
+func refreshWithClaimsHandler(mgr *tokens.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req RefreshWithClaimsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.RefreshToken == "" {
+			http.Error(w, "refresh_token is required", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		accessToken, err := mgr.RefreshAccessTokenWithClaims(
+			ctx,
+			req.RefreshToken,
+			tokens.CustomClaims{"role": req.Role},
+		)
+		if err != nil {
+			http.Error(w, "failed to refresh token", http.StatusUnauthorized)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(TokenResponse{
+			AccessToken: accessToken,
+			ExpiresIn:   900,
+		})
+	}
+}
+
+// roleHandler validates an access token with ValidateAccessTokenWithClaims and
+// returns the subject and role custom claim — demonstrating claims extraction.
+func roleHandler(mgr *tokens.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if len(authHeader) < 8 || authHeader[:7] != "Bearer " {
+			http.Error(w, `{"error":"missing_token"}`, http.StatusUnauthorized)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		registered, custom, err := mgr.ValidateAccessTokenWithClaims(ctx, authHeader[7:])
+		if err != nil {
+			http.Error(w, `{"error":"invalid_token"}`, http.StatusUnauthorized)
+			return
+		}
+
+		role, _ := custom["role"].(string)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"subject": registered.Subject,
+			"role":    role,
+		})
+	}
 }
 
 // keyStatusHandler returns the current signing key metadata via GetCurrentKeyInfo.

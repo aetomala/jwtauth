@@ -8,6 +8,9 @@ The example shows:
 - Creating and starting a `TokenManager` with `KeyManager` and `RefreshStore`
 - Writing a custom authentication middleware for Chi
 - Public endpoints for login and token refresh
+- Issuing tokens with custom claims via `IssueTokenPairWithClaims`
+- Refreshing with fresh claims via `RefreshAccessTokenWithClaims`
+- Extracting custom claims via `ValidateAccessTokenWithClaims`
 - Protected endpoints that require a valid JWT token
 - Token revocation (logout)
 - Chi middleware stack (request ID, logging, recovery)
@@ -133,7 +136,70 @@ Response (401 Unauthorized):
 Error: failed to refresh token
 ```
 
-### 5. Key Status (Admin Endpoint)
+### 5. Login with Custom Claims
+
+```bash
+curl -X POST http://localhost:8080/login/rich \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user123"}'
+```
+
+Response:
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIs...",
+  "refresh_token": "eyJhbGciOiJSUzI1NiIs...",
+  "expires_in": 900
+}
+```
+
+The issued access token embeds `role=admin` and `tier=premium` as custom claims alongside the
+standard JWT fields. Use the token on the `/protected/role` endpoint to see the claims extracted.
+
+### 6. Check Role Claim
+
+```bash
+curl http://localhost:8080/protected/role \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+Response (token issued via `/login/rich`):
+```json
+{
+  "subject": "user123",
+  "role": "admin"
+}
+```
+
+Response (token issued via plain `/login` — no custom claims):
+```json
+{
+  "subject": "user123",
+  "role": ""
+}
+```
+
+### 7. Refresh with Fresh Claims
+
+```bash
+curl -X POST http://localhost:8080/refresh/claims \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token": "YOUR_REFRESH_TOKEN", "role": "viewer"}'
+```
+
+Response:
+```json
+{
+  "access_token": "eyJhbGciOiJSUzI1NiIs...",
+  "expires_in": 900
+}
+```
+
+The new access token carries `role=viewer` — the role supplied in this request, not the role
+that was in the original token. This is how you solve the stale-claims problem: re-derive
+the user's current role at refresh time rather than copying it from the old token.
+
+### 9. Key Status (Admin Endpoint)
 
 ```bash
 curl http://localhost:8080/admin/key-status
@@ -155,7 +221,7 @@ Response:
 
 The response contains only public metadata — no private key material is included. In production, protect this route with authentication middleware before the `r.Route("/admin", ...)` group.
 
-### 6. Health Check
+### 10. Health Check
 
 ```bash
 curl http://localhost:8080/health
@@ -225,6 +291,50 @@ mgr.Shutdown(shutdownCtx)
 km.Shutdown(shutdownCtx)
 ```
 
+### Custom Claims
+
+`tokens.CustomClaims` is a `map[string]interface{}` that is merged into the access token at
+issuance. Pass it to the `WithClaims` variants of the issue and refresh methods:
+
+```go
+// Issue — embed role and tier at login time
+accessToken, refreshToken, err := mgr.IssueTokenPairWithClaims(
+    ctx, userID,
+    tokens.CustomClaims{"role": "admin", "tier": "premium"},
+    nil, // no custom claims on the refresh token itself
+)
+
+// Validate — retrieve both registered and custom claims
+registered, custom, err := mgr.ValidateAccessTokenWithClaims(ctx, token)
+role, _ := custom["role"].(string)
+```
+
+Reserved JWT fields (`sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, `jti`) are silently dropped
+from any `CustomClaims` map at issuance — they cannot be overridden. See
+[ADR-008](../../doc/adr/008-reserved-claims-at-issuance.md) for the rationale.
+
+### Refreshing with Fresh Claims
+
+Access tokens encode claims at issuance. If a user's role changes between login and refresh,
+the new access token issued by `RefreshAccessToken` will still carry the old role — it copies
+claims from the refresh token, which was frozen at login time.
+
+`RefreshAccessTokenWithClaims` solves this by letting you supply fresh claims at refresh time:
+
+```go
+// Re-derive the user's current role from your database
+currentRole := db.GetUserRole(userID)
+
+// Embed it in the new access token
+newAccessToken, err := mgr.RefreshAccessTokenWithClaims(
+    ctx, refreshToken,
+    tokens.CustomClaims{"role": currentRole},
+)
+```
+
+The new access token carries `currentRole`, not the role that was encoded at login. The
+refresh token itself is not modified — only the newly issued access token changes.
+
 ### Token Claims
 
 Access tokens issued by `jwtauth` contain standard JWT claims:
@@ -243,17 +353,6 @@ Access tokens issued by `jwtauth` contain standard JWT claims:
 You can decode these tokens at [jwt.io](https://jwt.io/) to inspect the claims.
 
 ## Extending the Example
-
-### Add Custom Claims
-
-```go
-claims := map[string]interface{}{
-    "role":   "admin",
-    "tenant": "org-123",
-}
-
-token, err := mgr.IssueAccessTokenWithClaims(ctx, userID, claims)
-```
 
 ### Add Authorization Middleware
 
