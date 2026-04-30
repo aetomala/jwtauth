@@ -176,6 +176,17 @@ All notable changes to this project will be documented in this file.
 
 - **`examples/README.md`** — added Correlation ID Example entry, cross-reference note in the Common Pattern section, updated Framework Comparison table with a Correlation ID column, corrected title (jwtauth is an engine, not a framework).
 
+- **`doc/UPGRADING.md`** — new file; step-by-step upgrade guide from v0.3.x → v0.4.0 covering all eight categories of breaking changes with Before/After code snippets, compile-time assertion guidance, and a dedicated section for interface additions that affect only custom implementations. Created in PR #121.
+
+- **ADR-006, ADR-007, ADR-008** — three additional Architecture Decision Records:
+  - `006-keyprefix-opaque-namespace.md` — `KeyPrefix` as an opaque Redis key namespace separator; empty string preserves existing layout; library does not interpret or validate the value.
+  - `007-namespace-consistency-contract.md` — `Namespace` as a decoupled observability label on `KeyManagerConfig` and `TokenManagerConfig`; independent of `KeyPrefix`; zero value preserves existing behavior.
+  - `008-reserved-claims-at-issuance.md` — reserved JWT claim protection at issuance; `CustomClaims` entries for `sub`, `iss`, `aud`, `exp`, `iat`, `nbf`, `jti` are silently dropped; per-call audience targeting deferred to a future `WithAudience` IssueOption (see #124).
+
+- **`examples/token-audit/`** — new example demonstrating cursor-based token enumeration using `ListTokens` and `ListTokensForUser`; covers resumable pagination for audit and reconciliation pipelines. Created in PR #121.
+
+- **`doc/DEPLOYMENT.md` additions** — four new operator-facing sections added in PRs #126–#129: namespace isolation (multi-instance `KeyPrefix` + `Namespace` wiring), token enumeration (cursor-based audit pattern), reserved claims (CustomClaims guard explanation with link to ADR-008), and corrected constructor snippets throughout.
+
 ### Testing
 
 - **`pkg/tokens` test DRY cleanup — shared `newTestManager` helper** — `createService` closure was independently defined in both `manager_test.go` and `manager_lifecycle_test.go`; extracted to `pkg/tokens/helpers_test.go` as `newTestManagerConfig` and `newTestManager` package-level helpers within the `tokens_test` package. 25 call sites updated across both files — no new dependency between packages. Fixes DRY violation M4.
