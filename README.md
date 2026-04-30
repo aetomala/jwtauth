@@ -8,7 +8,7 @@
 
 **You verify identity. jwtauth manages everything after:** zero-downtime key rotation, access token issuance, refresh token lifecycle, and instant revocation across horizontal scale.
 
-> **API Stability (pre-v1.0)**: All components are production-quality with comprehensive test coverage. The API surface is still evolving before v1.0.0 — v0.5.0 will add a variadic `IssueOption` parameter to the issuance methods for per-call audience targeting (#124). Changes will be additive and backwards-compatible.
+> **API Stability (pre-v1.0)**: All components are production-quality with comprehensive test coverage. The API surface is still evolving before v1.0.0. **v0.5.0 planned changes:** `IssueOption` / `WithAudience` for per-call audience targeting (#124) — additive, all existing call sites compile unchanged. Audience-based token revocation `RevokeAllForAudience` (#135) — adds `Audience string` to `RefreshToken` and two new methods to `RefreshStore`; custom implementations must be updated (see `UPGRADING.md`).
 
 ## Overview
 

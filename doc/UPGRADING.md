@@ -4,9 +4,50 @@ This document describes breaking changes and the mechanical steps required to up
 
 ---
 
-## Unreleased
+## v0.4.x → v0.5.0
 
-No breaking changes documented yet.
+v0.5.0 introduces two sets of changes to `storage.RefreshStore`. Code that only
+*calls* jwtauth is unaffected. Code that provides a custom `RefreshStore` implementation
+must add the new members or it will not compile.
+
+### 1. `storage.RefreshToken` — new `Audience` field
+
+A new `Audience string` field is added to `RefreshToken`. Custom serialization or
+storage backends that persist `RefreshToken` structs must handle the new field.
+
+```go
+type RefreshToken struct {
+    // ... existing fields unchanged ...
+    Audience string // NEW — audience of the paired access token at issuance time
+}
+```
+
+The value is populated from the per-call `WithAudience` IssueOption when provided,
+or from the manager's configured `TokenManagerConfig.Audience` otherwise.
+
+### 2. `storage.RefreshStore` — two new revocation methods
+
+```go
+// RevokeAllForAudience marks all non-expired refresh tokens targeting the given
+// audience as revoked. Returns the count of tokens revoked.
+RevokeAllForAudience(ctx context.Context, audience string) (int, error)
+
+// RevokeAllForUserAndAudience marks all refresh tokens for the given user and
+// audience as revoked. Returns the count of tokens revoked.
+RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) (int, error)
+```
+
+Add compile-time assertions to catch missed methods early:
+
+```go
+var _ storage.RefreshStore = (*MyRefreshStore)(nil)
+```
+
+### Additive changes (no action required)
+
+`IssueOption` / `WithAudience` (#124) adds a variadic `...tokens.IssueOption` parameter
+to four issuance methods. All existing call sites compile and behave unchanged — the
+parameter is optional and defaults to the manager's configured audience.
 
 ---
 
