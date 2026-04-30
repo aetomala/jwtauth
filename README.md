@@ -8,7 +8,7 @@
 
 **You verify identity. jwtauth manages everything after:** zero-downtime key rotation, access token issuance, refresh token lifecycle, and instant revocation across horizontal scale.
 
-> ⚠️ **Beta Status**: KeyManager and RefreshStore are production-ready and fully tested. TokenManager is in beta — core operations are complete with comprehensive test coverage. API may change before v1.0.0.
+> **API Stability (pre-v1.0)**: All components are production-quality with comprehensive test coverage. The API surface is still evolving before v1.0.0 — v0.5.0 will add a variadic `IssueOption` parameter to the issuance methods for per-call audience targeting (#124). Changes will be additive and backwards-compatible.
 
 ## Overview
 
@@ -263,9 +263,11 @@ You've already verified identity and need **production-grade token machinery** f
 - **Graceful shutdown** with in-flight operation completion
 - **Structured logging** (slog adapter included, bring your own logger)
 - **Full metrics instrumentation** — KeyStore and Manager operations via `jwtauth_keystore_*` and `jwtauth_key_*` metrics
+- **OpenTelemetry distributed tracing** — `Tracer` field wires spans into all key operations; defaults to `NoOpTracer` for zero-config use
+- **Namespace labeling** — `Namespace` field propagates an opaque label through all logs, spans, and metric labels for multi-tenant and multi-instance deployments
 - **Comprehensive test coverage** with race detection
 
-**TokenManager** (Beta)
+**TokenManager**
 - **Access token issuance** (IssueAccessToken, IssueAccessTokenWithClaims, IssueTokenPair, IssueTokenPairWithClaims)
 - **Refresh token issuance** (IssueRefreshToken, IssueRefreshTokenWithClaims)
 - **Access token validation** with registered and custom claims extraction (ValidateAccessToken, ValidateAccessTokenWithClaims)
@@ -279,6 +281,8 @@ You've already verified identity and need **production-grade token machinery** f
 - **Lifecycle management** (Start/Shutdown/IsRunning) with graceful operations
 - **Background cleanup goroutines** with configurable interval and proper synchronization
 - **Service state management** ensuring tokens only issue when service is running
+- **OpenTelemetry distributed tracing** — `Tracer` field wires spans into all token operations; defaults to `NoOpTracer` for zero-config use
+- **Namespace labeling** — `Namespace` field propagates an opaque label through all logs, spans, and metric labels for multi-tenant and multi-instance deployments
 - **Comprehensive BDD test coverage** (153 tests covering lifecycle, issuance, validation, clock skew, custom claims, refresh, revocation, and introspection; ~87% statement coverage)
 
 **RefreshTokenStore** ✅
@@ -303,10 +307,6 @@ You've already verified identity and need **production-grade token machinery** f
   - Comprehensive context handling with cancellation propagation
   - Structured logging for audit trail
   - **154 total storage tests** (77 × 2 implementations)
-
-### 🚧 In Development (v0.4.0)
-
-- **OpenTelemetry / Distributed Tracing**: Tracing is now wired into all six components (`DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore`, `KeyManager`, `TokenManager`). Every constructor accepts an optional `Tracer` field — defaults to `NoOpTracer` for zero-config operation. `OtelTracer` is available for production use via `tracing.NewOtelTracer("scope")`. v0.4.0 is still in progress.
 
 ## Architecture Highlights
 
@@ -388,7 +388,7 @@ logger := yourCustomAdapter{}                         // Your own logger
 go get github.com/aetomala/jwtauth
 ```
 
-**Current Status**: Beta development. Not recommended for production use until v1.0.0 release.
+**Current Status**: v0.4.0 — production-quality, pre-v1.0. See the API Stability note above.
 
 ## Quick Start
 
@@ -518,7 +518,7 @@ func main() {
 }
 ```
 
-### TokenManager Usage (Beta)
+### TokenManager Usage
 
 ```go
 package main
@@ -720,6 +720,9 @@ and your `RefreshStore` to handle the complete authentication flow.
 | `KeyOverlapDuration` | `time.Duration` | Yes | - | Overlap period for zero-downtime rotation |
 | `Logger` | `logging.Logger` | No | `NoOpLogger` | Structured logger; defaults to no-op if nil |
 | `Metrics` | `metrics.Metrics` | No | `NoOpMetrics` | Metrics collector; defaults to no-op if nil |
+| `Tracer` | `tracing.Tracer` | No | `NoOpTracer` | OTel tracer; nil defaults to no-op |
+| `Namespace` | `string` | No | `""` | Opaque label on all logs, spans, and metric labels — empty disables |
+| `KeySize` | `int` | No | `2048` | RSA key size in bits (minimum 2048) |
 
 ### TokenManagerConfig
 
@@ -729,6 +732,8 @@ and your `RefreshStore` to handle the complete authentication flow.
 | `RefreshStore` | `storage.RefreshStore` | Yes | — | Persists refresh tokens |
 | `Logger` | `logging.Logger` | No | `NoOpLogger` | Structured logger; defaults to no-op if nil |
 | `Metrics` | `metrics.Metrics` | No | `NoOpMetrics` | Metrics collector; defaults to no-op if nil |
+| `Tracer` | `tracing.Tracer` | No | `NoOpTracer` | OTel tracer; nil defaults to no-op |
+| `Namespace` | `string` | No | `""` | Opaque label on all logs, spans, and metric labels — empty disables |
 | `AccessTokenDuration` | `time.Duration` | No | `15m` | Access token TTL |
 | `RefreshTokenDuration` | `time.Duration` | No | `30d` | Refresh token TTL |
 | `CleanupInterval` | `time.Duration` | No | `1h` | How often expired tokens are purged |
@@ -1165,7 +1170,7 @@ Tests follow **progressive phase-based development**:
 - ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with 22 pre-registered jwtauth metrics
 - ✅ KeyStore interface extracted from KeyManager — `DiskKeyStore` for single-instance, `RedisKeyStore` for distributed deployments
 
-### v0.3.0 (Current — Beta)
+### v0.3.0
 - ✅ TokenManager: Clock skew tolerance (`ClockSkew` field, `jwt.WithLeeway()` integration)
 - ✅ TokenManager: `ValidateAccessTokenWithClaims` — registered and custom claims returned after validation
 - ✅ Wire metrics into all components — KeyStore, Manager, TokenManager, RefreshStore with `error_type` label and context propagation
@@ -1176,13 +1181,15 @@ Tests follow **progressive phase-based development**:
 - ✅ Context cancellation guards in `GetJWKS` and `cleanupExpiredKeys`
 - ✅ Redis integration tests via miniredis covering distributed token operations end-to-end
 
-### v0.4.0 (In Progress)
+### v0.4.0
 - ✅ `pkg/tracing` interfaces scaffolded — `Tracer`, `Span`, `SpanOption`, `StatusCode`, `SpanKind`
 - ✅ `NoOpTracer` / `NoOpSpan` implementations (36 tests, race-detection clean)
 - ✅ `MockTracer` / `MockSpan` generated for dependency injection in component tests
 - ✅ Tracing wired into all six components — `DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore`, `KeyManager`, `TokenManager`
 - ✅ `OtelTracer` adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
-- 🚧 Additional v0.4.0 items in progress
+- ✅ `Namespace` field on `KeyManagerConfig` and `TokenManagerConfig` — propagates an opaque label through all logs, spans, and metrics
+- ✅ `KeyPrefix` field on `RedisKeyStoreConfig` and `RedisRefreshStoreConfig` — isolates Redis keys per instance for multi-tenant deployments
+- ✅ Cursor-based token enumeration: `ListTokens` and `ListTokensForUser` on `RefreshStore` and `TokenManager`
 
 ### v1.0.0 (Stable)
 - API stability guarantee
@@ -1268,8 +1275,8 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 
 ---
 
-**Status**: Beta (Active Development — v0.4.0 in progress)
-**Version**: v0.4.0-dev
-**Components**: KeyManager ✅ | TokenManager (Beta) 🟡 | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
+**Status**: v0.4.0 — production-quality, pre-v1.0 (see API Stability note at top)
+**Version**: v0.4.0
+**Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
 **Test Coverage**: 605 tests (KeyManager ~90%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%), all passing, race-detection enabled
-**Last Updated**: April 18, 2026
+**Last Updated**: April 29, 2026
