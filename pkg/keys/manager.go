@@ -505,6 +505,16 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		close(done)
 	}()
 
+	// Drain an already-expired context before entering the blocking select so
+	// that a pre-cancelled context reliably wins over a fast goroutine exit.
+	select {
+	case <-ctx.Done():
+		span.RecordError(ctx.Err())
+		span.SetStatus(tracing.StatusError, ctx.Err().Error())
+		return ctx.Err()
+	default:
+	}
+
 	select {
 	case <-done:
 		// Goroutine exited cleanly

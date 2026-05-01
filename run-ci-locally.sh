@@ -54,7 +54,7 @@ run_test "unit tests (race + coverage)" \
       pkg/keys pkg/tokens pkg/storage pkg/logging pkg/metrics pkg/tracing"
 
 run_test "integration tests — disk + memory + Redis distributed (miniredis)" \
-    "ginkgo -r --race --timeout=180s --randomize-all --tags=integration ./pkg/tokens/integration/..."
+    "ginkgo -r --race --timeout=180s --randomize-all --fail-on-pending --tags=integration ./pkg/tokens/integration/..."
 
 # Coverage report
 echo -e "\n${YELLOW}[INFO]${NC} Generating coverage report..."

@@ -27,7 +27,7 @@ type ManagerFactory func(cfg tokens.TokenManagerConfig) (mgr *tokens.Manager, km
 
 // RunTokenManagerIntegrationTests runs the full TokenManager behavioral contract suite
 // against the storage backend provided by factory. It is called once per backend
-// (DiskKeyStore+Memory, RedisKeyStore+Redis) and produces 10 specs each.
+// (DiskKeyStore+Memory, RedisKeyStore+Redis) and produces 16 specs each.
 func RunTokenManagerIntegrationTests(description string, factory ManagerFactory) {
 	Describe(description, func() {
 		var (
@@ -311,6 +311,81 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 				_, err = mgr.RefreshAccessToken(ctx, refreshToken)
 				Expect(err).To(Equal(tokens.ErrTokenRevoked))
 			}
+		})
+
+		It("should list all tokens and filter by user", func() {
+			_, err := mgr.IssueRefreshToken(ctx, "list-user-a")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = mgr.IssueRefreshToken(ctx, "list-user-a")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = mgr.IssueRefreshToken(ctx, "list-user-b")
+			Expect(err).NotTo(HaveOccurred())
+
+			allTokens, cursor, err := mgr.ListTokens(ctx, "", 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cursor).To(Equal(""))
+			Expect(len(allTokens)).To(Equal(3))
+
+			userATokens, cursor, err := mgr.ListTokensForUser(ctx, "list-user-a", "", 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cursor).To(Equal(""))
+			Expect(len(userATokens)).To(Equal(2))
+			for _, t := range userATokens {
+				Expect(t.UserID).To(Equal("list-user-a"))
+			}
+
+			userBTokens, cursor, err := mgr.ListTokensForUser(ctx, "list-user-b", "", 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cursor).To(Equal(""))
+			Expect(len(userBTokens)).To(Equal(1))
+			Expect(userBTokens[0].UserID).To(Equal("list-user-b"))
+		})
+
+		It("should preserve custom claims through issuance and validation", func() {
+			userID := "claims-user"
+
+			accessToken, err := mgr.IssueAccessTokenWithClaims(ctx, userID, tokens.CustomClaims{
+				"role": "admin",
+				"tier": "pro",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, customClaims, err := mgr.ValidateAccessTokenWithClaims(ctx, accessToken)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(customClaims["role"]).To(Equal("admin"))
+			Expect(customClaims["tier"]).To(Equal("pro"))
+
+			pairAccess, _, err := mgr.IssueTokenPairWithClaims(ctx, userID, tokens.CustomClaims{
+				"scope": "read",
+			}, tokens.CustomClaims{})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, pairClaims, err := mgr.ValidateAccessTokenWithClaims(ctx, pairAccess)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pairClaims["scope"]).To(Equal("read"))
+		})
+
+		It("should revoke individual tokens without affecting other sessions", func() {
+			userID := "individual-revoke-user"
+
+			token1, err := mgr.IssueRefreshToken(ctx, userID)
+			Expect(err).NotTo(HaveOccurred())
+			token2, err := mgr.IssueRefreshToken(ctx, userID)
+			Expect(err).NotTo(HaveOccurred())
+
+			metadata, err := mgr.IntrospectToken(ctx, token1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(metadata.TokenID).NotTo(BeEmpty())
+
+			err = mgr.RevokeRefreshToken(ctx, metadata.TokenID)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = mgr.RefreshAccessToken(ctx, token1)
+			Expect(err).To(Equal(tokens.ErrTokenRevoked))
+
+			newAccess, err := mgr.RefreshAccessToken(ctx, token2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(newAccess).NotTo(BeEmpty())
 		})
 
 		It("should return accurate key info after Start", func() {
