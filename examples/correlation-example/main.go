@@ -15,7 +15,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tokens"
@@ -28,12 +28,12 @@ func main() {
 	logger := logging.NewCorrelationJSONLogger(slog.LevelDebug)
 
 	// ===== KeyManager =====
-	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, nil)
+	ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger})
 	if err != nil {
 		slog.Error("failed to create key store", "error", err)
 		os.Exit(1)
 	}
-	km, err := keymanager.NewManager(keymanager.ManagerConfig{
+	km, err := keys.NewManager(keys.KeyManagerConfig{
 		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		KeySize:             2048,
@@ -45,8 +45,8 @@ func main() {
 	}
 
 	// ===== TokenManager =====
-	store := storage.NewMemoryRefreshStore(logger, nil)
-	mgr, err := tokens.NewManager(tokens.ManagerConfig{
+	store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger})
+	mgr, err := tokens.NewManager(tokens.TokenManagerConfig{
 		KeyManager:           km,
 		RefreshStore:         store,
 		AccessTokenDuration:  15 * time.Minute,

@@ -77,6 +77,17 @@ type Logger interface {
 	// Example:
 	//   Error("rotation failed", "error", err, "keyID", keyID)
 	Error(msg string, keysAndValues ...interface{})
+
+	// With returns a new Logger with the given key-value pairs pre-bound to every
+	// subsequent log call. Calls to With are additive — calling With on an already
+	// enriched logger accumulates fields rather than replacing them.
+	//
+	// keysAndValues must be alternating keys (string) and values (any type),
+	// following the same convention as the log methods.
+	//
+	// Implementations that discard all log output (e.g. NoOpLogger) may return
+	// the receiver unchanged.
+	With(keysAndValues ...interface{}) Logger
 }
 
 // Ensure interfaces are implemented at compile time

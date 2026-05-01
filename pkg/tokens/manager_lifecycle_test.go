@@ -59,29 +59,12 @@ var _ = Describe("TokenManager", func() {
 		ctrl.Finish() // Verify all expectations were met
 	})
 
-	createService := func() *tokens.Manager {
-		config := tokens.ManagerConfig{
-			KeyManager:           mockKM,
-			RefreshStore:         mockStore,
-			Logger:               mockLogger,
-			AccessTokenDuration:  15 * time.Minute,
-			RefreshTokenDuration: 30 * 24 * time.Hour,
-			CleanupInterval:      100 * time.Millisecond,
-			Issuer:               "test-issuer",
-			Audience:             []string{"test-audience"},
-		}
-
-		mgr, err := tokens.NewManager(config)
-		Expect(err).NotTo(HaveOccurred())
-		return mgr
-	}
-
 	// ========================================================================
 	// START TESTS
 	// ========================================================================
 	Describe("Start", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 		})
 
 		It("should start successfully", func() {
@@ -171,11 +154,11 @@ var _ = Describe("TokenManager", func() {
 		It("should fail if KeyManager fails to start", func() {
 			mockKM.EXPECT().
 				Start(gomock.Any()).
-				Return(errors.New("keymanager start failed"))
+				Return(errors.New("key manager start failed"))
 
 			err := service.Start(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("keymanager start failed"))
+			Expect(err.Error()).To(ContainSubstring("key manager start failed"))
 			Expect(service.IsRunning()).To(BeFalse())
 		})
 
@@ -219,7 +202,7 @@ var _ = Describe("TokenManager", func() {
 	// ========================================================================
 	Describe("Shutdown", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 
 			// Start the service
 			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
@@ -335,11 +318,43 @@ var _ = Describe("TokenManager", func() {
 		It("should return error if KeyManager fails to shutdown", func() {
 			mockKM.EXPECT().
 				Shutdown(gomock.Any()).
-				Return(errors.New("keymanager shutdown failed"))
+				Return(errors.New("key manager shutdown failed"))
 
 			err := service.Shutdown(ctx)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("keymanager shutdown failed"))
+			Expect(err.Error()).To(ContainSubstring("key manager shutdown failed"))
+		})
+
+		It("should return context error when shutdown context is pre-cancelled", func() {
+			// Allow cleanup if the ticker fires before Shutdown is called.
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
+
+			cancelledCtx, cancel := context.WithCancel(context.Background())
+			cancel() // immediately cancelled
+
+			err := service.Shutdown(cancelledCtx)
+			Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+			// AfterEach: IsRunning() is false — Shutdown block skipped, ctrl.Finish() is safe.
+		})
+
+		It("should handle concurrent Shutdown calls without panicking", func() {
+			// CompareAndSwap prevents double-close of shutdownChan; verify concurrency is safe.
+			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil).AnyTimes()
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
+
+			var wg sync.WaitGroup
+			for i := 0; i < 5; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					defer GinkgoRecover()
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = service.Shutdown(shutdownCtx)
+				}()
+			}
+			wg.Wait()
+			Expect(service.IsRunning()).To(BeFalse())
 		})
 	})
 
@@ -348,7 +363,7 @@ var _ = Describe("TokenManager", func() {
 	// ========================================================================
 	Describe("IsRunning", func() {
 		BeforeEach(func() {
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 		})
 
 		It("should return false initially", func() {
@@ -400,7 +415,7 @@ var _ = Describe("TokenManager", func() {
 			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil).AnyTimes()
 			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
 
-			service = createService()
+			service = newTestManager(mockKM, mockStore, mockLogger)
 			// Start
 			err := service.Start(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -419,6 +434,78 @@ var _ = Describe("TokenManager", func() {
 			// Operations should fail after shutdown
 			_, err = service.IssueAccessToken(ctx, "user-456")
 			Expect(err).To(Equal(tokens.ErrManagerNotRunning))
+		})
+
+		It("should support restart (Start → Shutdown → Start → Shutdown)", func() {
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil).Times(2)
+			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil).Times(2)
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
+
+			service = newTestManager(mockKM, mockStore, mockLogger)
+
+			// First cycle
+			Expect(service.Start(ctx)).To(Succeed())
+			Expect(service.IsRunning()).To(BeTrue())
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer shutdownCancel()
+			Expect(service.Shutdown(shutdownCtx)).To(Succeed())
+			Expect(service.IsRunning()).To(BeFalse())
+
+			// Second cycle
+			Expect(service.Start(ctx)).To(Succeed())
+			Expect(service.IsRunning()).To(BeTrue())
+			shutdownCtx2, shutdownCancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+			defer shutdownCancel2()
+			Expect(service.Shutdown(shutdownCtx2)).To(Succeed())
+			Expect(service.IsRunning()).To(BeFalse())
+		})
+
+		It("should run cleanup goroutine after restart", func() {
+			// Without the shutdownChan recreation fix, IsRunning() returns true after
+			// the second Start but the cleanup goroutine exits immediately because
+			// shutdownChan is already closed. This spec detects that silent failure.
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil).Times(2)
+			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil).Times(2)
+
+			service = newTestManager(mockKM, mockStore, mockLogger)
+
+			// Single DoAndReturn expectation for both cycles — gomock FIFO means a
+			// second AnyTimes registration would never be reached.
+			cleanupCalled := make(chan struct{}, 100)
+			mockStore.EXPECT().Cleanup(gomock.Any()).
+				DoAndReturn(func(context.Context) (int, error) {
+					select {
+					case cleanupCalled <- struct{}{}:
+					default:
+					}
+					return 0, nil
+				}).AnyTimes()
+
+			// First cycle
+			Expect(service.Start(ctx)).To(Succeed())
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			Expect(service.Shutdown(shutdownCtx)).To(Succeed())
+			shutdownCancel()
+
+			// Drain any calls from the first cycle before restarting.
+			draining := true
+			for draining {
+				select {
+				case <-cleanupCalled:
+				default:
+					draining = false
+				}
+			}
+
+			// Second start — verify the cleanup goroutine is alive.
+			Expect(service.Start(ctx)).To(Succeed())
+
+			// If bug is present: cleanupCalled never receives (goroutine exits immediately).
+			Eventually(cleanupCalled, 2*time.Second).Should(Receive())
+
+			shutdownCtx2, shutdownCancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+			Expect(service.Shutdown(shutdownCtx2)).To(Succeed())
+			shutdownCancel2()
 		})
 	})
 })

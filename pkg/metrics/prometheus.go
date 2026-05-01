@@ -17,7 +17,7 @@ import (
 type PrometheusMetrics struct {
 	// ===== Observability =====
 	registry *prometheus.Registry
-	logger   logging.Logger // Optional; nil disables logging
+	logger   logging.Logger // never nil; defaults to NoOpLogger
 
 	// ===== Counters =====
 	counters   map[string]*prometheus.CounterVec
@@ -35,9 +35,9 @@ type PrometheusMetrics struct {
 // PrometheusConfig holds configuration for a PrometheusMetrics instance.
 // All fields have sensible defaults and may be left at their zero values.
 type PrometheusConfig struct {
-	Namespace string             // Prepended to all metric names. Defaults to "jwtauth".
+	Namespace string               // Prepended to all metric names. Defaults to "jwtauth".
 	Registry  *prometheus.Registry // Registry to register metrics into. If nil, a new isolated registry is created.
-	Logger    logging.Logger     // Optional; nil disables logging.
+	Logger    logging.Logger       // Optional; nil defaults to NoOpLogger.
 }
 
 // NewPrometheusMetrics returns a new PrometheusMetrics with all metrics
@@ -49,9 +49,11 @@ func NewPrometheusMetrics(config PrometheusConfig) *PrometheusMetrics {
 	if config.Namespace == "" {
 		config.Namespace = "jwtauth"
 	}
-
 	if config.Registry == nil {
 		config.Registry = prometheus.NewRegistry()
+	}
+	if config.Logger == nil {
+		config.Logger = &logging.NoOpLogger{}
 	}
 
 	// ===== STEP 2: Construct =====
@@ -75,36 +77,54 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "tokens_issued_total",
 		"Total number of tokens issued",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerCounter(namespace, "tokens_validated_total",
 		"Total number of tokens validated",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerCounter(namespace, "tokens_refreshed_total",
 		"Total number of tokens refreshed",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerCounter(namespace, "tokens_revoked_total",
 		"Total number of tokens revoked",
-		[]string{"operation", "status"})
+		[]string{"operation", "status", "namespace"})
 
 	pm.registerCounter(namespace, "tokens_introspected_total",
 		"Total number of token introspections",
-		[]string{"status"})
+		[]string{"status", "namespace"})
 
 	pm.registerCounter(namespace, "operations_total",
 		"Total number of operations",
-		[]string{"operation", "status"})
+		[]string{"operation", "status", "namespace"})
 
 	pm.registerHistogram(namespace, "operation_duration_seconds",
 		"Duration of operations in seconds",
-		[]string{"operation"},
+		[]string{"operation", "namespace"},
+		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
+
+	pm.registerCounter(namespace, "tokens_list_total",
+		"Total number of list-tokens operations on the token manager",
+		[]string{"namespace", "error_type"})
+
+	pm.registerHistogram(namespace, "tokens_list_duration_seconds",
+		"Duration of list-tokens operations on the token manager in seconds",
+		[]string{"namespace"},
+		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
+
+	pm.registerCounter(namespace, "tokens_list_for_user_total",
+		"Total number of list-tokens-for-user operations on the token manager",
+		[]string{"namespace", "error_type"})
+
+	pm.registerHistogram(namespace, "tokens_list_for_user_duration_seconds",
+		"Duration of list-tokens-for-user operations on the token manager in seconds",
+		[]string{"namespace"},
 		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
 
 	pm.registerGauge(namespace, "active_tokens",
 		"Number of active tokens",
-		[]string{"storage_backend"})
+		[]string{"storage_backend", "namespace"})
 
 	pm.registerGauge(namespace, "service_running",
 		"Whether the service is running (1) or stopped (0)",
@@ -114,53 +134,71 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "storage_operations_total",
 		"Total number of storage operations",
-		[]string{"operation", "status", "error_type", "storage_backend"})
+		[]string{"operation", "status", "error_type", "storage_backend", "namespace"})
 
 	pm.registerCounter(namespace, "storage_cleanup_tokens_removed_total",
 		"Total number of tokens removed during cleanup",
-		[]string{"storage_backend"})
+		[]string{"storage_backend", "namespace"})
 
 	pm.registerHistogram(namespace, "storage_operation_duration_seconds",
 		"Duration of storage operations in seconds",
-		[]string{"operation", "storage_backend"},
+		[]string{"operation", "storage_backend", "namespace"},
 		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
 
 	pm.registerGauge(namespace, "storage_tokens_count",
 		"Number of tokens in storage",
-		[]string{"storage_backend"})
+		[]string{"storage_backend", "namespace"})
+
+	pm.registerCounter(namespace, "storage_list_tokens_total",
+		"Total number of list-tokens operations",
+		[]string{"storage_backend", "namespace", "error_type"})
+
+	pm.registerHistogram(namespace, "storage_list_tokens_duration_seconds",
+		"Duration of list-tokens operations in seconds",
+		[]string{"storage_backend", "namespace"},
+		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
+
+	pm.registerCounter(namespace, "storage_list_tokens_for_user_total",
+		"Total number of list-tokens-for-user operations",
+		[]string{"storage_backend", "namespace", "error_type"})
+
+	pm.registerHistogram(namespace, "storage_list_tokens_for_user_duration_seconds",
+		"Duration of list-tokens-for-user operations in seconds",
+		[]string{"storage_backend", "namespace"},
+		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
 
 	// ===== KeyStore Metrics =====
 
 	pm.registerCounter(namespace, "keystore_operations_total",
 		"Total number of key store operations",
-		[]string{"operation", "status", "error_type", "storage_backend"})
+		[]string{"operation", "status", "error_type", "storage_backend", "namespace"})
 
 	pm.registerHistogram(namespace, "keystore_operation_duration_seconds",
 		"Duration of key store operations in seconds",
-		[]string{"operation", "storage_backend"},
+		[]string{"operation", "storage_backend", "namespace"},
 		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
 
 	pm.registerGauge(namespace, "keystore_keys_count",
 		"Number of keys in the key store",
-		[]string{"storage_backend"})
+		[]string{"storage_backend", "namespace"})
 
 	// ===== KeyManager Metrics =====
 
 	pm.registerCounter(namespace, "key_rotations_total",
 		"Total number of key rotations",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerCounter(namespace, "key_signing_operations_total",
 		"Total number of key signing operations",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerCounter(namespace, "key_validation_operations_total",
 		"Total number of key validation operations",
-		[]string{"status", "error_type"})
+		[]string{"status", "error_type", "namespace"})
 
 	pm.registerHistogram(namespace, "key_operation_duration_seconds",
 		"Duration of key operations in seconds",
-		[]string{"operation"},
+		[]string{"operation", "namespace"},
 		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05})
 
 	pm.registerGauge(namespace, "key_current_version",
@@ -169,7 +207,7 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerGauge(namespace, "key_active_versions_count",
 		"Number of active key versions",
-		[]string{})
+		[]string{"namespace"})
 }
 
 // registerCounter creates a CounterVec with the given namespace, name, help
@@ -241,18 +279,14 @@ func (pm *PrometheusMetrics) AddCounter(name string, value float64, labels map[s
 	pm.countersMu.RUnlock()
 
 	if !exists {
-		if pm.logger != nil {
-			pm.logger.Warn("counter metric not registered - skipping", "metric", name, "value", value)
-		}
+		pm.logger.Warn("counter metric not registered - skipping", "metric", name, "value", value)
 		return
 	}
 
 	// ===== STEP 2: Resolve Label Set =====
 	c, err := counter.GetMetricWith(labels)
 	if err != nil {
-		if pm.logger != nil {
-			pm.logger.Warn("invalid labels for counter - skipping", "metric", name, "error", err)
-		}
+		pm.logger.Warn("invalid labels for counter - skipping", "metric", name, "error", err)
 		return
 	}
 
@@ -271,18 +305,14 @@ func (pm *PrometheusMetrics) SetGauge(name string, value float64, labels map[str
 	pm.gaugesMu.RUnlock()
 
 	if !exists {
-		if pm.logger != nil {
-			pm.logger.Warn("gauge metric not registered - skipping", "metric", name)
-		}
+		pm.logger.Warn("gauge metric not registered - skipping", "metric", name)
 		return
 	}
 
 	// ===== STEP 2: Resolve Label Set =====
 	g, err := gauge.GetMetricWith(labels)
 	if err != nil {
-		if pm.logger != nil {
-			pm.logger.Warn("invalid labels for gauge - skipping", "metric", name, "error", err)
-		}
+		pm.logger.Warn("invalid labels for gauge - skipping", "metric", name, "error", err)
 		return
 	}
 
@@ -302,18 +332,14 @@ func (pm *PrometheusMetrics) RecordHistogram(name string, value float64, labels 
 	pm.histogramsMu.RUnlock()
 
 	if !exists {
-		if pm.logger != nil {
-			pm.logger.Warn("histogram metric not registered - skipping", "metric", name)
-		}
+		pm.logger.Warn("histogram metric not registered - skipping", "metric", name)
 		return
 	}
 
 	// ===== STEP 2: Resolve Label Set =====
 	h, err := histogram.GetMetricWith(labels)
 	if err != nil {
-		if pm.logger != nil {
-			pm.logger.Warn("invalid labels for histogram - skipping", "metric", name, "error", err)
-		}
+		pm.logger.Warn("invalid labels for histogram - skipping", "metric", name, "error", err)
 		return
 	}
 

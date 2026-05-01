@@ -1,6 +1,7 @@
 package tokens
 
 import (
+	"errors"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -122,6 +123,14 @@ type Claims struct {
 // 5. Scopes (OAuth2-style):
 //    "scope": "read:users write:posts"
 
+// CustomClaims holds application-defined key-value pairs embedded into a JWT
+// access token or stored alongside a refresh token. Reserved JWT field names
+// (sub, iss, aud, exp, nbf, iat, jti) are silently dropped at issuance time
+// to prevent caller-controlled claim injection. All methods are safe for
+// concurrent use when the map is not mutated after being passed to an issuance
+// method.
+type CustomClaims map[string]interface{}
+
 // ============================================================================
 // HELPER TYPES
 // ============================================================================
@@ -153,6 +162,9 @@ type TokenMetadata struct {
 	// Scope contains OAuth2 scopes if present
 	Scope string `json:"scope,omitempty"`
 
+	// TokenID is the unique identifier for this token (jti claim), per RFC 7662.
+	TokenID string `json:"jti,omitempty"`
+
 	// Custom contains any custom claims
 	Custom map[string]interface{} `json:"custom,omitempty"`
 }
@@ -163,27 +175,14 @@ type TokenMetadata struct {
 
 var (
 	// ErrTokenExpired indicates the token has passed its expiration time
-	ErrTokenExpired = NewTokenError("token has expired")
+	ErrTokenExpired = errors.New("token has expired")
 
 	// ErrTokenNotYetValid indicates the token's nbf (not before) time hasn't been reached
-	ErrTokenNotYetValid = NewTokenError("token not yet valid")
+	ErrTokenNotYetValid = errors.New("token not yet valid")
 
 	// ErrInvalidAudience indicates the token audience doesn't match
-	ErrInvalidAudience = NewTokenError("invalid token audience")
+	ErrInvalidAudience = errors.New("invalid token audience")
 
 	// ErrInvalidIssuer indicates the token issuer doesn't match
-	ErrInvalidIssuer = NewTokenError("invalid token issuer")
+	ErrInvalidIssuer = errors.New("invalid token issuer")
 )
-
-// TokenError represents a token validation error
-type TokenError struct {
-	message string
-}
-
-func (e *TokenError) Error() string {
-	return e.message
-}
-
-func NewTokenError(message string) *TokenError {
-	return &TokenError{message: message}
-}

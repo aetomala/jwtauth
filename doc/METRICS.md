@@ -171,6 +171,48 @@ Identifies which RefreshStore or KeyStore implementation is recording the metric
 - **Labels**: none
 - **Description**: Number of key versions currently loaded in the KeyManager (signing key + overlap keys). Should always be ≥ 1. Alert immediately on `== 0`.
 
+### Custom Gauges via `GetCurrentKeyInfo`
+
+The built-in metrics above cover rotation counts and operation latency. For time-based key health gauges, drive them from `GetCurrentKeyInfo` in a background collection loop:
+
+```go
+import (
+    "github.com/aetomala/jwtauth/pkg/keys"
+    "github.com/prometheus/client_golang/prometheus"
+)
+
+var (
+    keyAgeSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "jwtauth_key_age_seconds",
+        Help: "Age of the current signing key in seconds.",
+    })
+    rotationScheduledSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "jwtauth_rotation_scheduled_seconds",
+        Help: "Seconds until the current signing key is scheduled to rotate.",
+    })
+    keyValid = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "jwtauth_key_valid",
+        Help: "1 if the current signing key is valid, 0 if it has expired.",
+    })
+)
+
+func collectKeyMetrics(ctx context.Context, km *keys.Manager) {
+    info, err := km.GetCurrentKeyInfo(ctx)
+    if err != nil {
+        return
+    }
+    keyAgeSeconds.Set(time.Since(info.CreatedAt).Seconds())
+    rotationScheduledSeconds.Set(time.Until(info.RotateAt).Seconds())
+    if info.IsValid {
+        keyValid.Set(1)
+    } else {
+        keyValid.Set(0)
+    }
+}
+```
+
+See `examples/prometheus-metrics/` for a complete runnable example.
+
 ---
 
 ## PromQL Cookbook

@@ -39,24 +39,24 @@ parsed, _ := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) 
 
 ```go
 import (
-    "github.com/aetomala/jwtauth/pkg/keymanager"
+    "github.com/aetomala/jwtauth/pkg/keys"
     "github.com/aetomala/jwtauth/pkg/storage"
     "github.com/aetomala/jwtauth/pkg/tokens"
 )
 
 // Step 1: Create KeyManager (handles keys + rotation)
-ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
-km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048})
+km, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour,
     KeyOverlapDuration:  1 * time.Hour,
 })
 
 // Step 2: Create RefreshStore (handles refresh tokens)
-refreshStore := storage.NewMemoryRefreshStore(nil, nil)
+refreshStore, _ := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{})
 
 // Step 3: Create TokenManager (coordinates everything)
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     KeyManager:           km,
     RefreshStore:         refreshStore,
     AccessTokenDuration:  15 * time.Minute,
@@ -281,7 +281,7 @@ mgr.RevokeAllUserTokens(ctx, userID)
 
 **After (zero-downtime):**
 ```go
-km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+km, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyStore:            ks,
     KeyRotationInterval: 30 * 24 * time.Hour, // Auto-rotate every 30 days
     KeyOverlapDuration:  1 * time.Hour,        // Old key valid for 1 hour
@@ -302,8 +302,8 @@ km, _ := keymanager.NewManager(keymanager.ManagerConfig{
 **Development/Single-Instance:**
 ```go
 // Use in-memory storage
-ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, nil, nil)
-refreshStore := storage.NewMemoryRefreshStore(nil, nil)
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048})
+refreshStore, _ := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{})
 ```
 
 **Production/Multi-Instance:**
@@ -314,10 +314,10 @@ import "github.com/redis/go-redis/v9"
 client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
 
 // Shared key storage
-ks, _ := keymanager.NewRedisKeyStore(client, logger, metrics)
+ks, _ := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client, Logger: logger, Metrics: metrics})
 
 // Shared refresh token storage
-refreshStore := storage.NewRedisRefreshStore(client, logger, metrics)
+refreshStore, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client, Logger: logger, Metrics: metrics})
 ```
 
 **No code changes** — just swap the storage backend.

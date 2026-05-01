@@ -4,13 +4,14 @@ package integration
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
 
@@ -22,16 +23,16 @@ func TestIntegration(t *testing.T) {
 // ManagerFactory creates a configured but not-yet-started TokenManager along with its
 // KeyManager and a cleanup function. The caller is responsible for calling Start and
 // Shutdown on the returned manager, and calling cleanup after Shutdown.
-type ManagerFactory func(cfg tokens.ManagerConfig) (mgr *tokens.Manager, km *keymanager.Manager, cleanup func())
+type ManagerFactory func(cfg tokens.TokenManagerConfig) (mgr *tokens.Manager, km *keys.Manager, cleanup func())
 
 // RunTokenManagerIntegrationTests runs the full TokenManager behavioral contract suite
 // against the storage backend provided by factory. It is called once per backend
-// (DiskKeyStore+Memory, RedisKeyStore+Redis) and produces 10 specs each.
+// (DiskKeyStore+Memory, RedisKeyStore+Redis) and produces 16 specs each.
 func RunTokenManagerIntegrationTests(description string, factory ManagerFactory) {
 	Describe(description, func() {
 		var (
 			mgr    *tokens.Manager
-			km     *keymanager.Manager
+			km     *keys.Manager
 			ctx    context.Context
 			cancel context.CancelFunc
 		)
@@ -40,7 +41,7 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 			ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
 
 			var cleanup func()
-			mgr, km, cleanup = factory(tokens.ManagerConfig{
+			mgr, km, cleanup = factory(tokens.TokenManagerConfig{
 				AccessTokenDuration:  5 * time.Minute,
 				RefreshTokenDuration: 1 * time.Hour,
 				CleanupInterval:      5 * time.Minute,
@@ -155,7 +156,7 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 		})
 
 		It("should reject operations when service is not running", func() {
-			mgr2, _, cleanup2 := factory(tokens.ManagerConfig{
+			mgr2, _, cleanup2 := factory(tokens.TokenManagerConfig{
 				AccessTokenDuration:  5 * time.Minute,
 				RefreshTokenDuration: 1 * time.Hour,
 				Issuer:               "integration-test",
@@ -224,7 +225,7 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 		It("should clean up expired tokens", func() {
 			userID := "cleanup-user"
 
-			mgr2, _, cleanup2 := factory(tokens.ManagerConfig{
+			mgr2, _, cleanup2 := factory(tokens.TokenManagerConfig{
 				AccessTokenDuration:  5 * time.Minute,
 				RefreshTokenDuration: 100 * time.Millisecond,
 				CleanupInterval:      10 * time.Second,
@@ -274,12 +275,12 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 
 			deviceRefreshTokens := make(map[string]string)
 			for deviceName, deviceID := range devices {
-				metadata := map[string]interface{}{
+				claims := tokens.CustomClaims{
 					"device_name": deviceName,
 					"device_id":   deviceID,
 					"ip_address":  "192.168.1.100",
 				}
-				token, err := mgr.IssueRefreshTokenWithMetadata(ctx, userID, metadata)
+				token, err := mgr.IssueRefreshTokenWithClaims(ctx, userID, claims)
 				Expect(err).NotTo(HaveOccurred())
 				deviceRefreshTokens[deviceName] = token
 			}
@@ -312,6 +313,137 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 			}
 		})
 
+		It("should list all tokens and filter by user", func() {
+			_, err := mgr.IssueRefreshToken(ctx, "list-user-a")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = mgr.IssueRefreshToken(ctx, "list-user-a")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = mgr.IssueRefreshToken(ctx, "list-user-b")
+			Expect(err).NotTo(HaveOccurred())
+
+			allTokens, cursor, err := mgr.ListTokens(ctx, "", 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cursor).To(Equal(""))
+			Expect(len(allTokens)).To(Equal(3))
+
+			userATokens, cursor, err := mgr.ListTokensForUser(ctx, "list-user-a", "", 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cursor).To(Equal(""))
+			Expect(len(userATokens)).To(Equal(2))
+			for _, t := range userATokens {
+				Expect(t.UserID).To(Equal("list-user-a"))
+			}
+
+			userBTokens, cursor, err := mgr.ListTokensForUser(ctx, "list-user-b", "", 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cursor).To(Equal(""))
+			Expect(len(userBTokens)).To(Equal(1))
+			Expect(userBTokens[0].UserID).To(Equal("list-user-b"))
+		})
+
+		It("should preserve custom claims through issuance and validation", func() {
+			userID := "claims-user"
+
+			accessToken, err := mgr.IssueAccessTokenWithClaims(ctx, userID, tokens.CustomClaims{
+				"role": "admin",
+				"tier": "pro",
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, customClaims, err := mgr.ValidateAccessTokenWithClaims(ctx, accessToken)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(customClaims["role"]).To(Equal("admin"))
+			Expect(customClaims["tier"]).To(Equal("pro"))
+
+			pairAccess, _, err := mgr.IssueTokenPairWithClaims(ctx, userID, tokens.CustomClaims{
+				"scope": "read",
+			}, tokens.CustomClaims{})
+			Expect(err).NotTo(HaveOccurred())
+
+			_, pairClaims, err := mgr.ValidateAccessTokenWithClaims(ctx, pairAccess)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pairClaims["scope"]).To(Equal("read"))
+		})
+
+		It("should revoke individual tokens without affecting other sessions", func() {
+			userID := "individual-revoke-user"
+
+			token1, err := mgr.IssueRefreshToken(ctx, userID)
+			Expect(err).NotTo(HaveOccurred())
+			token2, err := mgr.IssueRefreshToken(ctx, userID)
+			Expect(err).NotTo(HaveOccurred())
+
+			metadata, err := mgr.IntrospectToken(ctx, token1)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(metadata.TokenID).NotTo(BeEmpty())
+
+			err = mgr.RevokeRefreshToken(ctx, metadata.TokenID)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = mgr.RefreshAccessToken(ctx, token1)
+			Expect(err).To(Equal(tokens.ErrTokenRevoked))
+
+			newAccess, err := mgr.RefreshAccessToken(ctx, token2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(newAccess).NotTo(BeEmpty())
+		})
+
+		It("should return accurate key info after Start", func() {
+			info, err := km.GetCurrentKeyInfo(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.KeyID).NotTo(BeEmpty())
+			Expect(info.IsCurrent).To(BeTrue())
+			Expect(info.IsValid).To(BeTrue())
+			Expect(info.Algorithm).To(Equal("RS256"))
+			Expect(info.KeySizeBits).To(Equal(2048))
+			Expect(info.CreatedAt).To(BeTemporally("<=", time.Now()))
+			Expect(info.RotateAt).To(BeTemporally(">", time.Now()))
+		})
+
+		It("should reflect the new key after rotation and keep old key accessible via GetKeyInfo", func() {
+			before, err := km.GetCurrentKeyInfo(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(km.RotateKeys(ctx)).To(Succeed())
+
+			after, err := km.GetCurrentKeyInfo(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after.KeyID).NotTo(Equal(before.KeyID))
+			Expect(after.IsCurrent).To(BeTrue())
+			Expect(after.IsValid).To(BeTrue())
+
+			old, err := km.GetKeyInfo(ctx, before.KeyID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(old.KeyID).To(Equal(before.KeyID))
+			Expect(old.IsCurrent).To(BeFalse())
+		})
+
+		It("should allow concurrent GetCurrentKeyInfo calls during rotation without data races", func() {
+			const numReaders = 20
+			var wg sync.WaitGroup
+
+			for i := 0; i < numReaders; i++ {
+				wg.Add(1)
+				go func() {
+					defer GinkgoRecover()
+					defer wg.Done()
+					info, err := km.GetCurrentKeyInfo(ctx)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(info.KeyID).NotTo(BeEmpty())
+					Expect(info.IsCurrent).To(BeTrue())
+				}()
+			}
+
+			wg.Add(1)
+			go func() {
+				defer GinkgoRecover()
+				defer wg.Done()
+				Expect(km.RotateKeys(ctx)).To(Succeed())
+			}()
+
+			wg.Wait()
+		})
+
 		It("should reject invalid, expired, and revoked refresh tokens", func() {
 			validUserID := "valid-user"
 
@@ -321,7 +453,7 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 			_, err = mgr.RefreshAccessToken(ctx, "not-a-valid-token")
 			Expect(err).To(HaveOccurred())
 
-			mgr2, _, cleanup2 := factory(tokens.ManagerConfig{
+			mgr2, _, cleanup2 := factory(tokens.TokenManagerConfig{
 				AccessTokenDuration:  5 * time.Minute,
 				RefreshTokenDuration: 50 * time.Millisecond,
 				Issuer:               "integration-test",

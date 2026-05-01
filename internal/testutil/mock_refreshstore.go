@@ -57,6 +57,52 @@ func (mr *MockRefreshStoreMockRecorder) Cleanup(ctx any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cleanup", reflect.TypeOf((*MockRefreshStore)(nil).Cleanup), ctx)
 }
 
+// ListTokens mocks base method.
+func (m *MockRefreshStore) ListTokens(ctx context.Context, cursor string, count int) ([]*storage.RefreshToken, string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListTokens", ctx, cursor, count)
+	ret0, _ := ret[0].([]*storage.RefreshToken)
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListTokens indicates an expected call of ListTokens.
+func (mr *MockRefreshStoreMockRecorder) ListTokens(ctx, cursor, count any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokens", reflect.TypeOf((*MockRefreshStore)(nil).ListTokens), ctx, cursor, count)
+}
+
+// ListTokensForUser mocks base method.
+func (m *MockRefreshStore) ListTokensForUser(ctx context.Context, userID, cursor string, count int) ([]*storage.RefreshToken, string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListTokensForUser", ctx, userID, cursor, count)
+	ret0, _ := ret[0].([]*storage.RefreshToken)
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListTokensForUser indicates an expected call of ListTokensForUser.
+func (mr *MockRefreshStoreMockRecorder) ListTokensForUser(ctx, userID, cursor, count any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokensForUser", reflect.TypeOf((*MockRefreshStore)(nil).ListTokensForUser), ctx, userID, cursor, count)
+}
+
+// Namespace mocks base method.
+func (m *MockRefreshStore) Namespace() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Namespace")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// Namespace indicates an expected call of Namespace.
+func (mr *MockRefreshStoreMockRecorder) Namespace() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Namespace", reflect.TypeOf((*MockRefreshStore)(nil).Namespace))
+}
+
 // Retrieve mocks base method.
 func (m *MockRefreshStore) Retrieve(ctx context.Context, tokenID string) (*storage.RefreshToken, error) {
 	m.ctrl.T.Helper()

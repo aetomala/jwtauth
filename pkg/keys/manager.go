@@ -1,4 +1,4 @@
-// Package keymanager provides zero-downtime RSA key rotation for JWT signing.
+// Package keys provides zero-downtime RSA key rotation for JWT signing.
 //
 // KeyManager generates RSA key pairs, rotates them on a configurable schedule, and
 // maintains an overlap period where both old and new keys remain valid. This enables
@@ -22,13 +22,13 @@
 // Example usage:
 //
 //	// Create a KeyStore (choose based on deployment)
-//	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, metrics)
+//	ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: metrics})
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //
 //	// Create KeyManager
-//	config := keymanager.ManagerConfig{
+//	config := keys.KeyManagerConfig{
 //	    KeyStore:            ks,
 //	    KeyRotationInterval: 30 * 24 * time.Hour, // 30 days
 //	    KeyOverlapDuration:  1 * time.Hour,        // 1 hour overlap
@@ -36,7 +36,7 @@
 //	    Metrics:             metrics,              // Optional
 //	}
 //
-//	mgr, err := keymanager.NewManager(config)
+//	mgr, err := keys.NewManager(config)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -64,7 +64,27 @@
 //	if err := mgr.RotateKeys(ctx); err != nil {
 //	    log.Fatal(err)
 //	}
-package keymanager
+//
+// ## Key Inspection
+//
+// GetCurrentKeyInfo and GetKeyInfo expose key metadata — creation time, estimated
+// rotation time, expiry, key size, and validity — without returning private key
+// material. Suitable for health check endpoints, Prometheus gauges, and admin APIs:
+//
+//	info, err := mgr.GetCurrentKeyInfo(ctx)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	fmt.Printf("Current key: %s\n", info.KeyID)
+//	fmt.Printf("Key age:     %s\n", time.Since(info.CreatedAt))
+//	fmt.Printf("Rotates at:  %s\n", info.RotateAt.Format(time.RFC3339))
+//
+// Use cases:
+//   - /health/keys endpoints showing rotation schedule
+//   - Prometheus gauges (key age, time-until-rotation, validity)
+//   - Debugging token validation failures against a specific kid
+//   - Admin dashboards displaying key state
+package keys
 
 import (
 	"context"
@@ -81,6 +101,7 @@ import (
 
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
+	"github.com/aetomala/jwtauth/pkg/tracing"
 	"github.com/google/uuid"
 )
 
@@ -99,14 +120,16 @@ const (
 // for concurrent use.
 type Manager struct {
 	// ===== Configuration =====
-	config ManagerConfig // Configuration settings (key store, intervals, key size, logger)
+	config KeyManagerConfig // Configuration settings (key store, intervals, key size, logger)
 
 	// ===== Key Cache =====
 	keys         map[string]*KeyPair // keyID -> KeyPair; all keys (current + historical)
 	currentKeyID string              // ID of the key currently used for signing
 
 	// ===== Observability =====
-	metrics metrics.Metrics // Optional; nil disables metrics
+	metrics   metrics.Metrics // never nil; defaults to NoOpMetrics
+	tracer    tracing.Tracer  // never nil; defaults to NoOpTracer
+	namespace string          // = cfg.Namespace; emitted across all three signal types
 
 	// ===== Synchronization =====
 	mu sync.RWMutex // Protects keys, currentKeyID
@@ -119,25 +142,30 @@ type Manager struct {
 	rotationTicker          *time.Ticker   // Fires at KeyRotationInterval for automatic rotation
 }
 
-// ManagerConfig holds configuration settings for the Manager.
+// KeyManagerConfig holds configuration settings for the Manager.
 // All fields should be set before passing to NewManager.
-type ManagerConfig struct {
-	Logger              logging.Logger  // Optional; nil disables logging
+type KeyManagerConfig struct {
+	Logger              logging.Logger  // Optional; nil defaults to NoOpLogger.
 	KeyStore            KeyStore        // Required; the persistence backend for RSA key pairs
-	Metrics             metrics.Metrics // Optional; nil disables metrics
+	Metrics             metrics.Metrics // Optional; nil defaults to NoOpMetrics.
+	Tracer              tracing.Tracer  // Optional; nil defaults to NoOpTracer.
 	KeyRotationInterval time.Duration   // How often to rotate to a new signing key
 	KeyOverlapDuration  time.Duration   // How long old keys remain valid after rotation
 	KeySize             int             // RSA key size in bits (minimum 2048)
+	Namespace           string          // Optional; opaque label attached to observability output — empty disables labeling
 }
 
-// ConfigDefault returns a ManagerConfig with sensible defaults suitable for
+// DefaultKeyManagerConfig returns a KeyManagerConfig with sensible defaults suitable for
 // most production deployments. Set KeyStore before use, or override other
 // fields as needed.
-func ConfigDefault() ManagerConfig {
-	return ManagerConfig{
+func DefaultKeyManagerConfig() KeyManagerConfig {
+	return KeyManagerConfig{
 		KeySize:             2048,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		KeyOverlapDuration:  1 * time.Hour,
+		Logger:              &logging.NoOpLogger{},
+		Metrics:             metrics.NewNoOpMetrics(),
+		Tracer:              tracing.NewNoOpTracer(),
 	}
 }
 
@@ -146,6 +174,20 @@ type KeyMetadata struct {
 	CreatedAt time.Time `json:"created_at"` // When the key was generated
 	ExpiresAt time.Time `json:"expires_at"` // When the key expires (zero means no expiry)
 	ID        string    `json:"id"`         // Unique key identifier
+}
+
+// KeyInfo contains public metadata about a cryptographic key — no private key
+// material is included. Suitable for health check endpoints, Prometheus metrics,
+// debugging, and admin dashboards. All methods are safe for concurrent use.
+type KeyInfo struct {
+	KeyID       string    `json:"key_id"`              // Unique key identifier
+	CreatedAt   time.Time `json:"created_at"`          // When the key was generated
+	RotateAt    time.Time `json:"rotate_at,omitempty"` // Estimated rotation time — current key only; zero for historical keys
+	ExpiresAt   time.Time `json:"expires_at,omitempty"` // When the key stops being valid for verification; zero means still current
+	KeySizeBits int       `json:"key_size_bits"`       // RSA key size in bits (e.g., 2048)
+	Algorithm   string    `json:"algorithm"`           // Signing algorithm — always "RS256"
+	IsCurrent   bool      `json:"is_current"`          // True if this is the active signing key
+	IsValid     bool      `json:"is_valid"`            // True if the key has not yet expired
 }
 
 // JWKS (JSON Web Key Set) is the standard format for publishing public keys,
@@ -215,7 +257,7 @@ func (m *Manager) Keys() map[string]*KeyPair {
 // less than 2048 bits, ErrInvalidKeyRotationInterval if KeyRotationInterval is
 // negative, or ErrInvalidKeyOverlapDuration if KeyOverlapDuration is negative.
 // Applies defaults for zero-value duration and size fields before validation.
-func NewManager(config ManagerConfig) (*Manager, error) {
+func NewManager(config KeyManagerConfig) (*Manager, error) {
 	// ===== STEP 1: Validate Required Fields =====
 	if config.KeyStore == nil {
 		return nil, ErrInvalidKeyStore
@@ -233,7 +275,7 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	}
 
 	// ===== STEP 3: Apply Defaults for Zero Values =====
-	defaults := ConfigDefault()
+	defaults := DefaultKeyManagerConfig()
 
 	if config.KeySize == 0 {
 		config.KeySize = defaults.KeySize
@@ -243,6 +285,18 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	}
 	if config.KeyOverlapDuration == 0 {
 		config.KeyOverlapDuration = defaults.KeyOverlapDuration
+	}
+	if config.Logger == nil {
+		config.Logger = defaults.Logger
+	}
+	if config.Metrics == nil {
+		config.Metrics = defaults.Metrics
+	}
+	if config.Tracer == nil {
+		config.Tracer = defaults.Tracer
+	}
+	if config.Namespace != "" {
+		config.Logger = config.Logger.With("namespace", config.Namespace)
 	}
 
 	// ===== STEP 4: Validate Ranges (After Defaults) =====
@@ -255,6 +309,8 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 		config:         config,
 		keys:           make(map[string]*KeyPair),
 		metrics:        config.Metrics,
+		tracer:         config.Tracer,
+		namespace:      config.Namespace,
 		stopRotationCh: make(chan struct{}),
 	}, nil
 }
@@ -265,15 +321,22 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 // Start() has already been called without a corresponding Shutdown(). Returns
 // the context error if the context is cancelled before Start completes.
 func (m *Manager) Start(ctx context.Context) error {
+	ctx, span := m.startSpan(ctx, "Start")
+	defer span.End()
+
 	// ===== STEP 1: Check Context =====
 	select {
 	case <-ctx.Done():
+		span.RecordError(ctx.Err())
+		span.SetStatus(tracing.StatusError, ctx.Err().Error())
 		return ctx.Err()
 	default:
 	}
 
 	// ===== STEP 2: Check Not Already Running =====
 	if !atomic.CompareAndSwapInt32(&m.state, StateStopped, StateStarted) {
+		span.RecordError(ErrAlreadyRunning)
+		span.SetStatus(tracing.StatusError, ErrAlreadyRunning.Error())
 		return ErrAlreadyRunning
 	}
 
@@ -281,10 +344,11 @@ func (m *Manager) Start(ctx context.Context) error {
 	storedKeys, err := m.config.KeyStore.LoadAll(ctx)
 	if err != nil {
 		atomic.StoreInt32(&m.state, StateStopped)
-		if m.config.Logger != nil {
-			m.config.Logger.Error("failed to load keys from store", ctx, "error", err)
-		}
-		return fmt.Errorf("load keys: %w", err)
+		m.config.Logger.Error("failed to load keys from store", ctx, "error", err)
+		wrapped := fmt.Errorf("load keys: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return wrapped
 	}
 
 	if len(storedKeys) > 0 {
@@ -310,23 +374,20 @@ func (m *Manager) Start(ctx context.Context) error {
 		keyCount := len(m.keys)
 		m.mu.Unlock()
 
-		if m.config.Logger != nil {
-			m.config.Logger.Info("loaded existing keys from store", ctx,
-				"keyID", m.currentKeyID,
-				"keyCount", len(storedKeys))
-		}
-		if m.metrics != nil {
-			m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(keyCount), nil)
-		}
+		m.config.Logger.Info("loaded existing keys from store", ctx,
+			"keyID", m.currentKeyID,
+			"keyCount", len(storedKeys))
+		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(keyCount), map[string]string{"namespace": m.namespace})
 	} else {
 		// ===== STEP 4b: Generate Initial Key Pair =====
 		privateKey, err := rsa.GenerateKey(rand.Reader, m.config.KeySize)
 		if err != nil {
 			atomic.StoreInt32(&m.state, StateStopped)
-			if m.config.Logger != nil {
-				m.config.Logger.Error("failed to generate initial key", ctx, "error", err)
-			}
-			return fmt.Errorf("generate key: %w", err)
+			m.config.Logger.Error("failed to generate initial key", ctx, "error", err)
+			wrapped := fmt.Errorf("generate key: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return wrapped
 		}
 
 		keyID := uuid.New().String()
@@ -348,20 +409,17 @@ func (m *Manager) Start(ctx context.Context) error {
 		meta := KeyMetadata{ID: keyID, CreatedAt: now}
 		if err := m.config.KeyStore.Save(ctx, keyID, privateKey, meta); err != nil {
 			atomic.StoreInt32(&m.state, StateStopped)
-			if m.config.Logger != nil {
-				m.config.Logger.Error("failed to save initial key", ctx, "error", err)
-			}
-			return fmt.Errorf("save initial key: %w", err)
+			m.config.Logger.Error("failed to save initial key", ctx, "error", err)
+			wrapped := fmt.Errorf("save initial key: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return wrapped
 		}
 
-		if m.config.Logger != nil {
-			m.config.Logger.Info("generated new RSA key pair", ctx,
-				"keyID", keyID,
-				"keySize", m.config.KeySize)
-		}
-		if m.metrics != nil {
-			m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(keyCount), nil)
-		}
+		m.config.Logger.Info("generated new RSA key pair", ctx,
+			"keyID", keyID,
+			"keySize", m.config.KeySize)
+		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(keyCount), map[string]string{"namespace": m.namespace})
 	}
 
 	// ===== STEP 5: Start Rotation Scheduler =====
@@ -369,11 +427,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.rotationWG.Add(1)
 	go m.rotationSchedulerLoop(ctx)
 
-	if m.config.Logger != nil {
-		m.config.Logger.Info("key manager started", ctx,
-			"rotationInterval", m.config.KeyRotationInterval)
-	}
-
+	m.config.Logger.Info("key manager started", ctx,
+		"rotationInterval", m.config.KeyRotationInterval)
+	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
 
@@ -383,42 +439,43 @@ func (m *Manager) Start(ctx context.Context) error {
 // The returned key is safe to use for concurrent signing operations.
 // Returns the context error if the context is cancelled.
 func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, string, error) {
+	ctx, span := m.startSpan(ctx, "GetCurrentSigningKey")
+	defer span.End()
+
 	// ===== STEP 1: Check Manager is Running =====
 	if !m.IsRunning() {
-		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error"})
-		}
+		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error", "namespace": m.namespace})
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
 		return nil, "", ErrManagerNotRunning
 	}
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
-		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "cancelled", "error_type": "cancelled"})
-		}
+		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "cancelled", "error_type": "cancelled", "namespace": m.namespace})
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, "", err
 	}
 
 	// ===== STEP 3: Acquire Read Lock and Retrieve Key =====
-	if m.config.Logger != nil {
-		m.config.Logger.Debug("getting current signing key", ctx)
-	}
+	m.config.Logger.Debug("getting current signing key", ctx)
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	keyPair, found := m.keys[m.currentKeyID]
 
 	if !found {
-		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error"})
-		}
+		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error", "namespace": m.namespace})
+		span.RecordError(ErrKeyNotFound)
+		span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
 		return nil, "", ErrKeyNotFound
 	}
 
 	// ===== STEP 4: Return Key and ID =====
-	if m.metrics != nil {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "success", "error_type": ""})
-	}
+	m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "success", "error_type": "", "namespace": m.namespace})
+	span.SetAttribute("key_id", m.currentKeyID)
+	span.SetStatus(tracing.StatusOK, "")
 	return keyPair.PrivateKey, m.currentKeyID, nil
 }
 
@@ -427,14 +484,16 @@ func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, st
 // Returns the context error if the context is cancelled before shutdown completes.
 // All background goroutines are waited on with a timeout specified by ctx.
 func (m *Manager) Shutdown(ctx context.Context) error {
+	ctx, span := m.startSpan(ctx, "Shutdown")
+	defer span.End()
+
 	// ===== STEP 1: Check Not Already Stopped =====
 	if !atomic.CompareAndSwapInt32(&m.state, StateStarted, StateStopped) {
+		span.SetStatus(tracing.StatusOK, "")
 		return nil
 	}
 
-	if m.config.Logger != nil {
-		m.config.Logger.Info("initiating graceful shutdown", ctx)
-	}
+	m.config.Logger.Info("initiating graceful shutdown", ctx)
 
 	// ===== STEP 2: Signal Rotation Scheduler to Stop =====
 	close(m.stopRotationCh)
@@ -446,20 +505,30 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		close(done)
 	}()
 
+	// Drain an already-expired context before entering the blocking select so
+	// that a pre-cancelled context reliably wins over a fast goroutine exit.
+	select {
+	case <-ctx.Done():
+		span.RecordError(ctx.Err())
+		span.SetStatus(tracing.StatusError, ctx.Err().Error())
+		return ctx.Err()
+	default:
+	}
+
 	select {
 	case <-done:
 		// Goroutine exited cleanly
 	case <-ctx.Done():
+		span.RecordError(ctx.Err())
+		span.SetStatus(tracing.StatusError, ctx.Err().Error())
 		return ctx.Err()
 	}
 
 	// ===== STEP 4: Recreate Stop Channel for Potential Restart =====
 	m.stopRotationCh = make(chan struct{})
 
-	if m.config.Logger != nil {
-		m.config.Logger.Info("key manager stopped", ctx)
-	}
-
+	m.config.Logger.Info("key manager stopped", ctx)
+	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
 
@@ -475,17 +544,20 @@ func (m *Manager) IsRotationSchedulerActive() bool {
 // exist or has expired. Uses a double-check locking pattern to cache loaded keys.
 // Returns the context error if the context is cancelled.
 func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKey, error) {
+	ctx, span := m.startSpan(ctx, "GetPublicKey")
+	defer span.End()
+
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricKeyValidationOpsTotal, map[string]string{"status": status, "error_type": errorType})
-		}
+		m.metrics.IncrementCounter(metricKeyValidationOpsTotal, map[string]string{"status": status, "error_type": errorType, "namespace": m.namespace})
 	}()
 
 	// ===== STEP 1: Validate Key ID =====
 	keyID = strings.TrimSpace(keyID)
 	if len(keyID) == 0 {
+		span.RecordError(ErrInvalidKeyID)
+		span.SetStatus(tracing.StatusError, ErrInvalidKeyID.Error())
 		return nil, ErrInvalidKeyID
 	}
 
@@ -493,33 +565,38 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	if err := ctx.Err(); err != nil {
 		status = "cancelled"
 		errorType = "cancelled"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, err
 	}
+
+	span.SetAttribute("key_id", keyID)
 
 	// ===== STEP 3: Check Cache First =====
 	m.mu.RLock()
 	if keyPair, exists := m.keys[keyID]; exists {
 		m.mu.RUnlock()
-		if m.config.Logger != nil {
-			m.config.Logger.Debug("public key cache hit", ctx, "keyID", keyID)
-		}
+		m.config.Logger.Debug("public key cache hit", ctx, "keyID", keyID)
 		status = "success"
 		errorType = ""
+		span.SetStatus(tracing.StatusOK, "")
 		return keyPair.PublicKey, nil
 	}
 	m.mu.RUnlock()
 
 	// ===== STEP 4: Load from KeyStore =====
-	if m.config.Logger != nil {
-		m.config.Logger.Debug("public key not in cache, loading from store", ctx, "keyID", keyID)
-	}
+	m.config.Logger.Debug("public key not in cache, loading from store", ctx, "keyID", keyID)
 	privateKey, meta, err := m.config.KeyStore.LoadKey(ctx, keyID)
 	if err != nil {
 		if errors.Is(err, ErrKeyStoreKeyNotFound) {
 			status = "not_found"
 			errorType = "not_found"
+			span.RecordError(ErrKeyNotFound)
+			span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
 			return nil, ErrKeyNotFound
 		}
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, err
 	}
 
@@ -527,6 +604,8 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
 		status = "not_found"
 		errorType = "not_found"
+		span.RecordError(ErrKeyNotFound)
+		span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
 		return nil, ErrKeyNotFound
 	}
 
@@ -537,6 +616,7 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	if keyPair, exists := m.keys[keyID]; exists {
 		status = "success"
 		errorType = ""
+		span.SetStatus(tracing.StatusOK, "")
 		return keyPair.PublicKey, nil
 	}
 
@@ -549,6 +629,7 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 
 	status = "success"
 	errorType = ""
+	span.SetStatus(tracing.StatusOK, "")
 	return &privateKey.PublicKey, nil
 }
 
@@ -556,19 +637,24 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 // Returns ErrManagerNotRunning if the Manager is not running. The returned JWKS
 // is suitable for serving at /.well-known/jwks.json for OAuth/OIDC compliance.
 func (m *Manager) GetJWKS(ctx context.Context) (*JWKS, error) {
+	ctx, span := m.startSpan(ctx, "GetJWKS")
+	defer span.End()
+
 	// ===== STEP 1: Check Manager is Running =====
 	if !m.IsRunning() {
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
 		return nil, ErrManagerNotRunning
 	}
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, err
 	}
 
-	if m.config.Logger != nil {
-		m.config.Logger.Debug("getting JWKS", ctx)
-	}
+	m.config.Logger.Debug("getting JWKS", ctx)
 
 	// ===== STEP 3: Acquire Read Lock and Collect Keys =====
 	m.mu.RLock()
@@ -583,29 +669,89 @@ func (m *Manager) GetJWKS(ctx context.Context) (*JWKS, error) {
 	}
 
 	// ===== STEP 4: Return JWKS =====
+	span.SetStatus(tracing.StatusOK, "")
 	return &JWKS{Keys: keys}, nil
 }
 
-// GetKeyInfo returns the cached KeyPair for the given key ID.
-// Returns ErrManagerNotRunning if the Manager is not running, or ErrKeyNotFound
-// if the key does not exist in the cache.
-func (m *Manager) GetKeyInfo(keyID string) (*KeyPair, error) {
-	// ===== STEP 1: Check Manager is Running =====
+// GetKeyInfo returns public metadata for a specific key by ID.
+// If keyID is empty, returns metadata for the current signing key.
+// Returns ErrManagerNotRunning if the manager is not running.
+// Returns ErrKeyNotFound if the specified key does not exist.
+// Returns the context error if the context is cancelled.
+//
+// The returned KeyInfo contains no private key material — safe to expose via
+// health check endpoints or admin APIs.
+func (m *Manager) GetKeyInfo(ctx context.Context, keyID string) (*KeyInfo, error) {
+	ctx, span := m.startSpan(ctx, "GetKeyInfo")
+	defer span.End()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, err
+	}
+
+	// ===== STEP 2: Check Manager is Running =====
 	if !m.IsRunning() {
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
 		return nil, ErrManagerNotRunning
 	}
 
-	// ===== STEP 2: Acquire Read Lock and Lookup =====
+	// ===== STEP 3: Acquire Read Lock =====
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	keyPair, exists := m.keys[keyID]
-	if !exists {
-		return nil, ErrKeyNotFound
+	// ===== STEP 4: Resolve Key =====
+	var keyPair *KeyPair
+	if keyID == "" {
+		if m.currentKeyID == "" {
+			span.RecordError(ErrKeyNotFound)
+			span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
+			return nil, ErrKeyNotFound
+		}
+		keyPair = m.keys[m.currentKeyID]
+	} else {
+		var exists bool
+		keyPair, exists = m.keys[keyID]
+		if !exists {
+			span.RecordError(ErrKeyNotFound)
+			span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
+			return nil, ErrKeyNotFound
+		}
 	}
 
-	// ===== STEP 3: Return Key Pair =====
-	return keyPair, nil
+	// ===== STEP 5: Build KeyInfo =====
+	isCurrent := keyPair.ID == m.currentKeyID
+	isValid := keyPair.ExpiresAt.IsZero() || time.Now().Before(keyPair.ExpiresAt)
+
+	var rotateAt time.Time
+	if isCurrent {
+		rotateAt = keyPair.CreatedAt.Add(m.config.KeyRotationInterval)
+	}
+
+	span.SetAttribute("key_id", keyPair.ID)
+	span.SetStatus(tracing.StatusOK, "")
+	return &KeyInfo{
+		KeyID:       keyPair.ID,
+		CreatedAt:   keyPair.CreatedAt,
+		RotateAt:    rotateAt,
+		ExpiresAt:   keyPair.ExpiresAt,
+		KeySizeBits: keyPair.PrivateKey.N.BitLen(),
+		Algorithm:   "RS256",
+		IsCurrent:   isCurrent,
+		IsValid:     isValid,
+	}, nil
+}
+
+// GetCurrentKeyInfo returns metadata for the current signing key.
+// This is a convenience wrapper around GetKeyInfo(ctx, "").
+// Returns ErrManagerNotRunning if the manager is not running.
+// Returns ErrKeyNotFound if no current key exists.
+// Returns the context error if the context is cancelled.
+func (m *Manager) GetCurrentKeyInfo(ctx context.Context) (*KeyInfo, error) {
+	return m.GetKeyInfo(ctx, "")
 }
 
 // RotateKeys rotates the current signing key to a newly generated one, and marks
@@ -613,14 +759,15 @@ func (m *Manager) GetKeyInfo(keyID string) (*KeyPair, error) {
 // validated during the transition period. Returns ErrManagerNotRunning if the
 // Manager is not running. Returns the context error if the context is cancelled.
 func (m *Manager) RotateKeys(ctx context.Context) error {
+	ctx, span := m.startSpan(ctx, "RotateKeys")
+	defer span.End()
+
 	start := time.Now()
 	status := "error"
 	errorType := "error"
 	defer func() {
-		if m.metrics != nil {
-			m.metrics.IncrementCounter(metricKeyRotationsTotal, map[string]string{"status": status, "error_type": errorType})
-			m.metrics.RecordDuration(metricKeyOpDuration, time.Since(start), map[string]string{"operation": "rotate"})
-		}
+		m.metrics.IncrementCounter(metricKeyRotationsTotal, map[string]string{"status": status, "error_type": errorType, "namespace": m.namespace})
+		m.metrics.RecordDuration(metricKeyOpDuration, time.Since(start), map[string]string{"operation": "rotate", "namespace": m.namespace})
 	}()
 
 	// ===== STEP 1: Check Context =====
@@ -628,9 +775,9 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 	case <-ctx.Done():
 		status = "cancelled"
 		errorType = "cancelled"
-		if m.config.Logger != nil {
-			m.config.Logger.Warn("key rotation cancelled", ctx)
-		}
+		m.config.Logger.Warn("key rotation cancelled", ctx)
+		span.RecordError(ctx.Err())
+		span.SetStatus(tracing.StatusError, ctx.Err().Error())
 		return ctx.Err()
 	default:
 	}
@@ -641,16 +788,19 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 
 	// ===== STEP 3: Check Manager is Running =====
 	if !m.IsRunning() {
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
 		return ErrManagerNotRunning
 	}
 
 	// ===== STEP 4: Generate New RSA Key Pair =====
 	privateKey, err := rsa.GenerateKey(rand.Reader, m.config.KeySize)
 	if err != nil {
-		if m.config.Logger != nil {
-			m.config.Logger.Error("key rotation failed", ctx, "error", err)
-		}
-		return fmt.Errorf("generate key: %w", err)
+		m.config.Logger.Error("key rotation failed", ctx, "error", err)
+		wrapped := fmt.Errorf("generate key: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return wrapped
 	}
 
 	// ===== STEP 5: Generate Unique Key ID =====
@@ -660,10 +810,11 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 	// ===== STEP 6: Save New Key to Store =====
 	newMeta := KeyMetadata{ID: keyID, CreatedAt: now}
 	if err := m.config.KeyStore.Save(ctx, keyID, privateKey, newMeta); err != nil {
-		if m.config.Logger != nil {
-			m.config.Logger.Error("key rotation failed: could not save new key", ctx, "error", err)
-		}
-		return fmt.Errorf("save new key: %w", err)
+		m.config.Logger.Error("key rotation failed: could not save new key", ctx, "error", err)
+		wrapped := fmt.Errorf("save new key: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return wrapped
 	}
 
 	// ===== STEP 7: Mark Old Key to Expire =====
@@ -678,17 +829,13 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 		}
 		if err := m.config.KeyStore.UpdateMetadata(ctx, oldKeyID, updatedMeta); err != nil {
 			// Log but continue — in-memory expiration is sufficient for correctness
-			if m.config.Logger != nil {
-				m.config.Logger.Warn("failed to persist expiration for old key", ctx,
-					"oldKeyID", oldKeyID,
-					"error", err)
-			}
+			m.config.Logger.Warn("failed to persist expiration for old key", ctx,
+				"oldKeyID", oldKeyID,
+				"error", err)
 		} else {
-			if m.config.Logger != nil {
-				m.config.Logger.Info("old key marked for expiration", ctx,
-					"keyID", oldKeyID,
-					"expiresAt", oldKey.ExpiresAt)
-			}
+			m.config.Logger.Info("old key marked for expiration", ctx,
+				"keyID", oldKeyID,
+				"expiresAt", oldKey.ExpiresAt)
 		}
 	}
 
@@ -705,17 +852,14 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 
 	status = "success"
 	errorType = ""
-	if m.metrics != nil {
-		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), nil)
-	}
+	m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), map[string]string{"namespace": m.namespace})
+	m.config.Logger.Info("key rotation successful", ctx,
+		"newKeyID", keyID,
+		"oldKeyID", oldKeyID,
+		"duration", time.Since(start))
 
-	if m.config.Logger != nil {
-		m.config.Logger.Info("key rotation successful", ctx,
-			"newKeyID", keyID,
-			"oldKeyID", oldKeyID,
-			"duration", time.Since(start))
-	}
-
+	span.SetAttribute("key_id", keyID)
+	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
 
@@ -745,20 +889,14 @@ func (m *Manager) rotationSchedulerLoop(ctx context.Context) {
 	for {
 		select {
 		case <-m.rotationTicker.C:
-			if m.config.Logger != nil {
-				m.config.Logger.Info("automatic rotation triggered", ctx)
-			}
+			m.config.Logger.Info("automatic rotation triggered", ctx)
 			if err := m.RotateKeys(ctx); err != nil {
-				if m.config.Logger != nil {
-					m.config.Logger.Error("rotation failed", ctx, "error", err)
-				}
+				m.config.Logger.Error("rotation failed", ctx, "error", err)
 			}
 			m.cleanupExpiredKeys(ctx)
 
 		case <-cleanupTicker.C:
-			if m.config.Logger != nil {
-				m.config.Logger.Debug("rotation cleanup tick fired", ctx)
-			}
+			m.config.Logger.Debug("rotation cleanup tick fired", ctx)
 			m.cleanupExpiredKeys(ctx)
 
 		case <-ctx.Done():
@@ -776,17 +914,13 @@ func (m *Manager) rotationSchedulerLoop(ctx context.Context) {
 func (m *Manager) cleanupExpiredKeys(ctx context.Context) {
 	// ===== STEP 1: Check Manager is Running =====
 	if !m.IsRunning() {
-		if m.config.Logger != nil {
-			m.config.Logger.Warn("cleanup aborted: manager is not running", ctx)
-		}
+		m.config.Logger.Warn("cleanup aborted: manager is not running", ctx)
 		return
 	}
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
-		if m.config.Logger != nil {
-			m.config.Logger.Warn("cleanup aborted: context cancelled", ctx, "reason", err)
-		}
+		m.config.Logger.Warn("cleanup aborted: context cancelled", ctx, "reason", err)
 		return
 	}
 
@@ -806,11 +940,9 @@ func (m *Manager) cleanupExpiredKeys(ctx context.Context) {
 		if !key.ExpiresAt.IsZero() && now.After(key.ExpiresAt) {
 			delete(m.keys, keyID)
 			if err := m.config.KeyStore.Delete(ctx, keyID); err != nil {
-				if m.config.Logger != nil {
-					m.config.Logger.Error("failed to delete expired key from store", ctx,
-						"keyID", keyID,
-						"error", err)
-				}
+				m.config.Logger.Error("failed to delete expired key from store", ctx,
+					"keyID", keyID,
+					"error", err)
 			} else {
 				count++
 				deletedKeys = append(deletedKeys, keyID)
@@ -819,25 +951,34 @@ func (m *Manager) cleanupExpiredKeys(ctx context.Context) {
 	}
 
 	// ===== STEP 5: Log Results =====
-	if m.config.Logger != nil {
-		if count == 0 {
-			m.config.Logger.Debug("no expired keys found during cleanup", ctx)
-		} else {
-			m.config.Logger.Info("expired key cleanup executed", ctx, "deletedCount", count)
-			for _, key := range deletedKeys {
-				m.config.Logger.Info("deleted expired key", ctx, "keyID", key)
-			}
+	if count == 0 {
+		m.config.Logger.Debug("no expired keys found during cleanup", ctx)
+	} else {
+		m.config.Logger.Info("expired key cleanup executed", ctx, "deletedCount", count)
+		for _, key := range deletedKeys {
+			m.config.Logger.Info("deleted expired key", ctx, "keyID", key)
 		}
 	}
 
-	// ===== STEP 5: Update Active Keys Gauge (only when keys were removed) =====
-	if count > 0 && m.metrics != nil {
-		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), nil)
+	// ===== STEP 6: Update Active Keys Gauge (only when keys were removed) =====
+	if count > 0 {
+		m.metrics.SetGauge(metricKeyActiveVersionsCount, float64(len(m.keys)), map[string]string{"namespace": m.namespace})
 	}
 }
 
 func base64urlEncode(data []byte) string {
 	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+// startSpan begins a new tracing span for the given Manager operation,
+// pre-seeded with the key.namespace attribute.
+func (m *Manager) startSpan(ctx context.Context, operation string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
+	opts = append([]tracing.SpanOption{
+		tracing.WithAttributes(map[string]any{
+			"key.namespace": m.namespace,
+		}),
+	}, opts...)
+	return m.tracer.Start(ctx, "KeyManager."+operation, opts...)
 }
 
 // getJWK converts an RSA private key and its ID into a JWK (JSON Web Key) format

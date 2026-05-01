@@ -25,8 +25,8 @@ if err := redisClient.Ping(ctx).Err(); err != nil {
     log.Fatalf("Redis unavailable: %v", err)
 }
 
-ks, _ := keymanager.NewRedisKeyStore(redisClient, logger, pm)
-store := storage.NewRedisRefreshStore(redisClient, logger, pm)
+ks, _    := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: redisClient, Logger: logger, Metrics: pm})
+store, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: redisClient, Logger: logger, Metrics: pm})
 ```
 
 ### Service Start Order
@@ -50,7 +50,7 @@ Expose a health endpoint that reflects actual service state — not just HTTP li
 
 ```go
 // Health check handler — checks both manager and key availability
-func healthHandler(mgr *tokens.Manager, km keymanager.KeyManager) http.HandlerFunc {
+func healthHandler(mgr *tokens.Manager, km keys.KeyManager) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         if !mgr.IsRunning() {
             w.WriteHeader(http.StatusServiceUnavailable)
@@ -104,10 +104,10 @@ pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{
     Namespace: "myapp",  // prefix for all metric names; defaults to "jwtauth"
 })
 
-ks, _   := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
-km, _   := keymanager.NewManager(keymanager.ManagerConfig{KeyStore: ks, Metrics: pm})
-store   := storage.NewMemoryRefreshStore(logger, pm)
-mgr, _  := tokens.NewManager(tokens.ManagerConfig{
+ks, _    := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: pm})
+km, _    := keys.NewManager(keys.KeyManagerConfig{KeyStore: ks, Metrics: pm})
+store, _ := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: pm})
+mgr, _  := tokens.NewManager(tokens.TokenManagerConfig{
     KeyManager:   km,
     RefreshStore: store,
     Metrics:      pm,
@@ -156,6 +156,78 @@ groups:
 ```
 
 For the complete metric reference — all 22 metrics with label values and PromQL cookbook — see [METRICS.md](METRICS.md).
+
+---
+
+## Distributed Tracing
+
+jwtauth emits OpenTelemetry-compatible spans via `pkg/tracing`. By default every component uses `NoOpTracer` — no setup required for local development. For production, initialize a `TracerProvider` and pass `tracing.NewOtelTracer("jwtauth")` into each config.
+
+### OTel SDK Setup
+
+```go
+import (
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+    "go.opentelemetry.io/otel/sdk/trace"
+    "github.com/aetomala/jwtauth/pkg/tracing"
+    "github.com/aetomala/jwtauth/pkg/keys"
+    "github.com/aetomala/jwtauth/pkg/storage"
+    "github.com/aetomala/jwtauth/pkg/tokens"
+)
+
+// 1. Create an OTLP exporter (Jaeger, Tempo, or any OTLP-compatible backend)
+exporter, err := otlptracehttp.New(ctx,
+    otlptracehttp.WithEndpoint("http://localhost:4318"),
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+// 2. Build a TracerProvider with your preferred sampler
+tp := trace.NewTracerProvider(
+    trace.WithBatcher(exporter),
+    trace.WithSampler(trace.AlwaysSample()), // adjust for production
+)
+otel.SetTracerProvider(tp)
+defer tp.Shutdown(ctx)
+
+// 3. Create a jwtauth tracer and pass it to every component
+tracer := tracing.NewOtelTracer("jwtauth")
+
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{
+    Dir:    "./keys",
+    Tracer: tracer,
+})
+km, _ := keys.NewManager(keys.KeyManagerConfig{
+    KeyStore: ks,
+    Tracer:   tracer,
+})
+store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Tracer: tracer})
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
+    KeyManager:   km,
+    RefreshStore: store,
+    Tracer:       tracer,
+})
+```
+
+### Sampler Recommendations
+
+| Environment | Sampler | Rationale |
+|-------------|---------|-----------|
+| Development | `AlwaysSample` | Capture every span for debugging |
+| Staging | `TraceIDRatioBased(0.1)` | 10% sample — enough to verify instrumentation |
+| Production | `ParentBased(TraceIDRatioBased(0.01))` | 1% sample; respect upstream sampling decisions |
+
+Sampling is the caller's responsibility — jwtauth defers entirely to the OTel SDK.
+
+### Endpoint Environment Variables (OTLP)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP HTTP exporter endpoint |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | — | Override for traces only |
+| `OTEL_SERVICE_NAME` | — | Service name tag applied to all spans |
 
 ---
 
@@ -212,7 +284,7 @@ if err := km.Shutdown(shutdownCtx); err != nil {
 
 **Single-instance** (development, small deployments):
 ```go
-store := storage.NewMemoryRefreshStore(logger, pm)
+store, _ := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: pm})
 ```
 
 **Multi-instance** (Kubernetes, load-balanced):
@@ -220,8 +292,133 @@ store := storage.NewMemoryRefreshStore(logger, pm)
 redisClient := redis.NewClient(&redis.Options{
     Addr: os.Getenv("REDIS_ADDR"),
 })
-store := storage.NewRedisRefreshStore(redisClient, logger, pm)
+store, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{
+    Client:    redisClient,
+    Logger:    logger,
+    Metrics:   pm,
+    KeyPrefix: "myapp:",  // Optional; isolates keys when sharing a Redis cluster
+})
 ```
+
+---
+
+## Namespace Isolation
+
+When running multiple `Manager` instances against the same Redis cluster — for example, two
+services sharing infrastructure, or multiple tenants on a single deployment — configure
+`KeyPrefix` and `Namespace` to keep their data and observability output separate.
+
+`KeyPrefix` is set on the Redis store configs and prepended to every Redis key written by that
+instance. Two managers with different prefixes can share one Redis cluster without key collision:
+
+```go
+// Tenant A
+ksA, _ := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+    Client:    redisClient,
+    KeyPrefix: "tenant-a:",
+})
+storeA, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{
+    Client:    redisClient,
+    KeyPrefix: "tenant-a:",
+})
+kmA, _ := keys.NewManager(keys.KeyManagerConfig{
+    KeyStore:  ksA,
+    Namespace: "tenant-a",
+})
+mgrA, _ := tokens.NewManager(tokens.TokenManagerConfig{
+    KeyManager:   kmA,
+    RefreshStore: storeA,
+    Namespace:    "tenant-a",
+})
+
+// Tenant B — same Redis, no data overlap
+ksB, _ := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+    Client:    redisClient,
+    KeyPrefix: "tenant-b:",
+})
+storeB, _ := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{
+    Client:    redisClient,
+    KeyPrefix: "tenant-b:",
+})
+kmB, _ := keys.NewManager(keys.KeyManagerConfig{
+    KeyStore:  ksB,
+    Namespace: "tenant-b",
+})
+mgrB, _ := tokens.NewManager(tokens.TokenManagerConfig{
+    KeyManager:   kmB,
+    RefreshStore: storeB,
+    Namespace:    "tenant-b",
+})
+```
+
+`Namespace` is set on the manager configs and flows through all three observability signals:
+
+- **Logs** — a `namespace` field is pre-bound to every log line via `Logger.With`
+- **Spans** — a `namespace` attribute is attached to every trace span
+- **Metrics** — a `namespace` label is added to every Prometheus counter and histogram
+
+This lets you filter dashboards, traces, and logs to a single Manager instance without changing
+metric names or adding routing logic.
+
+See [ADR-006](adr/006-keyprefix-namespace-isolation.md) and
+[ADR-007](adr/007-namespace-consistency-contract.md).
+
+---
+
+## Token Enumeration
+
+`ListTokens` and `ListTokensForUser` expose the full token inventory in the `RefreshStore`
+via cursor-based pagination. Operational use cases include:
+
+- **Compliance exports** — audit all active sessions for a user or the entire system
+- **Bulk revocation** — revoke all tokens for a decommissioned user or tenant
+- **Session dashboards** — surface active token counts in admin tooling
+- **Reconciliation jobs** — verify no orphaned tokens remain after a migration
+
+**Pagination pattern:**
+
+```go
+var cursor string
+for {
+    page, next, err := mgr.ListTokens(ctx, cursor, 100)
+    if err != nil {
+        return err
+    }
+    for _, t := range page {
+        // Tokens are returned regardless of expiry or revocation — filter as needed.
+        if t.ExpiresAt.After(time.Now()) {
+            process(t)
+        }
+    }
+    if next == "" {
+        break // exhausted
+    }
+    cursor = next
+}
+```
+
+To enumerate tokens for a specific user, replace the first line of the loop body:
+
+```go
+page, next, err := mgr.ListTokensForUser(ctx, userID, cursor, 100)
+```
+
+`count` is a hint — the actual page size may vary. Cursor semantics are best-effort under
+concurrent mutation: tokens created or deleted between pages may appear, disappear, or shift.
+
+See `examples/token-audit/` for a runnable reference.
+
+---
+
+## Reserved Claims
+
+The fields `sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, and `jti` are silently removed from any
+`CustomClaims` map before a token is signed. These fields are under jwtauth's control — setting
+them through custom claims would produce tokens that violate the configured `Issuer`, `Audience`,
+or lifetime constraints. To set audience and issuer, use `TokenManagerConfig.Audience` and
+`TokenManagerConfig.Issuer` instead.
+
+See [ADR-008](adr/008-reserved-claims-at-issuance.md).
 
 ---
 
@@ -230,7 +427,7 @@ store := storage.NewRedisRefreshStore(redisClient, logger, pm)
 In distributed deployments, servers may have slight clock drift. `ClockSkew` adds leeway to `exp` and `nbf` validation without inflating token lifetimes:
 
 ```go
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     // ...
     ClockSkew: 30 * time.Second,  // Accept tokens up to 30s past expiry
 })

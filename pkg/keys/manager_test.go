@@ -1,4 +1,4 @@
-package keymanager_test
+package keys_test
 
 import (
 	"context"
@@ -12,7 +12,8 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/aetomala/jwtauth/internal/testutil"
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
+	"github.com/aetomala/jwtauth/pkg/tracing"
 )
 
 func TestKeyManager(t *testing.T) {
@@ -27,10 +28,10 @@ func newTestKey() *rsa.PrivateKey {
 	return key
 }
 
-// newTestConfig returns a ManagerConfig wired to the given MockKeyStore with
+// newTestConfig returns a KeyManagerConfig wired to the given MockKeyStore with
 // short rotation/overlap durations suitable for tests.
-func newTestConfig(mockKS *testutil.MockKeyStore) keymanager.ManagerConfig {
-	return keymanager.ManagerConfig{
+func newTestConfig(mockKS *testutil.MockKeyStore) keys.KeyManagerConfig {
+	return keys.KeyManagerConfig{
 		KeyStore:            mockKS,
 		KeySize:             2048,
 		KeyRotationInterval: 24 * time.Hour,
@@ -42,103 +43,143 @@ var _ = Describe("Manager", func() {
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc
+		ctrl   *gomock.Controller
+		mockKS *testutil.MockKeyStore
 	)
 
 	BeforeEach(func() {
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		ctrl = gomock.NewController(GinkgoT())
+		mockKS = testutil.NewMockKeyStore(ctrl)
 	})
 
 	AfterEach(func() {
 		cancel()
+		ctrl.Finish()
 	})
 
 	// ===== PHASE 1: Constructor and Initialization =====
 	Describe("Phase 1: Constructor and Initialization", func() {
-		var ctrl *gomock.Controller
-		var mockKS *testutil.MockKeyStore
-
-		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
-		})
-
-		AfterEach(func() { ctrl.Finish() })
 
 		Context("with valid configuration", func() {
 			It("should create manager successfully", func() {
 				cfg := newTestConfig(mockKS)
-				m, err := keymanager.NewManager(cfg)
+				m, err := keys.NewManager(cfg)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(m).NotTo(BeNil())
 			})
 
 			It("should apply default KeySize when zero", func() {
-				cfg := keymanager.ManagerConfig{
+				cfg := keys.KeyManagerConfig{
 					KeyStore: mockKS,
 					KeySize:  0,
 				}
-				m, err := keymanager.NewManager(cfg)
+				m, err := keys.NewManager(cfg)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(m).NotTo(BeNil())
 			})
 
 			It("should apply default KeyRotationInterval when zero", func() {
-				cfg := keymanager.ManagerConfig{
+				cfg := keys.KeyManagerConfig{
 					KeyStore:            mockKS,
 					KeyRotationInterval: 0,
 				}
-				m, err := keymanager.NewManager(cfg)
+				m, err := keys.NewManager(cfg)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(m).NotTo(BeNil())
 			})
 
 			It("should apply default KeyOverlapDuration when zero", func() {
-				cfg := keymanager.ManagerConfig{
+				cfg := keys.KeyManagerConfig{
 					KeyStore:           mockKS,
 					KeyOverlapDuration: 0,
 				}
-				m, err := keymanager.NewManager(cfg)
+				m, err := keys.NewManager(cfg)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(m).NotTo(BeNil())
 			})
 		})
 
+		Context("tracer defaults and acceptance", func() {
+			It("should apply default Tracer from ConfigDefault when Tracer is nil", func() {
+				cfg := newTestConfig(mockKS)
+				cfg.Tracer = nil
+				m, err := keys.NewManager(cfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(m).NotTo(BeNil())
+				// Verify the manager is usable without panicking (NoOp tracer installed)
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				startCtx, startCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer startCancel()
+				Expect(m.Start(startCtx)).To(Succeed())
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer shutdownCancel()
+				Expect(m.Shutdown(shutdownCtx)).To(Succeed())
+			})
+
+			It("should accept an explicit Tracer without error", func() {
+				mockTracer := testutil.NewMockTracer(ctrl)
+				mockSpan := testutil.NewMockSpan(ctrl)
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Any(), gomock.Any()).Return(ctx, mockSpan).AnyTimes()
+				mockSpan.EXPECT().End().AnyTimes()
+				mockSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
+				mockSpan.EXPECT().SetAttribute(gomock.Any(), gomock.Any()).AnyTimes()
+				mockSpan.EXPECT().RecordError(gomock.Any()).AnyTimes()
+
+				cfg := newTestConfig(mockKS)
+				cfg.Tracer = mockTracer
+				m, err := keys.NewManager(cfg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(m).NotTo(BeNil())
+
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				startCtx, startCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer startCancel()
+				Expect(m.Start(startCtx)).To(Succeed())
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer shutdownCancel()
+				Expect(m.Shutdown(shutdownCtx)).To(Succeed())
+			})
+		})
+
 		Context("with invalid configuration", func() {
 			It("should return ErrInvalidKeyStore when KeyStore is nil", func() {
-				_, err := keymanager.NewManager(keymanager.ManagerConfig{})
-				Expect(err).To(MatchError(keymanager.ErrInvalidKeyStore))
+				_, err := keys.NewManager(keys.KeyManagerConfig{})
+				Expect(err).To(MatchError(keys.ErrInvalidKeyStore))
 			})
 
 			It("should return ErrInvalidKeySize when KeySize is negative", func() {
-				_, err := keymanager.NewManager(keymanager.ManagerConfig{
+				_, err := keys.NewManager(keys.KeyManagerConfig{
 					KeyStore: mockKS,
 					KeySize:  -1,
 				})
-				Expect(err).To(MatchError(keymanager.ErrInvalidKeySize))
+				Expect(err).To(MatchError(keys.ErrInvalidKeySize))
 			})
 
 			It("should return ErrInvalidKeySize when KeySize is below 2048", func() {
-				_, err := keymanager.NewManager(keymanager.ManagerConfig{
+				_, err := keys.NewManager(keys.KeyManagerConfig{
 					KeyStore: mockKS,
 					KeySize:  1024,
 				})
-				Expect(err).To(MatchError(keymanager.ErrInvalidKeySize))
+				Expect(err).To(MatchError(keys.ErrInvalidKeySize))
 			})
 
 			It("should return ErrInvalidKeyRotationInterval when negative", func() {
-				_, err := keymanager.NewManager(keymanager.ManagerConfig{
+				_, err := keys.NewManager(keys.KeyManagerConfig{
 					KeyStore:            mockKS,
 					KeyRotationInterval: -1,
 				})
-				Expect(err).To(MatchError(keymanager.ErrInvalidKeyRotationInterval))
+				Expect(err).To(MatchError(keys.ErrInvalidKeyRotationInterval))
 			})
 
 			It("should return ErrInvalidKeyOverlapDuration when negative", func() {
-				_, err := keymanager.NewManager(keymanager.ManagerConfig{
+				_, err := keys.NewManager(keys.KeyManagerConfig{
 					KeyStore:           mockKS,
 					KeyOverlapDuration: -1,
 				})
-				Expect(err).To(MatchError(keymanager.ErrInvalidKeyOverlapDuration))
+				Expect(err).To(MatchError(keys.ErrInvalidKeyOverlapDuration))
 			})
 		})
 	})
@@ -146,39 +187,33 @@ var _ = Describe("Manager", func() {
 	// ===== PHASE 2: ConfigDefault =====
 	Describe("Phase 2: ConfigDefault", func() {
 		It("should return the correct default key size", func() {
-			d := keymanager.ConfigDefault()
+			d := keys.DefaultKeyManagerConfig()
 			Expect(d.KeySize).To(Equal(2048))
 		})
 
 		It("should return the correct default rotation interval", func() {
-			d := keymanager.ConfigDefault()
+			d := keys.DefaultKeyManagerConfig()
 			Expect(d.KeyRotationInterval).To(Equal(30 * 24 * time.Hour))
 		})
 
 		It("should return the correct default overlap duration", func() {
-			d := keymanager.ConfigDefault()
+			d := keys.DefaultKeyManagerConfig()
 			Expect(d.KeyOverlapDuration).To(Equal(1 * time.Hour))
 		})
 
 		It("should leave KeyStore nil", func() {
-			d := keymanager.ConfigDefault()
+			d := keys.DefaultKeyManagerConfig()
 			Expect(d.KeyStore).To(BeNil())
 		})
 	})
 
 	// ===== PHASE 3: Start =====
 	Describe("Phase 3: Start", func() {
-		var (
-			ctrl    *gomock.Controller
-			mockKS  *testutil.MockKeyStore
-			manager *keymanager.Manager
-		)
+		var manager *keys.Manager
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
 			var err error
-			manager, err = keymanager.NewManager(newTestConfig(mockKS))
+			manager, err = keys.NewManager(newTestConfig(mockKS))
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -188,17 +223,16 @@ var _ = Describe("Manager", func() {
 				defer cancel()
 				manager.Shutdown(shutdownCtx)
 			}
-			ctrl.Finish()
 		})
 
 		Context("when the store has existing keys", func() {
 			It("should load keys from the store and set IsRunning", func() {
 				key := newTestKey()
-				storedKeys := []*keymanager.StoredKey{
+				storedKeys := []*keys.StoredKey{
 					{
 						KeyID:      "existing-key-id",
 						PrivateKey: key,
-						Metadata:   keymanager.KeyMetadata{ID: "existing-key-id", CreatedAt: time.Now()},
+						Metadata:   keys.KeyMetadata{ID: "existing-key-id", CreatedAt: time.Now()},
 					},
 				}
 				mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
@@ -211,7 +245,7 @@ var _ = Describe("Manager", func() {
 
 		Context("when the store is empty", func() {
 			It("should generate a new key pair, save it, and set IsRunning", func() {
-				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
 				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				err := manager.Start(ctx)
@@ -222,11 +256,11 @@ var _ = Describe("Manager", func() {
 
 		Context("error cases", func() {
 			It("should return ErrAlreadyRunning on double Start", func() {
-				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
 				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 				Expect(manager.Start(ctx)).To(Succeed())
-				Expect(manager.Start(ctx)).To(MatchError(keymanager.ErrAlreadyRunning))
+				Expect(manager.Start(ctx)).To(MatchError(keys.ErrAlreadyRunning))
 			})
 
 			It("should return context error when context is cancelled before Start", func() {
@@ -246,7 +280,7 @@ var _ = Describe("Manager", func() {
 			})
 
 			It("should return error when Save fails on empty store", func() {
-				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
 				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(testutil.NewMockError("disk full"))
 
 				err := manager.Start(ctx)
@@ -258,17 +292,11 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 4: GetCurrentSigningKey =====
 	Describe("Phase 4: GetCurrentSigningKey", func() {
-		var (
-			ctrl    *gomock.Controller
-			mockKS  *testutil.MockKeyStore
-			manager *keymanager.Manager
-		)
+		var manager *keys.Manager
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
 			var err error
-			manager, err = keymanager.NewManager(newTestConfig(mockKS))
+			manager, err = keys.NewManager(newTestConfig(mockKS))
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -278,12 +306,11 @@ var _ = Describe("Manager", func() {
 				defer cancel()
 				manager.Shutdown(shutdownCtx)
 			}
-			ctrl.Finish()
 		})
 
 		Context("when the manager is running", func() {
 			BeforeEach(func() {
-				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
 				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				Expect(manager.Start(ctx)).To(Succeed())
 			})
@@ -311,13 +338,13 @@ var _ = Describe("Manager", func() {
 		Context("when the manager is not running", func() {
 			It("should return ErrManagerNotRunning", func() {
 				_, _, err := manager.GetCurrentSigningKey(ctx)
-				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+				Expect(err).To(MatchError(keys.ErrManagerNotRunning))
 			})
 		})
 
 		Context("context cancellation", func() {
 			BeforeEach(func() {
-				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
 				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				Expect(manager.Start(ctx)).To(Succeed())
 			})
@@ -335,30 +362,26 @@ var _ = Describe("Manager", func() {
 	// ===== PHASE 5: GetPublicKey =====
 	Describe("Phase 5: GetPublicKey", func() {
 		var (
-			ctrl      *gomock.Controller
-			mockKS    *testutil.MockKeyStore
-			manager   *keymanager.Manager
+			manager   *keys.Manager
 			testKey   *rsa.PrivateKey
 			testKeyID string
 		)
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
 			testKey = newTestKey()
 			testKeyID = "test-key-id"
 
-			storedKeys := []*keymanager.StoredKey{
+			storedKeys := []*keys.StoredKey{
 				{
 					KeyID:      testKeyID,
 					PrivateKey: testKey,
-					Metadata:   keymanager.KeyMetadata{ID: testKeyID, CreatedAt: time.Now()},
+					Metadata:   keys.KeyMetadata{ID: testKeyID, CreatedAt: time.Now()},
 				},
 			}
 			mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
 
 			var err error
-			manager, err = keymanager.NewManager(newTestConfig(mockKS))
+			manager, err = keys.NewManager(newTestConfig(mockKS))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(manager.Start(ctx)).To(Succeed())
 		})
@@ -369,7 +392,6 @@ var _ = Describe("Manager", func() {
 				defer cancel()
 				manager.Shutdown(shutdownCtx)
 			}
-			ctrl.Finish()
 		})
 
 		Context("cache hit", func() {
@@ -385,7 +407,7 @@ var _ = Describe("Manager", func() {
 			It("should call LoadKey on the store for an uncached key ID", func() {
 				uncachedKey := newTestKey()
 				uncachedID := "uncached-key-id"
-				meta := &keymanager.KeyMetadata{ID: uncachedID, CreatedAt: time.Now()}
+				meta := &keys.KeyMetadata{ID: uncachedID, CreatedAt: time.Now()}
 
 				mockKS.EXPECT().LoadKey(gomock.Any(), uncachedID).Return(uncachedKey, meta, nil)
 
@@ -395,16 +417,16 @@ var _ = Describe("Manager", func() {
 			})
 
 			It("should return ErrKeyNotFound when store returns ErrKeyStoreKeyNotFound", func() {
-				mockKS.EXPECT().LoadKey(gomock.Any(), "missing-id").Return(nil, nil, keymanager.ErrKeyStoreKeyNotFound)
+				mockKS.EXPECT().LoadKey(gomock.Any(), "missing-id").Return(nil, nil, keys.ErrKeyStoreKeyNotFound)
 
 				_, err := manager.GetPublicKey(ctx, "missing-id")
-				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+				Expect(err).To(MatchError(keys.ErrKeyNotFound))
 			})
 
 			It("should return ErrKeyNotFound for an expired key from the store", func() {
 				expiredKey := newTestKey()
 				expiredID := "expired-key-id"
-				expiredMeta := &keymanager.KeyMetadata{
+				expiredMeta := &keys.KeyMetadata{
 					ID:        expiredID,
 					CreatedAt: time.Now().Add(-2 * time.Hour),
 					ExpiresAt: time.Now().Add(-1 * time.Hour),
@@ -413,19 +435,19 @@ var _ = Describe("Manager", func() {
 				mockKS.EXPECT().LoadKey(gomock.Any(), expiredID).Return(expiredKey, expiredMeta, nil)
 
 				_, err := manager.GetPublicKey(ctx, expiredID)
-				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+				Expect(err).To(MatchError(keys.ErrKeyNotFound))
 			})
 		})
 
 		Context("input validation", func() {
 			It("should return ErrInvalidKeyID for an empty key ID", func() {
 				_, err := manager.GetPublicKey(ctx, "")
-				Expect(err).To(MatchError(keymanager.ErrInvalidKeyID))
+				Expect(err).To(MatchError(keys.ErrInvalidKeyID))
 			})
 
 			It("should return ErrInvalidKeyID for a whitespace-only key ID", func() {
 				_, err := manager.GetPublicKey(ctx, "   ")
-				Expect(err).To(MatchError(keymanager.ErrInvalidKeyID))
+				Expect(err).To(MatchError(keys.ErrInvalidKeyID))
 			})
 
 			It("should trim whitespace from keyID and succeed", func() {
@@ -466,11 +488,7 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 6: GetJWKS =====
 	Describe("Phase 6: GetJWKS", func() {
-		var (
-			ctrl    *gomock.Controller
-			mockKS  *testutil.MockKeyStore
-			manager *keymanager.Manager
-		)
+		var manager *keys.Manager
 
 		AfterEach(func() {
 			if manager != nil && manager.IsRunning() {
@@ -478,43 +496,35 @@ var _ = Describe("Manager", func() {
 				defer cancel()
 				manager.Shutdown(shutdownCtx)
 			}
-			if ctrl != nil {
-				ctrl.Finish()
-			}
 		})
 
 		Context("when the manager is not running", func() {
 			BeforeEach(func() {
-				ctrl = gomock.NewController(GinkgoT())
-				mockKS = testutil.NewMockKeyStore(ctrl)
 				var err error
-				manager, err = keymanager.NewManager(newTestConfig(mockKS))
+				manager, err = keys.NewManager(newTestConfig(mockKS))
 				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("should return ErrManagerNotRunning", func() {
 				_, err := manager.GetJWKS(ctx)
-				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+				Expect(err).To(MatchError(keys.ErrManagerNotRunning))
 			})
 		})
 
 		Context("when the context is already cancelled", func() {
 			BeforeEach(func() {
-				ctrl = gomock.NewController(GinkgoT())
-				mockKS = testutil.NewMockKeyStore(ctrl)
-
 				activeKey := newTestKey()
-				storedKeys := []*keymanager.StoredKey{
+				storedKeys := []*keys.StoredKey{
 					{
 						KeyID:      "active-key",
 						PrivateKey: activeKey,
-						Metadata:   keymanager.KeyMetadata{ID: "active-key", CreatedAt: time.Now()},
+						Metadata:   keys.KeyMetadata{ID: "active-key", CreatedAt: time.Now()},
 					},
 				}
 				mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
 
 				var err error
-				manager, err = keymanager.NewManager(newTestConfig(mockKS))
+				manager, err = keys.NewManager(newTestConfig(mockKS))
 				Expect(err).NotTo(HaveOccurred())
 				Expect(manager.Start(ctx)).To(Succeed())
 			})
@@ -530,22 +540,19 @@ var _ = Describe("Manager", func() {
 
 		Context("with multiple keys", func() {
 			It("should return all non-expired keys", func() {
-				ctrl = gomock.NewController(GinkgoT())
-				mockKS = testutil.NewMockKeyStore(ctrl)
-
 				activeKey := newTestKey()
 				expiredKey := newTestKey()
 
-				storedKeys := []*keymanager.StoredKey{
+				storedKeys := []*keys.StoredKey{
 					{
 						KeyID:      "active-key",
 						PrivateKey: activeKey,
-						Metadata:   keymanager.KeyMetadata{ID: "active-key", CreatedAt: time.Now()},
+						Metadata:   keys.KeyMetadata{ID: "active-key", CreatedAt: time.Now()},
 					},
 					{
 						KeyID:      "current-key",
 						PrivateKey: expiredKey,
-						Metadata: keymanager.KeyMetadata{
+						Metadata: keys.KeyMetadata{
 							ID:        "current-key",
 							CreatedAt: time.Now(),
 						},
@@ -554,7 +561,7 @@ var _ = Describe("Manager", func() {
 				mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
 
 				var err error
-				manager, err = keymanager.NewManager(newTestConfig(mockKS))
+				manager, err = keys.NewManager(newTestConfig(mockKS))
 				Expect(err).NotTo(HaveOccurred())
 				Expect(manager.Start(ctx)).To(Succeed())
 
@@ -573,28 +580,21 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 7: RotateKeys =====
 	Describe("Phase 7: RotateKeys", func() {
-		var (
-			ctrl    *gomock.Controller
-			mockKS  *testutil.MockKeyStore
-			manager *keymanager.Manager
-		)
+		var manager *keys.Manager
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
-
 			key := newTestKey()
-			storedKeys := []*keymanager.StoredKey{
+			storedKeys := []*keys.StoredKey{
 				{
 					KeyID:      "original-key",
 					PrivateKey: key,
-					Metadata:   keymanager.KeyMetadata{ID: "original-key", CreatedAt: time.Now()},
+					Metadata:   keys.KeyMetadata{ID: "original-key", CreatedAt: time.Now()},
 				},
 			}
 			mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
 
 			var err error
-			manager, err = keymanager.NewManager(newTestConfig(mockKS))
+			manager, err = keys.NewManager(newTestConfig(mockKS))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(manager.Start(ctx)).To(Succeed())
 		})
@@ -605,7 +605,6 @@ var _ = Describe("Manager", func() {
 				defer cancel()
 				manager.Shutdown(shutdownCtx)
 			}
-			ctrl.Finish()
 		})
 
 		Context("successful rotation", func() {
@@ -657,9 +656,9 @@ var _ = Describe("Manager", func() {
 				defer ctrl2.Finish()
 				mockKS2 := testutil.NewMockKeyStore(ctrl2)
 
-				m2, _ := keymanager.NewManager(newTestConfig(mockKS2))
+				m2, _ := keys.NewManager(newTestConfig(mockKS2))
 				err := m2.RotateKeys(ctx)
-				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+				Expect(err).To(MatchError(keys.ErrManagerNotRunning))
 			})
 
 			It("should return error when Save fails", func() {
@@ -681,22 +680,10 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 8: Shutdown =====
 	Describe("Phase 8: Shutdown", func() {
-		var (
-			ctrl   *gomock.Controller
-			mockKS *testutil.MockKeyStore
-		)
-
-		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
-			mockKS = testutil.NewMockKeyStore(ctrl)
-		})
-
-		AfterEach(func() { ctrl.Finish() })
-
-		startManager := func() *keymanager.Manager {
-			mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+		startManager := func() *keys.Manager {
+			mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
 			mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-			m, err := keymanager.NewManager(newTestConfig(mockKS))
+			m, err := keys.NewManager(newTestConfig(mockKS))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(m.Start(ctx)).To(Succeed())
 			return m
@@ -752,39 +739,29 @@ var _ = Describe("Manager", func() {
 
 	// ===== PHASE 9: Metrics Recording =====
 	Describe("Phase 9: Metrics Recording", func() {
-		var (
-			ctrl   *gomock.Controller
-			mockM  *testutil.MockMetrics
-			mockKS *testutil.MockKeyStore
-		)
+		var mockM *testutil.MockMetrics
 
 		BeforeEach(func() {
-			ctrl = gomock.NewController(GinkgoT())
 			mockM = testutil.NewMockMetrics(ctrl)
-			mockKS = testutil.NewMockKeyStore(ctrl)
-		})
-
-		AfterEach(func() {
-			ctrl.Finish()
 		})
 
 		// newMetricManager creates and starts a Manager wired with mockM and mockKS.
 		// It sets up LoadAll to return one pre-built key, which triggers the
 		// SetGauge(metricKeyActiveVersionsCount) call during Start.
-		newMetricManager := func() *keymanager.Manager {
+		newMetricManager := func() *keys.Manager {
 			existingKey := newTestKey()
 			existingID := "existing-metric-key"
-			storedKeys := []*keymanager.StoredKey{
+			storedKeys := []*keys.StoredKey{
 				{
 					KeyID:      existingID,
 					PrivateKey: existingKey,
-					Metadata:   keymanager.KeyMetadata{ID: existingID, CreatedAt: time.Now()},
+					Metadata:   keys.KeyMetadata{ID: existingID, CreatedAt: time.Now()},
 				},
 			}
 			mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
-			mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", float64(1), gomock.Nil())
+			mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", float64(1), map[string]string{"namespace": ""})
 
-			m, err := keymanager.NewManager(keymanager.ManagerConfig{
+			m, err := keys.NewManager(keys.KeyManagerConfig{
 				KeyStore:            mockKS,
 				Metrics:             mockM,
 				KeySize:             2048,
@@ -803,10 +780,10 @@ var _ = Describe("Manager", func() {
 			if status == "success" {
 				errorType = ""
 			}
-			mockM.EXPECT().IncrementCounter("jwtauth_key_rotations_total", map[string]string{"status": status, "error_type": errorType})
-			mockM.EXPECT().RecordDuration("jwtauth_key_operation_duration_seconds", gomock.Any(), map[string]string{"operation": "rotate"})
+			mockM.EXPECT().IncrementCounter("jwtauth_key_rotations_total", map[string]string{"status": status, "error_type": errorType, "namespace": ""})
+			mockM.EXPECT().RecordDuration("jwtauth_key_operation_duration_seconds", gomock.Any(), map[string]string{"operation": "rotate", "namespace": ""})
 			if status == "success" {
-				mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", gomock.Any(), gomock.Nil())
+				mockM.EXPECT().SetGauge("jwtauth_key_active_versions_count", gomock.Any(), map[string]string{"namespace": ""})
 			}
 		}
 
@@ -865,14 +842,14 @@ var _ = Describe("Manager", func() {
 					_ = m.Shutdown(shutdownCtx)
 				}()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "success", "error_type": ""})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "success", "error_type": "", "namespace": ""})
 
 				_, _, err := m.GetCurrentSigningKey(ctx)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("should record error counter when manager is not running", func() {
-				m, err := keymanager.NewManager(keymanager.ManagerConfig{
+				m, err := keys.NewManager(keys.KeyManagerConfig{
 					KeyStore:            mockKS,
 					Metrics:             mockM,
 					KeySize:             2048,
@@ -881,10 +858,10 @@ var _ = Describe("Manager", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "error", "error_type": "error"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "error", "error_type": "error", "namespace": ""})
 
 				_, _, err = m.GetCurrentSigningKey(ctx)
-				Expect(err).To(MatchError(keymanager.ErrManagerNotRunning))
+				Expect(err).To(MatchError(keys.ErrManagerNotRunning))
 			})
 
 			It("should record cancelled counter when context is already cancelled", func() {
@@ -898,7 +875,7 @@ var _ = Describe("Manager", func() {
 				cancelledCtx, cancelFn := context.WithCancel(context.Background())
 				cancelFn()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "cancelled", "error_type": "cancelled"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_signing_operations_total", map[string]string{"status": "cancelled", "error_type": "cancelled", "namespace": ""})
 
 				_, _, err := m.GetCurrentSigningKey(cancelledCtx)
 				Expect(err).To(MatchError(context.Canceled))
@@ -914,7 +891,7 @@ var _ = Describe("Manager", func() {
 					_ = m.Shutdown(shutdownCtx)
 				}()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "success", "error_type": ""})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "success", "error_type": "", "namespace": ""})
 
 				_, err := m.GetPublicKey(ctx, "existing-metric-key")
 				Expect(err).NotTo(HaveOccurred())
@@ -928,11 +905,11 @@ var _ = Describe("Manager", func() {
 					_ = m.Shutdown(shutdownCtx)
 				}()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "not_found", "error_type": "not_found"})
-				mockKS.EXPECT().LoadKey(gomock.Any(), "ghost-key").Return(nil, nil, keymanager.ErrKeyStoreKeyNotFound)
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "not_found", "error_type": "not_found", "namespace": ""})
+				mockKS.EXPECT().LoadKey(gomock.Any(), "ghost-key").Return(nil, nil, keys.ErrKeyStoreKeyNotFound)
 
 				_, err := m.GetPublicKey(ctx, "ghost-key")
-				Expect(err).To(MatchError(keymanager.ErrKeyNotFound))
+				Expect(err).To(MatchError(keys.ErrKeyNotFound))
 			})
 
 			It("should record cancelled counter when context is already cancelled", func() {
@@ -946,7 +923,7 @@ var _ = Describe("Manager", func() {
 				cancelledCtx, cancelFn := context.WithCancel(context.Background())
 				cancelFn()
 
-				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "cancelled", "error_type": "cancelled"})
+				mockM.EXPECT().IncrementCounter("jwtauth_key_validation_operations_total", map[string]string{"status": "cancelled", "error_type": "cancelled", "namespace": ""})
 
 				_, err := m.GetPublicKey(cancelledCtx, "some-key")
 				Expect(err).To(MatchError(context.Canceled))
@@ -957,16 +934,16 @@ var _ = Describe("Manager", func() {
 			It("should not panic on any operation when metrics is nil", func() {
 				existingKey := newTestKey()
 				existingID := "nil-metrics-key"
-				storedKeys := []*keymanager.StoredKey{
+				storedKeys := []*keys.StoredKey{
 					{
 						KeyID:      existingID,
 						PrivateKey: existingKey,
-						Metadata:   keymanager.KeyMetadata{ID: existingID, CreatedAt: time.Now()},
+						Metadata:   keys.KeyMetadata{ID: existingID, CreatedAt: time.Now()},
 					},
 				}
 				mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
 
-				m, err := keymanager.NewManager(keymanager.ManagerConfig{
+				m, err := keys.NewManager(keys.KeyManagerConfig{
 					KeyStore:            mockKS,
 					KeySize:             2048,
 					KeyRotationInterval: 24 * time.Hour,
@@ -986,6 +963,364 @@ var _ = Describe("Manager", func() {
 				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				mockKS.EXPECT().UpdateMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 				Expect(func() { _ = m.RotateKeys(ctx) }).NotTo(Panic())
+			})
+		})
+	})
+
+	// ===== PHASE 11: Tracing =====
+	Describe("Phase 11: Tracing", func() {
+		var (
+			mockTracer *testutil.MockTracer
+			manager    *keys.Manager
+		)
+
+		BeforeEach(func() {
+			mockTracer = testutil.NewMockTracer(ctrl)
+		})
+
+		// newTracingManager starts a manager wired with mockTracer. setupSpan is
+		// returned for "KeyManager.Start" and "KeyManager.Shutdown" spans so that
+		// lifecycle calls do not interfere with the per-test span assertions.
+		// Individual tests register their own span (testSpan) for the method under test.
+		newTracingManager := func(setupSpan *testutil.MockSpan) *keys.Manager {
+			setupSpan.EXPECT().End().AnyTimes()
+			setupSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
+
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.Start"), gomock.Any()).Return(ctx, setupSpan)
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.Shutdown"), gomock.Any()).Return(ctx, setupSpan).AnyTimes()
+
+			existingKey := newTestKey()
+			existingID := "tracing-test-key"
+			storedKeys := []*keys.StoredKey{
+				{
+					KeyID:      existingID,
+					PrivateKey: existingKey,
+					Metadata:   keys.KeyMetadata{ID: existingID, CreatedAt: time.Now()},
+				},
+			}
+			mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
+
+			cfg := newTestConfig(mockKS)
+			cfg.Tracer = mockTracer
+			var err error
+			manager, err = keys.NewManager(cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(manager.Start(ctx)).To(Succeed())
+			return manager
+		}
+
+		shutdownManager := func() {
+			if manager != nil && manager.IsRunning() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = manager.Shutdown(shutdownCtx)
+			}
+		}
+
+		Context("GetCurrentSigningKey success", func() {
+			It("should start a span named KeyManager.GetCurrentSigningKey, set key_id attribute, and StatusOK", func() {
+				setupSpan := testutil.NewMockSpan(ctrl)
+				testSpan := testutil.NewMockSpan(ctrl)
+				m := newTracingManager(setupSpan)
+				defer shutdownManager()
+
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.GetCurrentSigningKey"), gomock.Any()).Return(ctx, testSpan)
+				testSpan.EXPECT().SetAttribute("key_id", "tracing-test-key")
+				testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+				testSpan.EXPECT().End()
+
+				key, keyID, err := m.GetCurrentSigningKey(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(key).NotTo(BeNil())
+				Expect(keyID).To(Equal("tracing-test-key"))
+			})
+		})
+
+		Context("GetPublicKey error path", func() {
+			It("should call RecordError and StatusError when key is not found in store", func() {
+				setupSpan := testutil.NewMockSpan(ctrl)
+				testSpan := testutil.NewMockSpan(ctrl)
+				m := newTracingManager(setupSpan)
+				defer shutdownManager()
+
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.GetPublicKey"), gomock.Any()).Return(ctx, testSpan)
+				testSpan.EXPECT().SetAttribute("key_id", "ghost-key")
+				testSpan.EXPECT().RecordError(keys.ErrKeyNotFound)
+				testSpan.EXPECT().SetStatus(tracing.StatusError, keys.ErrKeyNotFound.Error())
+				testSpan.EXPECT().End()
+
+				mockKS.EXPECT().LoadKey(gomock.Any(), "ghost-key").Return(nil, nil, keys.ErrKeyStoreKeyNotFound)
+
+				_, err := m.GetPublicKey(ctx, "ghost-key")
+				Expect(err).To(MatchError(keys.ErrKeyNotFound))
+			})
+		})
+
+		Context("RotateKeys success", func() {
+			It("should start and end a span for RotateKeys, set key_id attribute, and StatusOK", func() {
+				setupSpan := testutil.NewMockSpan(ctrl)
+				testSpan := testutil.NewMockSpan(ctrl)
+				m := newTracingManager(setupSpan)
+				defer shutdownManager()
+
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.RotateKeys"), gomock.Any()).Return(ctx, testSpan)
+				testSpan.EXPECT().SetAttribute("key_id", gomock.Any())
+				testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+				testSpan.EXPECT().End()
+
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockKS.EXPECT().UpdateMetadata(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+				Expect(m.RotateKeys(ctx)).To(Succeed())
+			})
+		})
+	})
+
+	// ===== PHASE 10: GetKeyInfo and GetCurrentKeyInfo =====
+	Describe("Phase 10: GetKeyInfo and GetCurrentKeyInfo", func() {
+		var m *keys.Manager
+
+		// startWithKeys starts the manager after loading the given StoredKeys.
+		startWithKeys := func(storedKeys []*keys.StoredKey) {
+			mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
+			var err error
+			m, err = keys.NewManager(newTestConfig(mockKS))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(m.Start(ctx)).To(Succeed())
+		}
+
+		shutdownManager := func() {
+			if m != nil && m.IsRunning() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				m.Shutdown(shutdownCtx)
+			}
+		}
+
+		Context("when the manager is not running", func() {
+			BeforeEach(func() {
+				var err error
+				m, err = keys.NewManager(newTestConfig(mockKS))
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("GetKeyInfo should return ErrManagerNotRunning", func() {
+				info, err := m.GetKeyInfo(ctx, "")
+				Expect(err).To(MatchError(keys.ErrManagerNotRunning))
+				Expect(info).To(BeNil())
+			})
+
+			It("GetCurrentKeyInfo should return ErrManagerNotRunning", func() {
+				info, err := m.GetCurrentKeyInfo(ctx)
+				Expect(err).To(MatchError(keys.ErrManagerNotRunning))
+				Expect(info).To(BeNil())
+			})
+		})
+
+		Context("when manager is running and keyID is empty", func() {
+			var currentKeyID string
+
+			BeforeEach(func() {
+				currentKeyID = "key-current"
+				startWithKeys([]*keys.StoredKey{
+					{
+						KeyID:      currentKeyID,
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: currentKeyID, CreatedAt: time.Now().Add(-1 * time.Hour)},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return KeyInfo with IsCurrent=true and IsValid=true", func() {
+				info, err := m.GetKeyInfo(ctx, "")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info).NotTo(BeNil())
+				Expect(info.KeyID).To(Equal(currentKeyID))
+				Expect(info.IsCurrent).To(BeTrue())
+				Expect(info.IsValid).To(BeTrue())
+				Expect(info.Algorithm).To(Equal("RS256"))
+				Expect(info.KeySizeBits).To(Equal(2048))
+			})
+
+			It("should populate RotateAt for the current key", func() {
+				info, err := m.GetKeyInfo(ctx, "")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info.RotateAt.IsZero()).To(BeFalse())
+			})
+		})
+
+		Context("when a specific keyID is provided", func() {
+			var currentKeyID, oldKeyID string
+
+			BeforeEach(func() {
+				currentKeyID = "key-current"
+				oldKeyID = "key-old"
+				// currentKeyID has the most recent CreatedAt, so Start will pick it
+				startWithKeys([]*keys.StoredKey{
+					{
+						KeyID:      currentKeyID,
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: currentKeyID, CreatedAt: time.Now()},
+					},
+					{
+						KeyID:      oldKeyID,
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: oldKeyID, CreatedAt: time.Now().Add(-48 * time.Hour), ExpiresAt: time.Now().Add(-24 * time.Hour)},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return IsCurrent=true for the current signing key", func() {
+				info, err := m.GetKeyInfo(ctx, currentKeyID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info.KeyID).To(Equal(currentKeyID))
+				Expect(info.IsCurrent).To(BeTrue())
+			})
+
+			It("should return IsCurrent=false for a non-current key", func() {
+				info, err := m.GetKeyInfo(ctx, oldKeyID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info.IsCurrent).To(BeFalse())
+			})
+		})
+
+		Context("when the key does not exist", func() {
+			BeforeEach(func() {
+				startWithKeys([]*keys.StoredKey{
+					{
+						KeyID:      "key-only",
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: "key-only", CreatedAt: time.Now()},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return ErrKeyNotFound for an unknown keyID", func() {
+				info, err := m.GetKeyInfo(ctx, "does-not-exist")
+				Expect(err).To(MatchError(keys.ErrKeyNotFound))
+				Expect(info).To(BeNil())
+			})
+		})
+
+		Context("when the context is already cancelled", func() {
+			BeforeEach(func() {
+				startWithKeys([]*keys.StoredKey{
+					{
+						KeyID:      "key-ctx",
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: "key-ctx", CreatedAt: time.Now()},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return context.Canceled", func() {
+				cancelCtx, cancelFn := context.WithCancel(context.Background())
+				cancelFn()
+
+				info, err := m.GetKeyInfo(cancelCtx, "")
+				Expect(err).To(MatchError(context.Canceled))
+				Expect(info).To(BeNil())
+			})
+		})
+
+		Context("when the context deadline has already passed", func() {
+			BeforeEach(func() {
+				startWithKeys([]*keys.StoredKey{
+					{
+						KeyID:      "key-deadline",
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: "key-deadline", CreatedAt: time.Now()},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return context.DeadlineExceeded", func() {
+				deadCtx, deadCancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+				defer deadCancel()
+
+				info, err := m.GetKeyInfo(deadCtx, "")
+				Expect(err).To(MatchError(context.DeadlineExceeded))
+				Expect(info).To(BeNil())
+			})
+		})
+
+		Context("when the key has already expired", func() {
+			var oldKeyID string
+
+			BeforeEach(func() {
+				oldKeyID = "key-expired"
+				startWithKeys([]*keys.StoredKey{
+					{
+						KeyID:      "key-current",
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: "key-current", CreatedAt: time.Now()},
+					},
+					{
+						KeyID:      oldKeyID,
+						PrivateKey: newTestKey(),
+						Metadata: keys.KeyMetadata{
+							ID:        oldKeyID,
+							CreatedAt: time.Now().Add(-48 * time.Hour),
+							ExpiresAt: time.Now().Add(-1 * time.Hour),
+						},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return IsValid=false, IsCurrent=false, RotateAt zero for an expired key", func() {
+				info, err := m.GetKeyInfo(ctx, oldKeyID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info.IsValid).To(BeFalse())
+				Expect(info.IsCurrent).To(BeFalse())
+				Expect(info.RotateAt.IsZero()).To(BeTrue())
+			})
+		})
+
+		Context("GetCurrentKeyInfo", func() {
+			var currentKeyID string
+
+			BeforeEach(func() {
+				currentKeyID = "key-convenience"
+				startWithKeys([]*keys.StoredKey{
+					{
+						KeyID:      currentKeyID,
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: currentKeyID, CreatedAt: time.Now().Add(-30 * time.Minute)},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return the same result as GetKeyInfo with empty keyID", func() {
+				info1, err1 := m.GetCurrentKeyInfo(ctx)
+				info2, err2 := m.GetKeyInfo(ctx, "")
+
+				Expect(err1).NotTo(HaveOccurred())
+				Expect(err2).NotTo(HaveOccurred())
+				Expect(info1.KeyID).To(Equal(info2.KeyID))
+				Expect(info1.CreatedAt).To(Equal(info2.CreatedAt))
+				Expect(info1.IsCurrent).To(BeTrue())
+				Expect(info2.IsCurrent).To(BeTrue())
+			})
+
+			It("should return ErrManagerNotRunning when not running", func() {
+				shutdownManager()
+				info, err := m.GetCurrentKeyInfo(ctx)
+				Expect(err).To(MatchError(keys.ErrManagerNotRunning))
+				Expect(info).To(BeNil())
 			})
 		})
 	})

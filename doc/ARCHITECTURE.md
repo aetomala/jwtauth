@@ -45,7 +45,7 @@ jwtauth is designed as a production-ready, highly observable, and testable **sta
 **Example**:
 ```go
 // KeyManager depends on abstractions, not concrete implementations
-type ManagerConfig struct {
+type KeyManagerConfig struct {
     Logger  logging.Logger   // Interface, not *slog.Logger
     Metrics metrics.Metrics  // Interface, not *PrometheusMetrics
 }
@@ -54,9 +54,10 @@ type ManagerConfig struct {
 ### 2. Single Responsibility Principle
 
 Each package has one clear responsibility:
-- `pkg/keymanager` - RSA key generation, rotation, and management
+- `pkg/keys` - RSA key generation, rotation, and management
 - `pkg/logging` - Logging abstraction and adapters
 - `pkg/metrics` - Metrics abstraction and implementations
+- `pkg/tracing` - Distributed tracing abstraction and OTel adapter
 - `pkg/tokens` - JWT token creation, validation, and lifecycle management
 - `pkg/storage` - Refresh token persistence (memory, Redis, extensible)
 
@@ -85,89 +86,19 @@ Build what's needed now:
 
 ## Project Structure
 
-```
-github.com/aetomala/jwtauth/
-├── pkg/                           # Public API packages
-│   ├── logging/                   # Logging abstraction
-│   │   ├── logger.go              # Logger interface
-│   │   ├── noop.go                # NoOp implementation
-│   │   ├── slog_adapter.go        # Standard library adapter
-│   │   ├── logger_test.go         # Logging tests (76 specs)
-│   │   └── README.md              # Usage documentation
-│   ├── metrics/                   # Metrics abstraction and implementations
-│   │   ├── interface.go           # Metrics interface
-│   │   ├── noop.go                # NoOp implementation
-│   │   ├── prometheus.go          # Prometheus implementation
-│   │   ├── metrics_suite_test.go  # Ginkgo bootstrap
-│   │   ├── prometheus_test.go     # 9-phase Prometheus test suite (66 specs)
-│   │   └── noop_test.go           # NoOp tests
-│   ├── keymanager/                # Key rotation and management ✅
-│   │   ├── keymanager.go          # Manager: lifecycle, rotation, JWKS generation
-│   │   ├── interface.go           # Manager interface
-│   │   ├── keystore.go            # KeyStore interface, StoredKey type, sentinel errors
-│   │   ├── disk.go                # DiskKeyStore — filesystem-backed KeyStore
-│   │   ├── redis.go               # RedisKeyStore — Redis-backed KeyStore for distributed deployments
-│   │   ├── observability.go       # Metric name constants (KeyStore + Manager)
-│   │   ├── keymanager_test.go     # 9-phase Manager tests (52 specs, MockKeyStore)
-│   │   ├── disk_test.go           # 9-phase DiskKeyStore tests (38 specs)
-│   │   └── redis_test.go          # 9-phase RedisKeyStore tests (35 specs, miniredis)
-│   ├── tokens/                    # JWT token operations (Beta)
-│   │   ├── manager.go             # TokenService implementation
-│   │   ├── claims.go              # Claims management
-│   │   ├── manager_test.go        # Token operations tests
-│   │   ├── manager_lifecycle_test.go  # Lifecycle management tests
-│   │   └── integration/           # Integration tests
-│   │       └── integration_test.go
-│   └── storage/                   # Refresh token storage ✅
-│       ├── interface.go           # RefreshStore interface
-│       ├── errors.go              # Sentinel error types
-│       ├── observability.go       # Metric name constants
-│       ├── memory.go              # In-memory implementation
-│       ├── memory_test.go         # Test runner for MemoryRefreshStore
-│       ├── redis.go               # Redis implementation
-│       ├── redis_test.go          # Test runner for RedisRefreshStore
-│       ├── storage_suite_test.go  # Ginkgo bootstrap
-│       └── suite_test.go          # Shared test suite (61 tests, runs against both implementations)
-├── internal/                      # Private packages
-│   └── testutil/                  # Shared test utilities
-│       ├── errors.go              # Shared test error helpers
-│       ├── mock_keymanager.go     # gomock-generated MockKeyManager
-│       ├── mock_keystore.go       # gomock-generated MockKeyStore
-│       ├── mock_logger.go         # Reusable MockLogger
-│       ├── mock_metrics.go        # gomock-generated MockMetrics
-│       └── mock_refreshstore.go   # gomock-generated MockRefreshStore
-├── doc/                           # Documentation
-│   ├── ARCHITECTURE.md            # This file
-│   └── DEPLOYMENT.md              # Deployment guide
-├── examples/                      # Framework usage examples
-│   ├── gin-example/               # Gin HTTP framework
-│   ├── echo-example/              # Echo HTTP framework
-│   ├── chi-example/               # Chi HTTP router
-│   └── correlation-example/       # End-to-end correlation ID with stdlib net/http
-└── jwtauth_suite_test.go          # Root Ginkgo suite bootstrap
-```
+| Package | Purpose | Status |
+|---------|---------|--------|
+| `pkg/keys` | Cryptographic key lifecycle, rotation, JWKS generation | ✅ Stable |
+| `pkg/tokens` | JWT token issuance and validation | 🟡 Beta |
+| `pkg/storage` | Refresh token storage — memory and Redis backends | ✅ Stable |
+| `pkg/logging` | Logging abstraction with slog adapter | ✅ Stable |
+| `pkg/metrics` | Metrics abstraction with Prometheus implementation | ✅ Stable |
+| `pkg/tracing` | Distributed tracing abstraction with OTel adapter | ✅ Stable |
 
-### Package Organization
+`internal/testutil` holds shared mocks and test utilities — not part of the public API.
 
-**`pkg/` (Public API)**
-- Code users import and use directly
-- Stable interfaces
-- Semantic versioning applies
-
-**`internal/` (Private)**
-- Implementation details
-- Test utilities
-- Not importable by external code
-
-**`docs/` (Documentation)**
-- Architecture decisions
-- Design patterns
-- Best practices
-
-**`examples/` (Usage Examples)**
-- Complete runnable examples
-- Real-world patterns
-- Copy-paste ready code
+> ✅ **Stable** — no breaking changes planned before v1.0.
+> 🟡 **Beta** — core operations complete; API may change before v1.0.
 
 ---
 
@@ -179,29 +110,20 @@ github.com/aetomala/jwtauth/
 
 ### Three Pillars
 
-```
-┌─────────────────────────────────────────────┐
-│           JWT Auth System                    │
-├─────────────────────────────────────────────┤
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ Logging  │  │ Metrics  │  │ Tracing  │  │
-│  │Interface │  │Interface │  │(Future)  │  │
-│  └──────────┘  └──────────┘  └──────────┘  │
-├─────────────────────────────────────────────┤
-│         Component Layer                      │
-│  ┌───────────┐ ┌─────────┐ ┌────────────┐  │
-│  │KeyManager │ │  Tokens │ │  Storage   │  │
-│  └───────────┘ └─────────┘ └────────────┘  │
-└─────────────────────────────────────────────┘
-           ↓ Observability Signals
-┌─────────────────────────────────────────────┐
-│     User's Observability Stack               │
-│  ┌─────────┐  ┌────────────┐  ┌──────────┐ │
-│  │  slog   │  │Prometheus  │  │   OTel   │ │
-│  │  Zap    │  │  StatsD    │  │  (Future)│ │
-│  │ Zerolog │  │CloudWatch  │  │          │ │
-│  └─────────┘  └────────────┘  └──────────┘ │
-└─────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph sys["JWT Authorization Token Engine"]
+        direction LR
+        subgraph obs["Observability Interfaces"]
+            L[Logging] ~~~ M[Metrics] ~~~ T[Tracing]
+        end
+        subgraph comp["Component Layer"]
+            KM[KeyManager] ~~~ TK[Tokens] ~~~ ST[Storage]
+        end
+    end
+    L -- signals --> slog["slog · Zap · Zerolog"]
+    M -- signals --> prom["Prometheus · StatsD · CloudWatch"]
+    T -- signals --> otel["OTel · Jaeger"]
 ```
 
 ### Logging
@@ -211,7 +133,7 @@ github.com/aetomala/jwtauth/
 **Design Decisions**:
 - **4 levels** (Debug, Info, Warn, Error) - stratified by use case
 - **Structured** (key-value pairs) - machine-readable
-- **Optional** (nil-safe) - works without logger
+- **Optional** — pass `nil` to default to `NoOpLogger`; call sites invoke unconditionally
 - **stdlib adapter** (slog) - no external dependencies
 
 **Log Levels by Purpose**:
@@ -226,21 +148,15 @@ github.com/aetomala/jwtauth/
 **Debug Usage Pattern**:
 ```go
 // High-frequency read operations (cache lookups, token validation entry)
-if m.config.Logger != nil {
-    m.config.Logger.Debug("public key cache hit", "keyID", keyID)
-}
+m.config.Logger.Debug("public key cache hit", "keyID", keyID)
 
 // Intermediate steps in loops (per-token operations)
-if m.logger != nil {
-    m.logger.Debug("revoking token for user",
-        "tokenID", tokenID,
-        "userID", userID)
-}
+m.logger.Debug("revoking token for user",
+    "tokenID", tokenID,
+    "userID", userID)
 
 // No-op outcomes (nothing to do during cleanup)
-if m.logger != nil {
-    m.logger.Debug("no expired keys found during cleanup")
-}
+m.logger.Debug("no expired keys found during cleanup")
 ```
 
 **Flow**:
@@ -276,7 +192,7 @@ Wire it at application startup:
 // NewCorrelationJSONLogger wraps slog.NewJSONHandler with CorrelationIDHandler.
 logger := logging.NewCorrelationJSONLogger(slog.LevelInfo)
 
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{Logger: logger, ...})
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{Logger: logger, ...})
 ```
 
 Inject the ID once at the HTTP request boundary — it propagates to all jwtauth calls for that request:
@@ -294,7 +210,7 @@ See `examples/correlation-example/` for a complete working demonstration.
 
 **Design Decisions**:
 - **Generic primitives** (counters, gauges, histograms, durations) with label maps — backend-agnostic
-- **Optional** (nil-safe) — works without metrics
+- **Optional** — pass `nil` to default to `NoOpMetrics`; call sites invoke unconditionally
 - **Pre-registration at construction** — naming conflicts caught early, not at observation time
 - **Graceful label handling** — wrong or missing labels log a warning and skip rather than panic
 
@@ -322,6 +238,10 @@ type Metrics interface {
 | `jwtauth_tokens_refreshed_total` | Counter | status, error_type |
 | `jwtauth_tokens_revoked_total` | Counter | operation, status |
 | `jwtauth_tokens_introspected_total` | Counter | status |
+| `jwtauth_tokens_list_total` | Counter | namespace, error_type |
+| `jwtauth_tokens_list_duration_seconds` | Histogram | namespace |
+| `jwtauth_tokens_list_for_user_total` | Counter | namespace, error_type |
+| `jwtauth_tokens_list_for_user_duration_seconds` | Histogram | namespace |
 | `jwtauth_operations_total` | Counter | operation, status |
 | `jwtauth_operation_duration_seconds` | Histogram | operation |
 | `jwtauth_active_tokens` | Gauge | storage_backend |
@@ -330,6 +250,10 @@ type Metrics interface {
 | `jwtauth_storage_cleanup_tokens_removed_total` | Counter | storage_backend |
 | `jwtauth_storage_operation_duration_seconds` | Histogram | operation, storage_backend |
 | `jwtauth_storage_tokens_count` | Gauge | storage_backend |
+| `jwtauth_storage_list_tokens_total` | Counter | storage_backend, namespace, error_type |
+| `jwtauth_storage_list_tokens_duration_seconds` | Histogram | storage_backend, namespace |
+| `jwtauth_storage_list_tokens_for_user_total` | Counter | storage_backend, namespace, error_type |
+| `jwtauth_storage_list_tokens_for_user_duration_seconds` | Histogram | storage_backend, namespace |
 | `jwtauth_keystore_operations_total` | Counter | operation, status, error_type, storage_backend |
 | `jwtauth_keystore_operation_duration_seconds` | Histogram | operation, storage_backend |
 | `jwtauth_keystore_keys_count` | Gauge | storage_backend |
@@ -347,7 +271,7 @@ type Metrics interface {
 Every component accepts optional observability:
 
 ```go
-type ManagerConfig struct {
+type KeyManagerConfig struct {
     // Core configuration
     KeyStore            KeyStore        // Required: injected key persistence backend
     KeyRotationInterval time.Duration
@@ -380,6 +304,66 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
             time.Since(start), map[string]string{"operation": "rotate"})
     }
     
+    return nil
+}
+```
+
+### Distributed Tracing
+
+**Interface**: `pkg/tracing/Tracer`
+
+**Design Decisions**:
+- **Thin abstraction** — `Tracer` and `Span` interfaces wrap OTel concepts without importing the OTel SDK in the core library
+- **Always non-nil** — every constructor applies `NoOpTracer` as default; no nil checks required in method bodies
+- **`startSpan` helper per component** — encapsulates span naming prefix so all spans follow `<TypeName>.<MethodName>` convention without repetition
+
+**Interface**:
+```go
+type Tracer interface {
+    Start(ctx context.Context, name string, opts ...SpanOption) (context.Context, Span)
+}
+
+type Span interface {
+    End()
+    SetAttribute(key string, value any)
+    SetStatus(code StatusCode, description string)
+    RecordError(err error)
+}
+```
+
+**Implementations**:
+- `NoOpTracer` / `NoOpSpan` — zero-allocation, race-detection clean; used as default in all constructors
+- `OtelTracer` — bridges `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`; initialized with `tracing.NewOtelTracer("scope")`
+
+**Span naming convention**: `<TypeName>.<MethodName>` — e.g., `TokenManager.IssueAccessToken`, `DiskKeyStore.Save`
+
+**Span attributes by layer**:
+
+| Component | Attributes |
+|-----------|-----------|
+| `DiskKeyStore` / `RedisKeyStore` | `storage.backend` (`"disk"` / `"redis"`), `key_id` |
+| `MemoryRefreshStore` / `RedisRefreshStore` | `storage.backend` (`"memory"` / `"redis"`), `token_id` |
+| `KeyManager` | `key_id` |
+| `TokenManager` | `user_id`, `token_id`, `active` (IntrospectToken), `deleted_count` (CleanupExpiredTokens) |
+
+**Status conventions**: `StatusOK` on all success paths; `RecordError(err)` + `StatusError` on all error paths. Wrapped errors (via `fmt.Errorf("...: %w", err)`) are passed to `RecordError` so the full message propagates to the trace backend.
+
+**Integration Pattern** — every component follows the same shape:
+```go
+type DiskKeyStore struct {
+    tracer tracing.Tracer // never nil; defaults to NoOpTracer
+}
+
+func (d *DiskKeyStore) startSpan(ctx context.Context, op string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
+    return d.tracer.Start(ctx, "DiskKeyStore."+op, opts...)
+}
+
+func (d *DiskKeyStore) Save(ctx context.Context, key *KeyInfo) error {
+    ctx, span := d.startSpan(ctx, "Save")
+    defer span.End()
+    // ...
+    span.SetAttribute("key_id", key.ID)
+    span.SetStatus(tracing.StatusOK, "")
     return nil
 }
 ```
@@ -491,8 +475,8 @@ This enables:
 **DiskKeyStore**:
 
 ```go
-ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, metrics)
-km, err := keymanager.NewManager(keymanager.ManagerConfig{
+ks, err := keys.NewDiskKeyStore("./keys", 2048, logger, metrics)
+km, err := keys.NewManager(keys.KeyManagerConfig{
     KeyStore: ks,
     Logger:   logger,
 })
@@ -508,8 +492,8 @@ File format:
 
 ```go
 client := redis.NewClient(&redis.Options{Addr: "redis:6379"})
-ks, err := keymanager.NewRedisKeyStore(client, logger, metrics)
-km, err := keymanager.NewManager(keymanager.ManagerConfig{
+ks, err := keys.NewRedisKeyStore(client, logger, metrics)
+km, err := keys.NewManager(keys.KeyManagerConfig{
     KeyStore: ks,
     Logger:   logger,
 })
@@ -517,11 +501,11 @@ km, err := keymanager.NewManager(keymanager.ManagerConfig{
 
 Redis data layout:
 ```
-ks:pem:<keyID>   — PKCS#1 PEM-encoded RSA private key (string)
-ks:meta:<keyID>  — JSON-encoded KeyMetadata (string)
+[KeyPrefix]ks:pem:<keyID>   — PKCS#1 PEM-encoded RSA private key (string)
+[KeyPrefix]ks:meta:<keyID>  — JSON-encoded KeyMetadata (string)
 ```
 
-Keys carry no TTL — Manager owns the lifecycle and calls `Delete` explicitly via `cleanupExpiredKeys`. `LoadAll` uses `SCAN ks:pem:*` to enumerate all stored keys. `Save` writes both entries via a Redis Pipeline, so either both succeed or both fail — no partial state and no rollback code needed.
+Keys are optionally prefixed by `RedisKeyStoreConfig.KeyPrefix` (defaults to empty string — preserves current layout). Keys carry no TTL — Manager owns the lifecycle and calls `Delete` explicitly via `cleanupExpiredKeys`. `LoadAll` uses `SCAN {KeyPrefix}ks:pem:*` to enumerate all stored keys, scoping enumeration to the configured namespace. `Save` writes both entries via a Redis Pipeline, so either both succeed or both fail — no partial state and no rollback code needed.
 
 `ErrNilRedisClient` is returned by the constructor if client is nil. All other sentinel errors (`ErrKeyStoreKeyNotFound`, `ErrKeyStoreInvalidKeyID`) are shared with `DiskKeyStore` and defined in `keystore.go`.
 
@@ -535,13 +519,38 @@ Keys carry no TTL — Manager owns the lifecycle and calls `Delete` explicitly v
 
 `operation` values: `"load_all"`, `"save"`, `"update_metadata"`, `"load_key"`, `"delete"`
 
+**Key Inspection API**
+
+`GetKeyInfo(ctx, keyID)` and `GetCurrentKeyInfo(ctx)` return a `*KeyInfo` struct containing public metadata only — no private key material is exposed:
+
+```go
+type KeyInfo struct {
+    KeyID       string    // Unique key identifier
+    CreatedAt   time.Time // When the key was generated
+    RotateAt    time.Time // Estimated rotation time (current key only; zero for historical keys)
+    ExpiresAt   time.Time // When the key expires (zero = still current)
+    KeySizeBits int       // RSA key size in bits (e.g., 2048)
+    Algorithm   string    // Always "RS256"
+    IsCurrent   bool      // True if this is the active signing key
+    IsValid     bool      // True if the key has not yet expired
+}
+```
+
+`RotateAt` is computed as `CreatedAt + KeyRotationInterval` for the current signing key — it is not stored. Both methods check context cancellation before acquiring the read lock, consistent with all other KeyManager read methods.
+
+Use cases:
+- `/health/keys` endpoints — expose key age and upcoming rotation schedule
+- Prometheus gauges — `jwtauth_key_age_seconds`, `jwtauth_rotation_scheduled_seconds`, `jwtauth_key_valid`
+- Admin dashboards — display key rotation state without exposing cryptographic material
+- Debug — correlate a `kid` JWT header claim with key metadata
+
 `status` values: `"success"`, `"not_found"`, `"error"`, `"cancelled"`
 
 `storage_backend` values: `"disk"`, `"redis"`
 
 `SetGauge(jwtauth_keystore_keys_count)` is recorded only by `LoadAll` — set to the count of valid non-expired keys returned. This is sufficient because `GetCurrentSigningKey` never calls the store after startup and `GetPublicKey` only calls `LoadKey` on rare cache misses, so KeyStore operations are not on the hot path.
 
-### TokenService (Beta)
+### TokenManager (Beta)
 
 **Responsibilities**:
 - Issue access tokens (short-lived, e.g., 15 minutes) with optional custom claims
@@ -566,7 +575,7 @@ Created → Start() → Running → Shutdown() → Stopped
 - **Synchronization**: `atomic.Bool` for running state; cleanup uses channel signaling and `sync.WaitGroup` for graceful shutdown
 
 **Key Design Decisions**:
-- Rate limiting is intentionally **not** in TokenService — it belongs at the infrastructure layer (API Gateway, Ingress, Load Balancer) where per-route and per-IP policies apply globally
+- Rate limiting is intentionally **not** in TokenManager — it belongs at the infrastructure layer (API Gateway, Ingress, Load Balancer) where per-route and per-IP policies apply globally
 - All storage operations accept `context.Context` for cancellation propagation
 - Reserved JWT claims (`sub`, `iss`, `aud`, `exp`, `iat`, `jti`) cannot be overridden by custom claims
 
@@ -576,6 +585,7 @@ Created → Start() → Running → Shutdown() → Stopped
 - Store refresh tokens with expiration and revocation tracking
 - Retrieve tokens with validation checks (expiry, revocation)
 - Revoke individual or bulk tokens (by userID)
+- Enumerate all tokens or tokens for a specific user via cursor-based pagination (`ListTokens`, `ListTokensForUser`)
 - Clean up expired tokens
 - Maintain lookups optimized for each implementation
 
@@ -589,16 +599,17 @@ type MemoryRefreshStore struct {
     mu         sync.RWMutex             // Thread safety
     tokens     map[string]*RefreshToken // tokenID → token
     userTokens map[string][]string      // userID → []tokenID (for bulk ops)
-    logger     logging.Logger           // Optional; nil disables logging
-    metrics    metrics.Metrics          // Optional; nil disables metrics
+    logger     logging.Logger           // never nil; defaults to NoOpLogger
+    metrics    metrics.Metrics          // never nil; defaults to NoOpMetrics
     backend    string                   // storage_backend label value; always "memory"
 }
 ```
 
 **Key Features**:
-- **Dual-index data structure**: `tokens` map for O(1) lookup, `userTokens` set for O(1) bulk revocation
+- **Dual-index data structure**: `tokens` map for O(1) lookup, `userTokens` slice for O(1) bulk revocation and insertion-order enumeration
+- **Cursor-based enumeration**: `ListTokens` iterates all tokens; `ListTokensForUser` iterates a single user's tokens — both use integer offsets as cursors for stable, allocation-free pagination
 - **Defensive copying**: Metadata and token structs isolated from caller mutations
-- **RWMutex locking**: RLock for Retrieve (concurrent reads), Lock for mutations
+- **RWMutex locking**: RLock for Retrieve and listing (concurrent reads), Lock for mutations
 - **Idempotent operations**: Revoke returns nil if token doesn't exist
 - **Expiration/Revocation checks**: Retrieve validates expiry and revocation at request time
 - **Cleanup**: Removes expired tokens from both maps and userTokens index
@@ -613,20 +624,23 @@ type MemoryRefreshStore struct {
 ```go
 type RedisRefreshStore struct {
     client  *redis.Client   // go-redis/v9 client (internally thread-safe)
-    logger  logging.Logger  // Optional; nil disables logging
-    metrics metrics.Metrics // Optional; nil disables metrics
+    logger  logging.Logger  // never nil; defaults to NoOpLogger
+    metrics metrics.Metrics // never nil; defaults to NoOpMetrics
     backend string          // storage_backend label value; always "redis"
 }
 ```
 
 **Redis Data Structure**:
 ```
-tokens:{tokenID}        → Hash with fields: userID, expiresAt, createdAt, revoked, metadata
-user_tokens:{userID}    → Set of tokenIDs for that user
+[KeyPrefix]tokens:{tokenID}        → Hash with fields: userID, expiresAt, createdAt, revoked, metadata
+[KeyPrefix]user_tokens:{userID}    → Set of tokenIDs for that user
 ```
+
+Keys are optionally prefixed by `RedisRefreshStoreConfig.KeyPrefix`. `Cleanup` scans only `{KeyPrefix}tokens:*` — expired tokens from other namespaces are not affected.
 
 **Key Features**:
 - **Distributed**: Works across multiple instances (Redis is the shared backend)
+- **Cursor-based enumeration**: `ListTokens` uses `SCAN` over the token hash namespace; `ListTokensForUser` uses `SSCAN` over the per-user token set — both pass Redis cursors through directly for stable pagination without extra round-trips
 - **Pipeline atomicity**: Multi-operation transactions via Redis pipelines
 - **Millisecond-precision timestamps**: Stored as UnixMilli (preserves precision across serialization)
 - **Efficient cleanup**: SCAN-based key iteration for expired token sweeps
@@ -647,13 +661,14 @@ user_tokens:{userID}    → Set of tokenIDs for that user
 
 | Aspect | Details |
 |--------|---------|
-| **Error Handling** | `ErrInvalidTokenID` / `ErrInvalidUserID`, `ErrTokenNotFound`, `ErrTokenExpired`, `ErrTokenRevoked` |
+| **Error Handling** | `ErrInvalidTokenID` / `ErrInvalidUserID`, `ErrInvalidCursor`, `ErrTokenNotFound`, `ErrTokenExpired`, `ErrTokenRevoked` |
 | **Validation** | Empty/whitespace input rejection, expiry checks, revocation checks |
+| **Enumeration** | `ListTokens(ctx, cursor, count)` for global iteration; `ListTokensForUser(ctx, userID, cursor, count)` for user-scoped iteration — both use best-effort cursors; pass `""` to start from the beginning |
 | **Idempotence** | Revoke returns nil if token doesn't exist (safe to call multiple times) |
 | **Context** | Full support for context.Context cancellation propagation |
 | **Logging** | Structured key-value logs with operation names and fields |
-| **Metrics** | Counter + duration on every operation; cleanup records removed count and token-count gauge |
-| **Testing** | Identical comprehensive test suite (61 tests per implementation, 122 total) |
+| **Metrics** | Counter + duration on every operation; cleanup records removed count and token-count gauge; dedicated counters + histograms for each list operation |
+| **Testing** | Identical comprehensive test suite (77 tests per implementation, 154 total) |
 
 #### Storage Metrics Instrumentation
 
@@ -692,12 +707,10 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, ...) error {
     start := time.Now()
     status := "error"          // default; overwritten at each return point
     defer func() {
-        if m.metrics != nil {
-            m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
-                "operation": "store", "status": status, "storage_backend": m.backend,
-            })
-            m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), ...)
-        }
+        m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+            "operation": "store", "status": status, "storage_backend": m.backend,
+        })
+        m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), ...)
     }()
     // ...
     status = "validation_error"
@@ -753,7 +766,7 @@ The right choice depends on profiled evidence. Start with option 1 if the benchm
 **Solution**: Single parameterized test suite runs against all implementations:
 
 ```go
-// suite_test.go defines 61 comprehensive tests across 10 phases
+// suite_test.go defines 77 comprehensive tests across 13 phases
 // StoreFactory accepts optional MockMetrics — nil for phases 1–9, live mock for Phase 10
 type StoreFactory func(logger *testutil.MockLogger, m metrics.Metrics) storage.RefreshStore
 
@@ -870,9 +883,9 @@ ctrl      := gomock.NewController(GinkgoT())
 mockLogger := testutil.NewMockLogger()
 mockKS     := testutil.NewMockKeyStore(ctrl)
 
-mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keymanager.StoredKey{}, nil)
+mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{}, nil)
 
-manager, _ := keymanager.NewManager(keymanager.ManagerConfig{
+manager, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyStore: mockKS,
     Logger:   mockLogger,
 })
@@ -910,9 +923,9 @@ Catches:
 - ✅ Prometheus implementation (`PrometheusMetrics`) with 22 pre-registered metrics, 100% test coverage
 - ✅ NoOp implementation
 - ✅ gomock `MockMetrics` for dependency injection in tests
-- ✅ Wired into KeyManager, TokenService, and RefreshStore — all components fully instrumented
+- ✅ Wired into KeyManager, TokenManager, and RefreshStore — all components fully instrumented
 
-### Phase 3: TokenService ✅ (Beta)
+### Phase 3: TokenManager ✅ (Beta)
 - ✅ JWT creation with RS256 signing and custom claims
 - ✅ Access token validation (signature, expiration, issuer, audience)
 - ✅ Refresh token rotation with revocation checks
@@ -920,7 +933,7 @@ Catches:
 - ✅ Token introspection per RFC 7662
 - ✅ Lifecycle management (Start/Shutdown/IsRunning)
 - ✅ Background cleanup goroutine with configurable interval
-- ✅ Clock skew tolerance (`ClockSkew time.Duration` in `ManagerConfig` — `jwt.WithLeeway()` integration)
+- ✅ Clock skew tolerance (`ClockSkew time.Duration` in `TokenManagerConfig` — `jwt.WithLeeway()` integration)
 - ✅ `ValidateAccessTokenWithClaims` — returns registered claims and custom claims map after validation
 - ✅ Comprehensive test coverage (153 tests, ~87% coverage, race-detection clean)
 - ✅ RefreshStore interface with context propagation
@@ -953,10 +966,10 @@ Catches:
   - `Manager` unit tests are now filesystem-free (use `MockKeyStore`)
   - 44 Manager specs + 38 DiskKeyStore specs (9 phases), all race-clean
   - `MockKeyStore` generated via gomock
-- ✅ Wire `PrometheusMetrics` into TokenService — deferred closure pattern with `error_type` label, context propagation
+- ✅ Wire `PrometheusMetrics` into TokenManager — deferred closure pattern with `error_type` label, context propagation
 - ✅ `RedisKeyStore` implementation — `ks:pem:<id>` / `ks:meta:<id>` Redis layout, atomic Pipeline writes, SCAN-based `LoadAll`, full metrics with `storage_backend: "redis"`
 - ✅ Correlation ID logging — `CorrelationIDHandler` wraps any `slog.Handler`; `WithCorrelationID`/`GetCorrelationID` context helpers; `SlogAdapter` context-aware routing; `NewCorrelationJSONLogger`/`NewCorrelationTextLogger` convenience constructors
-- ✅ All component logging call sites forward `ctx` — correlation ID propagates through KeyManager, TokenService, and RefreshStore without Logger interface changes
+- ✅ All component logging call sites forward `ctx` — correlation ID propagates through KeyManager, TokenManager, and RefreshStore without Logger interface changes
 - ✅ `KeyManager` interface extended with context on all read methods (`GetCurrentSigningKey`, `GetPublicKey`, `GetJWKS`)
 - ✅ Context cancellation guards in `GetJWKS` and `cleanupExpiredKeys` with warning log on early return
 - ✅ Redis integration tests via miniredis (`pkg/tokens/integration`) covering distributed token operations end-to-end
@@ -965,8 +978,9 @@ Catches:
 - ✅ `pkg/tracing` — `Tracer` and `Span` interfaces defined; `SpanOption` functional options; `StatusCode` and `SpanKind` enumerations
 - ✅ `NoOpTracer` / `NoOpSpan` — zero-allocation implementations; 36 tests, race-detection clean
 - ✅ `MockTracer` / `MockSpan` generated via gomock for dependency injection in component tests
-- ⏳ Wire tracing into KeyManager, TokenService, and RefreshStore
-- ⏳ OpenTelemetry adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
+- ✅ Tracing wired into all six components — `DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore`, `KeyManager`, `TokenManager`
+- ✅ `OtelTracer` adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
+- 🚧 Additional v0.4.0 items in progress
 
 ---
 
@@ -975,7 +989,7 @@ Catches:
 ### 1. Dependency Injection
 Configuration structs accept interfaces:
 ```go
-type ManagerConfig struct {
+type KeyManagerConfig struct {
     Logger logging.Logger  // Injected
 }
 ```
@@ -1016,8 +1030,8 @@ func (c *Component) Operation() error {
     // 1. Check state
     // 2. Acquire lock
     // 3. Do work
-    // 4. Log result (if logger present)
-    // 5. Record metric (if metrics present)
+    // 4. Log result (unconditional — no-op assigned at construction)
+    // 5. Record metric (unconditional — no-op assigned at construction)
 }
 ```
 
@@ -1038,18 +1052,29 @@ func (c *Component) Operation() error {
 ### Adding Observability
 
 1. Identify what to log/measure
-2. Add calls at appropriate points
-3. Always check for nil (optional feature)
+2. Assign `NoOpLogger` / `NoOpMetrics` / `NoOpTracer` at construction when caller passes `nil`
+3. Add unconditional calls at appropriate points — no nil guards at call sites
 4. Write tests verifying logs/metrics
 5. Update documentation
 
-### Testing Requirements
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for full testing requirements and development workflow.
 
-- ✅ All new code must have tests
-- ✅ Tests must pass race detector
-- ✅ Coverage >80% for critical paths
-- ✅ Integration tests for complex flows
-- ✅ Examples for new features
+---
+
+## Architecture Decision Records
+
+Key design decisions are captured in `doc/adr/`. Each ADR documents the context, the decision made, and the consequences.
+
+| ADR | Title | Date |
+|-----|-------|------|
+| [001](adr/001-no-rate-limiting.md) | No Rate Limiting in Library | 2026-03-11 |
+| [002](adr/002-stateful-refresh-tokens.md) | Stateful Refresh Tokens | 2026-03-18 |
+| [003](adr/003-rs256-only.md) | RS256 Only (No Algorithm Flexibility) | 2026-04-01 |
+| [004](adr/004-kid-validation.md) | `kid` UUID Validation at KeyStore Boundary | 2026-04-21 |
+| [005](adr/005-security-boundaries.md) | Security Boundaries — Attacker-Controlled Token Fields | 2026-04-21 |
+| [006](adr/006-keyprefix-namespace-isolation.md) | `KeyPrefix` — Namespace Isolation in Redis Backends | 2026-04-27 |
+| [007](adr/007-namespace-consistency-contract.md) | Namespace Field on Manager Configs for Observability Consistency | 2026-04-27 |
+| [008](adr/008-reserved-claims-at-issuance.md) | Reserved Claims Protection at Token Issuance | 2026-04-29 |
 
 ---
 
@@ -1063,6 +1088,6 @@ func (c *Component) Operation() error {
 
 ---
 
-**Last Updated**: April 14, 2026
-**Version**: 0.3.0-beta
-**Status**: Active Development (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] stable and fully instrumented; Distributed Tracing interfaces scaffolded — full wiring planned for v0.4.0)
+**Last Updated**: April 29, 2026
+**Version**: v0.4.0
+**Status**: Stable (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] + Distributed Tracing + TokenManager — all stable and fully instrumented)

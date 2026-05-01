@@ -5,7 +5,7 @@ This example demonstrates how to use `jwtauth` with [Gin](https://github.com/gin
 ## Overview
 
 The example shows:
-- Creating and starting a `TokenService` with `KeyManager` and `RefreshStore`
+- Creating and starting a `TokenManager` with `KeyManager` and `RefreshStore`
 - Writing a custom authentication middleware for Gin
 - Public endpoints for login and token refresh
 - Protected endpoints that require a valid JWT token
@@ -49,7 +49,7 @@ You'll see output like:
 
 ```
 2026-03-30T12:34:56.123Z	info	KeyManager started	{"active_keys": 1, "current_key_id": "..."}
-2026-03-30T12:34:56.124Z	info	TokenService started	{"issuer": "gin-example"}
+2026-03-30T12:34:56.124Z	info	TokenManager started	{"issuer": "gin-example"}
 Starting server on :8080
 ```
 
@@ -252,7 +252,7 @@ Replace the in-memory `RefreshStore` with your own implementation:
 // Create custom store
 store := database.NewPostgresRefreshStore(db, logger)
 
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     RefreshStore: store,
     // ... other config
 })
@@ -265,13 +265,13 @@ Enable debug logging:
 ```go
 logger := logging.NewTextLogger(slog.LevelDebug)
 
-ks, _ := keymanager.NewDiskKeyStore("./keys", 2048, logger, nil)
-km, _ := keymanager.NewManager(keymanager.ManagerConfig{
+ks, _ := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", Logger: logger})
+km, _ := keys.NewManager(keys.KeyManagerConfig{
     KeyStore: ks,
     Logger:   logger,
 })
 
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     Logger: logger,
 })
 ```

@@ -10,7 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/aetomala/jwtauth/examples/echo-example/middleware"
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/storage"
@@ -25,12 +25,12 @@ func main() {
 	pm := metrics.NewPrometheusMetrics(metrics.PrometheusConfig{})
 
 	// Create KeyStore and KeyManager
-	ks, err := keymanager.NewDiskKeyStore("./keys", 2048, logger, pm)
+	ks, err := keys.NewDiskKeyStore(keys.DiskKeyStoreConfig{Dir: "./keys", KeySize: 2048, Logger: logger, Metrics: pm})
 	if err != nil {
 		log.Fatal("Failed to create DiskKeyStore:", err)
 	}
 
-	km, err := keymanager.NewManager(keymanager.ManagerConfig{
+	km, err := keys.NewManager(keys.KeyManagerConfig{
 		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		Logger:              logger,
@@ -51,10 +51,10 @@ func main() {
 	}()
 
 	// Create RefreshStore
-	store := storage.NewMemoryRefreshStore(logger, pm)
+	store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger, Metrics: pm})
 
 	// Create TokenService
-	mgr, err := tokens.NewManager(tokens.ManagerConfig{
+	mgr, err := tokens.NewManager(tokens.TokenManagerConfig{
 		KeyManager:           km,
 		RefreshStore:         store,
 		AccessTokenDuration:  15 * time.Minute,

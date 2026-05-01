@@ -14,7 +14,7 @@ import (
 	rsa "crypto/rsa"
 	reflect "reflect"
 
-	keymanager "github.com/aetomala/jwtauth/pkg/keymanager"
+	keys "github.com/aetomala/jwtauth/pkg/keys"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -57,10 +57,10 @@ func (mr *MockKeyStoreMockRecorder) Delete(ctx, keyID any) *gomock.Call {
 }
 
 // LoadAll mocks base method.
-func (m *MockKeyStore) LoadAll(ctx context.Context) ([]*keymanager.StoredKey, error) {
+func (m *MockKeyStore) LoadAll(ctx context.Context) ([]*keys.StoredKey, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "LoadAll", ctx)
-	ret0, _ := ret[0].([]*keymanager.StoredKey)
+	ret0, _ := ret[0].([]*keys.StoredKey)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -72,11 +72,11 @@ func (mr *MockKeyStoreMockRecorder) LoadAll(ctx any) *gomock.Call {
 }
 
 // LoadKey mocks base method.
-func (m *MockKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *keymanager.KeyMetadata, error) {
+func (m *MockKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateKey, *keys.KeyMetadata, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "LoadKey", ctx, keyID)
 	ret0, _ := ret[0].(*rsa.PrivateKey)
-	ret1, _ := ret[1].(*keymanager.KeyMetadata)
+	ret1, _ := ret[1].(*keys.KeyMetadata)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
 }
@@ -87,8 +87,22 @@ func (mr *MockKeyStoreMockRecorder) LoadKey(ctx, keyID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LoadKey", reflect.TypeOf((*MockKeyStore)(nil).LoadKey), ctx, keyID)
 }
 
+// Namespace mocks base method.
+func (m *MockKeyStore) Namespace() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Namespace")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// Namespace indicates an expected call of Namespace.
+func (mr *MockKeyStoreMockRecorder) Namespace() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Namespace", reflect.TypeOf((*MockKeyStore)(nil).Namespace))
+}
+
 // Save mocks base method.
-func (m *MockKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta keymanager.KeyMetadata) error {
+func (m *MockKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.PrivateKey, meta keys.KeyMetadata) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Save", ctx, keyID, privateKey, meta)
 	ret0, _ := ret[0].(error)
@@ -102,7 +116,7 @@ func (mr *MockKeyStoreMockRecorder) Save(ctx, keyID, privateKey, meta any) *gomo
 }
 
 // UpdateMetadata mocks base method.
-func (m *MockKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta keymanager.KeyMetadata) error {
+func (m *MockKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta keys.KeyMetadata) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdateMetadata", ctx, keyID, meta)
 	ret0, _ := ret[0].(error)

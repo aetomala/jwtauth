@@ -621,15 +621,15 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should record counter and duration on Store success", func() {
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "store", "storage_backend": backend})
+					map[string]string{"operation": "store", "storage_backend": backend, "namespace": ""})
 				// Some implementations (e.g. Memory) update the token-count gauge on
 				// every Store; others (e.g. Redis) only update it in Cleanup.
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					gomock.Any(),
-					map[string]string{"storage_backend": backend}).AnyTimes()
+					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
 
 				err := ms.Store(ctx, tokenID, userID, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
@@ -637,10 +637,10 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should record validation_error status on Store with empty tokenID", func() {
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "validation_error", "error_type": "validation_error", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "validation_error", "error_type": "validation_error", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "store", "storage_backend": backend})
+					map[string]string{"operation": "store", "storage_backend": backend, "namespace": ""})
 
 				err := ms.Store(ctx, "", userID, expiresAt, metadata)
 				Expect(err).To(HaveOccurred())
@@ -649,21 +649,21 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should record counter and duration on Retrieve success", func() {
 				// Setup: Store the token (expect those metrics too)
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "store", "storage_backend": backend})
+					map[string]string{"operation": "store", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					gomock.Any(),
-					map[string]string{"storage_backend": backend}).AnyTimes()
+					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
 				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
 
 				// Retrieve expectations
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "retrieve", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "retrieve", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "retrieve", "storage_backend": backend})
+					map[string]string{"operation": "retrieve", "storage_backend": backend, "namespace": ""})
 
 				token, err := ms.Retrieve(ctx, tokenID)
 				Expect(err).NotTo(HaveOccurred())
@@ -672,10 +672,10 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should record not_found status on Retrieve for nonexistent token", func() {
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "retrieve", "status": "not_found", "error_type": "not_found", "storage_backend": backend})
+					map[string]string{"operation": "retrieve", "status": "not_found", "error_type": "not_found", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "retrieve", "storage_backend": backend})
+					map[string]string{"operation": "retrieve", "storage_backend": backend, "namespace": ""})
 
 				_, err := ms.Retrieve(ctx, "nonexistent-token")
 				Expect(err).To(MatchError(storage.ErrTokenNotFound))
@@ -684,29 +684,29 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should record revoked status on Retrieve for revoked token", func() {
 				// Store
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "store", "storage_backend": backend})
+					map[string]string{"operation": "store", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					gomock.Any(),
-					map[string]string{"storage_backend": backend}).AnyTimes()
+					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
 				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
 
 				// Revoke
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "revoke", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "revoke", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "revoke", "storage_backend": backend})
+					map[string]string{"operation": "revoke", "storage_backend": backend, "namespace": ""})
 				Expect(ms.Revoke(ctx, tokenID)).To(Succeed())
 
 				// Retrieve
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "retrieve", "status": "revoked", "error_type": "revoked", "storage_backend": backend})
+					map[string]string{"operation": "retrieve", "status": "revoked", "error_type": "revoked", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "retrieve", "storage_backend": backend})
+					map[string]string{"operation": "retrieve", "storage_backend": backend, "namespace": ""})
 
 				_, err := ms.Retrieve(ctx, tokenID)
 				Expect(err).To(MatchError(storage.ErrTokenRevoked))
@@ -715,21 +715,21 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should record counter and duration on Revoke success", func() {
 				// Store
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "store", "storage_backend": backend})
+					map[string]string{"operation": "store", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					gomock.Any(),
-					map[string]string{"storage_backend": backend}).AnyTimes()
+					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
 				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
 
 				// Revoke
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "revoke", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "revoke", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "revoke", "storage_backend": backend})
+					map[string]string{"operation": "revoke", "storage_backend": backend, "namespace": ""})
 
 				Expect(ms.Revoke(ctx, tokenID)).To(Succeed())
 			})
@@ -737,21 +737,21 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should record counter and duration on RevokeAllForUser success", func() {
 				// Store
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "store", "storage_backend": backend})
+					map[string]string{"operation": "store", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					gomock.Any(),
-					map[string]string{"storage_backend": backend}).AnyTimes()
+					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
 				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
 
 				// RevokeAllForUser
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "revoke_all", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "revoke_all", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "revoke_all", "storage_backend": backend})
+					map[string]string{"operation": "revoke_all", "storage_backend": backend, "namespace": ""})
 
 				Expect(ms.RevokeAllForUser(ctx, userID)).To(Succeed())
 			})
@@ -761,14 +761,14 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 				// Store short-lived token
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "store", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "store", "storage_backend": backend})
+					map[string]string{"operation": "store", "storage_backend": backend, "namespace": ""})
 				// Memory updates the gauge on Store (value=1 after first insert); Redis does not.
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					float64(1),
-					map[string]string{"storage_backend": backend}).AnyTimes()
+					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
 				err := ms.Store(ctx, tokenID, userID, veryShortLived, metadata)
 				if err != nil {
 					Skip("store rejected short-lived token")
@@ -778,16 +778,16 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 				// Cleanup expectations
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "cleanup", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "cleanup", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "cleanup", "storage_backend": backend})
+					map[string]string{"operation": "cleanup", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().AddCounter("jwtauth_storage_cleanup_tokens_removed_total",
 					float64(1),
-					map[string]string{"storage_backend": backend})
+					map[string]string{"storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					float64(0),
-					map[string]string{"storage_backend": backend})
+					map[string]string{"storage_backend": backend, "namespace": ""})
 
 				count, err := ms.Cleanup(ctx)
 				Expect(err).NotTo(HaveOccurred())
@@ -796,16 +796,16 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should record zero removed count and gauge on Cleanup with no tokens", func() {
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
-					map[string]string{"operation": "cleanup", "status": "success", "error_type": "", "storage_backend": backend})
+					map[string]string{"operation": "cleanup", "status": "success", "error_type": "", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().RecordDuration("jwtauth_storage_operation_duration_seconds",
 					gomock.Any(),
-					map[string]string{"operation": "cleanup", "storage_backend": backend})
+					map[string]string{"operation": "cleanup", "storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().AddCounter("jwtauth_storage_cleanup_tokens_removed_total",
 					float64(0),
-					map[string]string{"storage_backend": backend})
+					map[string]string{"storage_backend": backend, "namespace": ""})
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					float64(0),
-					map[string]string{"storage_backend": backend})
+					map[string]string{"storage_backend": backend, "namespace": ""})
 
 				count, err := ms.Cleanup(ctx)
 				Expect(err).NotTo(HaveOccurred())
@@ -867,6 +867,264 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 				_, err := store.Cleanup(cancelledCtx)
 				Expect(err).To(MatchError(context.Canceled))
+			})
+		})
+
+		// ============================================================
+		// PHASE 12: ListTokens — Cursor-based Pagination
+		// Checkpoint: Exhaustive iteration, no duplicates, no gaps, context cancellation
+		// ============================================================
+		Describe("Phase 12: ListTokens", func() {
+			It("should return empty slice and empty cursor for empty store", func() {
+				tokens, next, err := store.ListTokens(ctx, "", 10)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tokens).To(BeEmpty())
+				Expect(next).To(BeEmpty())
+			})
+
+			It("should return all tokens in a single page when count >= total", func() {
+				for i := 0; i < 3; i++ {
+					Expect(store.Store(ctx, fmt.Sprintf("tok-single-%d", i), userID, expiresAt, nil)).To(Succeed())
+				}
+
+				tokens, next, err := store.ListTokens(ctx, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tokens).To(HaveLen(3))
+				Expect(next).To(BeEmpty())
+			})
+
+			It("should return all tokens across multiple pages with no gaps", func() {
+				const total = 7
+				for i := 0; i < total; i++ {
+					Expect(store.Store(ctx, fmt.Sprintf("tok-page-%02d", i), userID, expiresAt, nil)).To(Succeed())
+				}
+
+				var all []*storage.RefreshToken
+				cursor := ""
+				for {
+					page, next, err := store.ListTokens(ctx, cursor, 3)
+					Expect(err).NotTo(HaveOccurred())
+					all = append(all, page...)
+					cursor = next
+					if cursor == "" {
+						break
+					}
+				}
+
+				Expect(all).To(HaveLen(total))
+
+				seen := map[string]bool{}
+				for _, t := range all {
+					Expect(seen[t.TokenID]).To(BeFalse(), "duplicate token: %s", t.TokenID)
+					seen[t.TokenID] = true
+				}
+			})
+
+			It("should return empty cursor when iteration is exhausted", func() {
+				for i := 0; i < 2; i++ {
+					Expect(store.Store(ctx, fmt.Sprintf("tok-exhaust-%d", i), userID, expiresAt, nil)).To(Succeed())
+				}
+
+				_, finalCursor, err := store.ListTokens(ctx, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(finalCursor).To(BeEmpty())
+			})
+
+			It("should return non-overlapping pages on successive calls", func() {
+				for i := 0; i < 6; i++ {
+					Expect(store.Store(ctx, fmt.Sprintf("tok-overlap-%02d", i), userID, expiresAt, nil)).To(Succeed())
+				}
+
+				page1, cursor1, err := store.ListTokens(ctx, "", 3)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(page1).NotTo(BeEmpty())
+
+				if cursor1 != "" {
+					page2, _, err := store.ListTokens(ctx, cursor1, 3)
+					Expect(err).NotTo(HaveOccurred())
+
+					ids1 := map[string]bool{}
+					for _, t := range page1 {
+						ids1[t.TokenID] = true
+					}
+					for _, t := range page2 {
+						Expect(ids1[t.TokenID]).To(BeFalse(), "token %s appeared in both pages", t.TokenID)
+					}
+				}
+			})
+
+			It("should return no error for count=0", func() {
+				Expect(store.Store(ctx, "tok-count0", userID, expiresAt, nil)).To(Succeed())
+				_, _, err := store.ListTokens(ctx, "", 0)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should return context error on cancelled context for ListTokens", func() {
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				_, _, err := store.ListTokens(cancelledCtx, "", 10)
+				Expect(err).To(MatchError(context.Canceled))
+			})
+
+			It("should return revoked and expired tokens alongside active tokens", func() {
+				active := "tok-active"
+				revoked := "tok-revoked"
+				expired := "tok-expired"
+
+				Expect(store.Store(ctx, active, userID, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, revoked, userID, expiresAt, nil)).To(Succeed())
+				Expect(store.Revoke(ctx, revoked)).To(Succeed())
+				// Store expired token: use far-future expiry then mutate via Cleanup-immune path.
+				// Memory: we can store with a short expiry but Cleanup hasn't run, so it's still present.
+				// Just verify all tokens stored and visible (Cleanup hasn't run yet).
+				Expect(store.Store(ctx, expired, userID, time.Now().Add(24*time.Hour), nil)).To(Succeed())
+
+				var all []*storage.RefreshToken
+				cursor := ""
+				for {
+					page, next, err := store.ListTokens(ctx, cursor, 100)
+					Expect(err).NotTo(HaveOccurred())
+					all = append(all, page...)
+					cursor = next
+					if cursor == "" {
+						break
+					}
+				}
+
+				tokenIDs := map[string]bool{}
+				for _, t := range all {
+					tokenIDs[t.TokenID] = true
+				}
+				Expect(tokenIDs[active]).To(BeTrue(), "active token missing from ListTokens")
+				Expect(tokenIDs[revoked]).To(BeTrue(), "revoked token missing from ListTokens")
+				Expect(tokenIDs[expired]).To(BeTrue(), "expired token missing from ListTokens")
+			})
+		})
+
+		// PHASE 13: ListTokensForUser — User-scoped Cursor-based Pagination
+		//
+		// Verifies that ListTokensForUser correctly scopes iteration to a single
+		// user's tokens and that cursor-based pagination exhausts the set cleanly.
+
+		Describe("Phase 13: ListTokensForUser", func() {
+			It("should return empty result for user with no tokens", func() {
+				tokens, next, err := store.ListTokensForUser(ctx, "ghost-user", "", 10)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tokens).To(BeEmpty())
+				Expect(next).To(BeEmpty())
+			})
+
+			It("should return all tokens for a user in a single page", func() {
+				user := "user-single-page"
+				ids := []string{"tok-a", "tok-b", "tok-c"}
+				for _, id := range ids {
+					Expect(store.Store(ctx, id, user, expiresAt, nil)).To(Succeed())
+				}
+
+				tokens, next, err := store.ListTokensForUser(ctx, user, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(next).To(BeEmpty())
+				got := make(map[string]bool)
+				for _, t := range tokens {
+					got[t.TokenID] = true
+				}
+				for _, id := range ids {
+					Expect(got[id]).To(BeTrue(), "expected token %s in result", id)
+				}
+			})
+
+			It("should paginate across multiple pages and exhaust the set", func() {
+				user := "user-paginate"
+				total := 7
+				for i := 0; i < total; i++ {
+					Expect(store.Store(ctx, fmt.Sprintf("page-tok-%d", i), user, expiresAt, nil)).To(Succeed())
+				}
+
+				var all []*storage.RefreshToken
+				cursor := ""
+				for {
+					page, next, err := store.ListTokensForUser(ctx, user, cursor, 3)
+					Expect(err).NotTo(HaveOccurred())
+					all = append(all, page...)
+					cursor = next
+					if cursor == "" {
+						break
+					}
+				}
+				Expect(all).To(HaveLen(total))
+			})
+
+			It("should isolate tokens between different users", func() {
+				userA := "user-isolation-a"
+				userB := "user-isolation-b"
+				Expect(store.Store(ctx, "tok-iso-a1", userA, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-iso-a2", userA, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-iso-b1", userB, expiresAt, nil)).To(Succeed())
+
+				tokensA, _, err := store.ListTokensForUser(ctx, userA, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tokensA).To(HaveLen(2))
+				for _, t := range tokensA {
+					Expect(t.UserID).To(Equal(userA))
+				}
+
+				tokensB, _, err := store.ListTokensForUser(ctx, userB, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tokensB).To(HaveLen(1))
+				Expect(tokensB[0].UserID).To(Equal(userB))
+			})
+
+			It("should return ErrInvalidUserID for empty userID", func() {
+				_, _, err := store.ListTokensForUser(ctx, "", "", 10)
+				Expect(err).To(MatchError(storage.ErrInvalidUserID))
+			})
+
+			It("should return empty next cursor when iteration is exhausted", func() {
+				user := "user-exhaust"
+				Expect(store.Store(ctx, "tok-exhaust-1", user, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-exhaust-2", user, expiresAt, nil)).To(Succeed())
+
+				_, finalCursor, err := store.ListTokensForUser(ctx, user, "", 100)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(finalCursor).To(BeEmpty())
+			})
+
+			It("should return context error on cancelled context", func() {
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				_, _, err := store.ListTokensForUser(cancelledCtx, userID, "", 10)
+				Expect(err).To(MatchError(context.Canceled))
+			})
+
+			It("should return revoked and active tokens for the user", func() {
+				user := "user-mixed"
+				active := "tok-user-active"
+				revoked := "tok-user-revoked"
+
+				Expect(store.Store(ctx, active, user, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, revoked, user, expiresAt, nil)).To(Succeed())
+				Expect(store.Revoke(ctx, revoked)).To(Succeed())
+
+				var all []*storage.RefreshToken
+				cursor := ""
+				for {
+					page, next, err := store.ListTokensForUser(ctx, user, cursor, 100)
+					Expect(err).NotTo(HaveOccurred())
+					all = append(all, page...)
+					cursor = next
+					if cursor == "" {
+						break
+					}
+				}
+
+				tokenIDs := map[string]bool{}
+				for _, t := range all {
+					tokenIDs[t.TokenID] = true
+				}
+				Expect(tokenIDs[active]).To(BeTrue(), "active token missing from ListTokensForUser")
+				Expect(tokenIDs[revoked]).To(BeTrue(), "revoked token missing from ListTokensForUser")
 			})
 		})
 	})

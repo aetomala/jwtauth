@@ -82,19 +82,80 @@ cd correlation-example
 go run main.go
 ```
 
+### [Health Check Example](health-check/)
+
+Key inspection via a `/health/keys` endpoint using only the standard library. Best for:
+- Exposing signing key state in a health-check or readiness probe
+- Understanding the `GetCurrentKeyInfo` API without a full token lifecycle
+- Minimal setups where no HTTP framework is desired
+
+**Features**:
+- `GetCurrentKeyInfo` called per request — no background goroutine needed
+- Returns `status: "healthy"` / `"degraded"` / `"unhealthy"` based on key validity
+- Human-readable `time_until_rotation` and `key_age` fields
+- No external framework dependencies — pure stdlib
+
+**Run**:
+```bash
+cd health-check
+go run main.go
+```
+
+### [Prometheus Metrics Example](prometheus-metrics/)
+
+Custom Prometheus gauges driven by `GetCurrentKeyInfo` on a 30-second collection loop. Best for:
+- Alerting on stalled key rotation or expired signing keys
+- Adding time-based key health to an existing Prometheus/Grafana stack
+- Understanding how to integrate `GetCurrentKeyInfo` into a background collection loop
+
+**Features**:
+- Three gauges: `jwtauth_key_age_seconds`, `jwtauth_rotation_scheduled_seconds`, `jwtauth_key_valid`
+- Background goroutine with a 30-second tick — exits cleanly on shutdown
+- `/metrics` endpoint via `promhttp.Handler()`
+- Initial gauge population before the first scrape
+
+**Run**:
+```bash
+cd prometheus-metrics
+go run main.go
+```
+
+### [Token Audit Example](token-audit/)
+
+Cursor-based token enumeration using `ListTokens` and `ListTokensForUser`. Best for:
+- Understanding how to iterate all active refresh tokens for reconciliation or audit pipelines
+- Implementing session management dashboards or bulk-revocation tooling
+- Learning the cursor pagination pattern before integrating it into a production service
+
+**Features**:
+- Seeds tokens for multiple users, then iterates globally via `ListTokens` with a configurable page size
+- Iterates a single user's tokens via `ListTokensForUser` — demonstrating user-scoped pagination
+- Prints token metadata (tokenID prefix, userID, expiry, revocation state) per page
+- No HTTP server — runs as a standalone command-line audit loop and exits
+
+**Run**:
+```bash
+cd token-audit
+go run main.go
+```
+
 ## Common Pattern Across Examples
 
-All examples follow the same pattern. The `correlation-example` extends this pattern with per-request log tracing — see it for a complete demonstration of wiring `CorrelationIDHandler` and `logging.WithCorrelationID` into the request lifecycle.
+All framework examples (Gin, Chi, Echo) follow the same token lifecycle pattern — login, validate, refresh, revoke. The `correlation-example` extends this pattern with per-request log tracing.
+
+The `health-check` and `prometheus-metrics` examples focus exclusively on the **Key Inspection API** (`GetCurrentKeyInfo`) and do not require a full `TokenManager` or refresh-token flow — they are useful as standalone observability integrations or as a reference for adding key-state monitoring to an existing service.
+
+The `token-audit` example focuses on the **Token Enumeration API** (`ListTokens`, `ListTokensForUser`) — it demonstrates cursor-based pagination without an HTTP server and is useful as a reference for reconciliation jobs or session management tooling.
 
 ### 1. Setup Service Dependencies
 
 ```go
 // Create KeyManager for key rotation
-km, _ := keymanager.NewManager(config)
+km, _ := keys.NewManager(config)
 km.Start(ctx)
 
 // Create RefreshStore for token persistence
-store := storage.NewMemoryRefreshStore(logger)
+store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger})
 
 // Create TokenManager for token operations
 mgr, _ := tokens.NewManager(config)
@@ -220,7 +281,7 @@ func (s *PostgresRefreshStore) Store(ctx context.Context, tokenID, userID string
 
 // Use it in the manager
 store := &PostgresRefreshStore{db: db}
-mgr, _ := tokens.NewManager(tokens.ManagerConfig{
+mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
     RefreshStore: store,
 })
 ```
@@ -298,19 +359,21 @@ The examples show how simple it is to write middleware for any framework that ca
 - [ARCHITECTURE.md](../doc/ARCHITECTURE.md) - Design decisions and patterns
 - [Quick Start](../README.md#quick-start) - Basic usage examples
 
-## Framework Comparison
+## Example Comparison
 
-| Feature | Gin | Chi | Echo | Correlation |
-|---------|-----|-----|------|-------------|
-| **Framework** | Gin | Chi | Echo | stdlib |
-| **Middleware** | `gin.HandlerFunc` | `func(Handler)Handler` | `MiddlewareFunc` | `func(HandlerFunc)HandlerFunc` |
-| **Complexity** | Simple | Minimal | Rich features | Minimal |
-| **Learning curve** | Easy | Very easy | Medium | Very easy |
-| **Ecosystem** | Large | Small | Large | None (stdlib only) |
-| **Best for** | Microservices | Simplicity | Feature-rich apps | Log tracing demo |
-| **Correlation ID** | Not shown | Not shown | Not shown | Full demo |
+| Feature | Gin | Chi | Echo | Correlation | Health Check | Prometheus Metrics | Token Audit |
+|---------|-----|-----|------|-------------|--------------|-------------------|-------------|
+| **Framework** | Gin | Chi | Echo | stdlib | stdlib | stdlib | stdlib |
+| **Middleware** | `gin.HandlerFunc` | `func(Handler)Handler` | `MiddlewareFunc` | `func(HandlerFunc)HandlerFunc` | — | — | — |
+| **Complexity** | Simple | Minimal | Rich features | Minimal | Minimal | Minimal | Minimal |
+| **Learning curve** | Easy | Very easy | Medium | Very easy | Very easy | Very easy | Very easy |
+| **Ecosystem** | Large | Small | Large | None (stdlib only) | None (stdlib only) | Prometheus | None (stdlib only) |
+| **Best for** | Microservices | Simplicity | Feature-rich apps | Log tracing demo | Health probes | Alerting & dashboards | Audit / reconciliation |
+| **Correlation ID** | Not shown | Not shown | Not shown | Full demo | Not shown | Not shown | Not shown |
+| **Key Inspection** | `/admin/key-status` | `/admin/key-status` | Not shown | Not shown | Full demo | Full demo | Not shown |
+| **Token Enumeration** | Not shown | Not shown | Not shown | Not shown | Not shown | Not shown | Full demo |
 
-All examples achieve the same token lifecycle goals. The correlation-example additionally demonstrates per-request log tracing — the pattern applies equally to Gin, Chi, and Echo.
+The framework examples (Gin, Chi, Echo) focus on the full token lifecycle. The `health-check` and `prometheus-metrics` examples focus on the Key Inspection API — they are key-inspection-only and do not demonstrate login or refresh flows. The `token-audit` example focuses on the Token Enumeration API and runs as a CLI tool rather than an HTTP server.
 
 ## Next Steps
 

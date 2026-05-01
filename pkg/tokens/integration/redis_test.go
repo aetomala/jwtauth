@@ -11,7 +11,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/aetomala/jwtauth/pkg/keymanager"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
@@ -55,18 +55,20 @@ func init() {
 			// because both TokenManagers read from the same Redis refresh store.
 
 			// Instance A — own KeyManager, own TokenManager, shared Redis backend
-			ksA, err := keymanager.NewRedisKeyStore(client, nil, nil)
+			ksA, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
-			kmA, err := keymanager.NewManager(keymanager.ManagerConfig{
+			kmA, err := keys.NewManager(keys.KeyManagerConfig{
 				KeyStore:            ksA,
 				KeyRotationInterval: 30 * 24 * time.Hour,
 				KeySize:             2048,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			storeA := storage.NewRedisRefreshStore(client, nil, nil)
-			mgrA, err := tokens.NewManager(tokens.ManagerConfig{
+			storeA, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+			Expect(err).NotTo(HaveOccurred())
+
+			mgrA, err := tokens.NewManager(tokens.TokenManagerConfig{
 				KeyManager:           kmA,
 				RefreshStore:         storeA,
 				AccessTokenDuration:  5 * time.Minute,
@@ -83,18 +85,20 @@ func init() {
 			})
 
 			// Instance B — own KeyManager (loads A's keys from Redis), own TokenManager, shared refresh store
-			ksB, err := keymanager.NewRedisKeyStore(client, nil, nil)
+			ksB, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
-			kmB, err := keymanager.NewManager(keymanager.ManagerConfig{
+			kmB, err := keys.NewManager(keys.KeyManagerConfig{
 				KeyStore:            ksB,
 				KeyRotationInterval: 30 * 24 * time.Hour,
 				KeySize:             2048,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			storeB := storage.NewRedisRefreshStore(client, nil, nil)
-			mgrB, err := tokens.NewManager(tokens.ManagerConfig{
+			storeB, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+			Expect(err).NotTo(HaveOccurred())
+
+			mgrB, err := tokens.NewManager(tokens.TokenManagerConfig{
 				KeyManager:           kmB,
 				RefreshStore:         storeB,
 				AccessTokenDuration:  5 * time.Minute,
@@ -138,18 +142,20 @@ func init() {
 			// Instance B starts fresh (new Manager, same Redis key store) and must be able
 			// to validate tokens signed by both the pre- and post-rotation keys of instance A.
 
-			ksA, err := keymanager.NewRedisKeyStore(client, nil, nil)
+			ksA, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
-			kmA, err := keymanager.NewManager(keymanager.ManagerConfig{
+			kmA, err := keys.NewManager(keys.KeyManagerConfig{
 				KeyStore:            ksA,
 				KeyRotationInterval: 30 * 24 * time.Hour,
 				KeySize:             2048,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			storeA := storage.NewRedisRefreshStore(client, nil, nil)
-			mgrA, err := tokens.NewManager(tokens.ManagerConfig{
+			storeA, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+			Expect(err).NotTo(HaveOccurred())
+
+			mgrA, err := tokens.NewManager(tokens.TokenManagerConfig{
 				KeyManager:           kmA,
 				RefreshStore:         storeA,
 				AccessTokenDuration:  5 * time.Minute,
@@ -179,18 +185,20 @@ func init() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Instance B starts with the same Redis key store — loads all keys on Start
-			ksB, err := keymanager.NewRedisKeyStore(client, nil, nil)
+			ksB, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client})
 			Expect(err).NotTo(HaveOccurred())
 
-			kmB, err := keymanager.NewManager(keymanager.ManagerConfig{
+			kmB, err := keys.NewManager(keys.KeyManagerConfig{
 				KeyStore:            ksB,
 				KeyRotationInterval: 30 * 24 * time.Hour,
 				KeySize:             2048,
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			storeB := storage.NewRedisRefreshStore(client, nil, nil)
-			mgrB, err := tokens.NewManager(tokens.ManagerConfig{
+			storeB, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+			Expect(err).NotTo(HaveOccurred())
+
+			mgrB, err := tokens.NewManager(tokens.TokenManagerConfig{
 				KeyManager:           kmB,
 				RefreshStore:         storeB,
 				AccessTokenDuration:  5 * time.Minute,
@@ -220,16 +228,16 @@ func init() {
 
 // redisFactory creates a TokenManager backed by RedisKeyStore + RedisRefreshStore
 // using an isolated miniredis instance. Each call produces a fully independent backend.
-func redisFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keymanager.Manager, func()) {
+func redisFactory(cfg tokens.TokenManagerConfig) (*tokens.Manager, *keys.Manager, func()) {
 	mr, err := miniredis.Run()
 	Expect(err).NotTo(HaveOccurred())
 
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
-	ks, err := keymanager.NewRedisKeyStore(client, nil, nil)
+	ks, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{Client: client})
 	Expect(err).NotTo(HaveOccurred())
 
-	km, err := keymanager.NewManager(keymanager.ManagerConfig{
+	km, err := keys.NewManager(keys.KeyManagerConfig{
 		KeyStore:            ks,
 		KeyRotationInterval: 30 * 24 * time.Hour,
 		KeySize:             2048,
@@ -237,7 +245,10 @@ func redisFactory(cfg tokens.ManagerConfig) (*tokens.Manager, *keymanager.Manage
 	Expect(err).NotTo(HaveOccurred())
 
 	cfg.KeyManager = km
-	cfg.RefreshStore = storage.NewRedisRefreshStore(client, nil, nil)
+
+	refreshStore, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+	Expect(err).NotTo(HaveOccurred())
+	cfg.RefreshStore = refreshStore
 
 	mgr, err := tokens.NewManager(cfg)
 	Expect(err).NotTo(HaveOccurred())
