@@ -193,6 +193,10 @@ All notable changes to this project will be documented in this file.
 
 - **`pkg/keys` test DRY cleanup — hoisted `ctrl` and `mockKS` to outer `Describe` scope** — `var ctrl *gomock.Controller` and `var mockKS *testutil.MockKeyStore` were independently declared, initialized in `BeforeEach`, and torn down with `ctrl.Finish()` in `AfterEach` inside each phase-level `Describe` block. Both vars moved to the outer `Describe("Manager")` var block with a single shared `BeforeEach`/`AfterEach` pair. Equivalent declarations removed from Phases 1, 3, 4, 5, 6, 7, 8, 9, 10, and 11 — 11 insertions, 98 deletions. The locally-scoped `ctrl2` in Phase 7 is untouched. Fixes DRY violation M5.
 
+- **Integration test coverage extended — three new behavioral specs** added to `RunTokenManagerIntegrationTests` and run against both backends (DiskKeyStore+MemoryRefreshStore, RedisKeyStore+RedisRefreshStore): token listing and user-scoped filtering via `ListTokens` / `ListTokensForUser`; custom claims round-trip through `IssueAccessTokenWithClaims`, `IssueTokenPairWithClaims`, and `ValidateAccessTokenWithClaims`; individual token revocation via `RevokeRefreshToken` without disturbing other sessions for the same user.
+
+- **`--fail-on-pending` added to integration test invocation** in both `.github/workflows/CI.yml` and `run-ci-locally.sh` — consistent with the existing unit test flags; prevents accidentally skipping pending specs from silently passing CI.
+
 ---
 
 ## [v0.3.0] — 2026-04-14

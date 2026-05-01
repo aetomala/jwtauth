@@ -95,5 +95,6 @@ jobs:
             --race \
             --timeout=180s \
             --randomize-all \
+            --fail-on-pending \
             --tags=integration \
             ./pkg/tokens/integration/...
