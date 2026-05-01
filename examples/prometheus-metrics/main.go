@@ -5,6 +5,9 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/aetomala/jwtauth/pkg/keys"
@@ -52,8 +55,8 @@ func main() {
 	}
 
 	// ===== STEP 2: Start KeyManager =====
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	if err := km.Start(ctx); err != nil {
 		log.Fatal("Failed to start KeyManager:", err)
@@ -85,9 +88,21 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
-	log.Println("Starting metrics server on :9090")
-	if err := http.ListenAndServe(":9090", mux); err != nil {
-		log.Fatal(err)
+	srv := &http.Server{Addr: ":9090", Handler: mux}
+	go func() {
+		log.Println("Starting metrics server on :9090")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("metrics server error: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	stop() // release signal catch so a second Ctrl-C kills immediately
+
+	srvShutdownCtx, srvShutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer srvShutdownCancel()
+	if err := srv.Shutdown(srvShutdownCtx); err != nil {
+		log.Printf("server shutdown error: %v", err)
 	}
 }
 

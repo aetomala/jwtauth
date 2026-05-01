@@ -261,12 +261,15 @@ func (m *Manager) startSpan(ctx context.Context, operation string, opts ...traci
 	return m.tracer.Start(ctx, "TokenManager."+operation, opts...)
 }
 
-// Start initializes the service and begins background operationm. It starts
+// Start initializes the service and begins background operations. It starts
 // the KeyManager and launches the cleanup goroutine that periodically purges
-// expired refresh tokenm.
+// expired refresh tokens.
 //
 // Start is idempotent — calling it on an already-running service is a no-op.
 // Returns an error if the KeyManager fails to start or the context is cancelled.
+// The ctx passed to Start is forwarded to the cleanup goroutine's store calls —
+// pass a long-lived context (e.g. the process root) so cleanup continues for
+// the full lifetime of the service.
 func (m *Manager) Start(ctx context.Context) error {
 	ctx, span := m.startSpan(ctx, "Start")
 	defer span.End()
@@ -338,6 +341,10 @@ func (m *Manager)cleanupLoop(ctx context.Context) {
 // Shutdown is idempotent — calling it on a stopped service is a no-op.
 // Returns context.DeadlineExceeded if the goroutines do not finish within
 // the deadline, or any error returned by the KeyManager's Shutdown.
+// After a clean shutdown the manager may be restarted via Start. Restart is
+// not guaranteed after a timeout shutdown — the cleanup goroutine may still
+// hold a reference to the closed channel; treat a timeout Shutdown as fatal
+// and discard the manager.
 func (m *Manager) Shutdown(ctx context.Context) error {
 	ctx, span := m.startSpan(ctx, "Shutdown")
 	defer span.End()
@@ -362,9 +369,21 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		close(done)
 	}()
 
+	// Drain a pre-cancelled context before the blocking select so that a
+	// caller-cancelled ctx reliably wins over a fast goroutine exit.
+	select {
+	case <-ctx.Done():
+		span.RecordError(ctx.Err())
+		span.SetStatus(tracing.StatusError, ctx.Err().Error())
+		return ctx.Err()
+	default:
+	}
+
 	select {
 	case <-done:
-		// Goroutines completed
+		// Goroutines completed — recreate shutdownChan so the manager can be
+		// restarted via Start.
+		m.shutdownChan = make(chan struct{})
 	case <-ctx.Done():
 		// Timeout
 		m.logger.Warn("shutdown timeout waiting for goroutines", ctx,
