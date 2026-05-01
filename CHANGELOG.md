@@ -187,6 +187,22 @@ All notable changes to this project will be documented in this file.
 
 - **`doc/DEPLOYMENT.md` additions** — four new operator-facing sections added in PRs #126–#129: namespace isolation (multi-instance `KeyPrefix` + `Namespace` wiring), token enumeration (cursor-based audit pattern), reserved claims (CustomClaims guard explanation with link to ADR-008), and corrected constructor snippets throughout.
 
+### Bug Fixes
+
+- **`TokenManager.Shutdown` — restart-safety**: `shutdownChan` is now recreated after a
+  clean shutdown, matching `KeyManager`'s existing pattern. Previously, calling
+  `Start → Shutdown → Start` would silently break the cleanup goroutine on the second start —
+  `IsRunning()` returned `true` but background cleanup was dead.
+
+- **`TokenManager.Shutdown` — pre-cancelled context drain**: Added a non-blocking ctx drain
+  before the blocking goroutine-wait select, eliminating the same race condition fixed in
+  `KeyManager.Shutdown` (PR #137). Prevents flaky behavior when both `done` and `ctx.Done()`
+  are simultaneously ready.
+
+- **`prometheus-metrics` example — graceful shutdown**: Replaced `http.ListenAndServe` with
+  `http.Server.Shutdown` and `signal.NotifyContext` (SIGTERM/SIGINT). Background collection
+  goroutine now exits cleanly on signal instead of only via `os.Exit`.
+
 ### Testing
 
 - **`pkg/tokens` test DRY cleanup — shared `newTestManager` helper** — `createService` closure was independently defined in both `manager_test.go` and `manager_lifecycle_test.go`; extracted to `pkg/tokens/helpers_test.go` as `newTestManagerConfig` and `newTestManager` package-level helpers within the `tokens_test` package. 25 call sites updated across both files — no new dependency between packages. Fixes DRY violation M4.
