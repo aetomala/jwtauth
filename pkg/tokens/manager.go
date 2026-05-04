@@ -1728,7 +1728,7 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	}
 
 	// ===== STEP 7: Issue New Access Token =====
-	newAccessToken, err := m.IssueAccessToken(ctx, token.UserID)
+	newAccessToken, err := m.IssueAccessToken(ctx, token.UserID, WithAudience(token.Audience...))
 	if err != nil {
 		m.logger.Error("failed to issue new access token", ctx,
 			"userID", token.UserID,
@@ -1865,7 +1865,7 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 	}
 
 	// ===== STEP 7: Issue New Access Token With Claims =====
-	newAccessToken, err := m.IssueAccessTokenWithClaims(ctx, token.UserID, claims)
+	newAccessToken, err := m.IssueAccessTokenWithClaims(ctx, token.UserID, claims, WithAudience(token.Audience...))
 	if err != nil {
 		m.logger.Error("failed to issue new access token", ctx,
 			"userID", token.UserID,
@@ -2128,6 +2128,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 			ExpiresAt: refreshToken.ExpiresAt,
 			IssuedAt:  refreshToken.CreatedAt,
 			TokenID:   refreshToken.TokenID,
+			Audience:  refreshToken.Audience,
 		}, nil
 	}
 
@@ -2145,6 +2146,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 			ExpiresAt: refreshToken.ExpiresAt,
 			IssuedAt:  refreshToken.CreatedAt,
 			TokenID:   refreshToken.TokenID,
+			Audience:  refreshToken.Audience,
 		}, nil
 	}
 
@@ -2163,6 +2165,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 		ExpiresAt: refreshToken.ExpiresAt,
 		IssuedAt:  refreshToken.CreatedAt,
 		TokenID:   refreshToken.TokenID,
+		Audience:  refreshToken.Audience,
 	}, nil
 }
 
