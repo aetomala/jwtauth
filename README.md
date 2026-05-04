@@ -2,7 +2,7 @@
 
 ![Tests](https://github.com/aetomala/jwtauth/actions/workflows/CI.yml/badge.svg?branch=main)
 ![Go Version](https://img.shields.io/badge/go-1.26+-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 **Stateful JWT authorization token engine for distributed Go applications**
 
@@ -1259,7 +1259,10 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for requirements, 
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details
+This project is licensed under the Apache License 2.0.
+See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
+
+> Releases v0.4.0 and earlier were distributed under the MIT License.
 
 ## Support
 

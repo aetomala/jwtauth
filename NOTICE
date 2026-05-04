@@ -1,0 +1,5 @@
+JWTAUTH — Stateful Token Management Infrastructure
+Copyright 2026 Angel Tomala-Reyes
+
+This product provides interfaces and a core engine for stateful JWT token
+management, designed for use as infrastructure in secure authorization workflows.
