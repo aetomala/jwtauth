@@ -115,7 +115,7 @@ func (r *RedisRefreshStore) startSpan(ctx context.Context, operation string) (co
 //
 // A defensive copy of metadata is made so later mutations to the caller's map
 // do not affect the stored token.
-func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error {
+func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]interface{}) error {
 	ctx, span := r.startSpan(ctx, "Store")
 	defer span.End()
 	span.SetAttribute("token_id", tokenID)
@@ -204,6 +204,20 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 	}
 
 	// ===== STEP 4: Build Token Data Map =====
+	var audienceJSON string
+	if len(audience) > 0 {
+		ab, err := json.Marshal(audience)
+		if err != nil {
+			r.logger.Error("store failed: audience marshal error", ctx,
+				"tokenID", tokenID, "error", err)
+			wrapped := fmt.Errorf("failed to marshal audience: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return wrapped
+		}
+		audienceJSON = string(ab)
+	}
+
 	now := time.Now()
 	tokenData := map[string]interface{}{
 		"userID":    userID,
@@ -211,6 +225,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 		"createdAt": now.UnixMilli(),
 		"revoked":   "false",
 		"metadata":  metadataJSON,
+		"audience":  audienceJSON,
 	}
 
 	// ===== STEP 5: Execute Atomic Write via Pipeline =====
@@ -387,6 +402,19 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		ExpiresAt: expiresAt,
 		CreatedAt: createdAt,
 		Revoked:   revoked,
+	}
+
+	if audJSON, exists := hash["audience"]; exists && audJSON != "" {
+		var aud []string
+		if err := json.Unmarshal([]byte(audJSON), &aud); err != nil {
+			r.logger.Error("retrieve failed: audience unmarshal error", ctx,
+				"tokenID", tokenID, "error", err)
+			wrapped := fmt.Errorf("failed to unmarshal audience: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return nil, wrapped
+		}
+		safeToken.Audience = aud
 	}
 
 	if metadataJSON, exists := hash["metadata"]; exists && metadataJSON != "" {
@@ -976,6 +1004,15 @@ func (r *RedisRefreshStore) fetchTokensByIDs(ctx context.Context, tokenIDs []str
 			ExpiresAt: time.UnixMilli(expiresAtMillis),
 			CreatedAt: time.UnixMilli(createdAtMillis),
 			Revoked:   hash["revoked"] == "true",
+		}
+		if audJSON, ok := hash["audience"]; ok && audJSON != "" {
+			var aud []string
+			if err := json.Unmarshal([]byte(audJSON), &aud); err != nil {
+				r.logger.Warn("fetchTokensByIDs: skipping audience for token", ctx,
+					"tokenID", tokenIDs[i], "error", err)
+			} else {
+				t.Audience = aud
+			}
 		}
 		if metadataJSON, ok := hash["metadata"]; ok && metadataJSON != "" {
 			var meta map[string]interface{}

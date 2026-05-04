@@ -88,12 +88,12 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 		// ============================================================
 		Describe("Phase 2: Store - Happy Path", func() {
 			It("should store token successfully", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
 			It("should allow retrieval after storing", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -104,7 +104,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			})
 
 			It("should store metadata correctly", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -113,7 +113,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			})
 
 			It("should store expiration time correctly", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -123,7 +123,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should store creation time", func() {
 				before := time.Now()
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -134,7 +134,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			})
 
 			It("should initialize revoked as false", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -149,39 +149,39 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 		// ============================================================
 		Describe("Phase 3: Store - Input Validation", func() {
 			It("should reject empty tokenID", func() {
-				err := store.Store(ctx, "", userID, expiresAt, metadata)
+				err := store.Store(ctx, "", userID, nil, expiresAt, metadata)
 				Expect(err).To(MatchError(storage.ErrInvalidTokenID))
 			})
 
 			It("should reject whitespace-only tokenID", func() {
-				err := store.Store(ctx, "   ", userID, expiresAt, metadata)
+				err := store.Store(ctx, "   ", userID, nil, expiresAt, metadata)
 				Expect(err).To(MatchError(storage.ErrInvalidTokenID))
 			})
 
 			It("should reject empty userID", func() {
-				err := store.Store(ctx, tokenID, "", expiresAt, metadata)
+				err := store.Store(ctx, tokenID, "", nil, expiresAt, metadata)
 				Expect(err).To(MatchError(storage.ErrInvalidUserID))
 			})
 
 			It("should reject whitespace-only userID", func() {
-				err := store.Store(ctx, tokenID, "   ", expiresAt, metadata)
+				err := store.Store(ctx, tokenID, "   ", nil, expiresAt, metadata)
 				Expect(err).To(MatchError(storage.ErrInvalidUserID))
 			})
 
 			It("should reject expired token (past time)", func() {
 				past := time.Now().Add(-1 * time.Hour)
-				err := store.Store(ctx, tokenID, userID, past, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, past, metadata)
 				Expect(err).To(MatchError(storage.ErrTokenExpired))
 			})
 
 			It("should reject expired token (exactly now)", func() {
 				now := time.Now()
-				err := store.Store(ctx, tokenID, userID, now, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, now, metadata)
 				Expect(err).To(MatchError(storage.ErrTokenExpired))
 			})
 
 			It("should accept nil metadata", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, nil)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, nil)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -190,7 +190,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			})
 
 			It("should accept empty metadata", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, map[string]interface{}{})
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, map[string]interface{}{})
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -209,7 +209,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 					"key": "original",
 				}
 
-				err := store.Store(ctx, tokenID, userID, expiresAt, originalMetadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, originalMetadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Mutate original
@@ -222,7 +222,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			})
 
 			It("should return deep copy of metadata on Retrieve", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -244,7 +244,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 					},
 				}
 
-				err := store.Store(ctx, tokenID, userID, expiresAt, nestedMetadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, nestedMetadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Top-level copy is defensive, but nested structures are shared
@@ -276,7 +276,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			})
 
 			It("should return ErrTokenRevoked for revoked token", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				err = store.Revoke(ctx, tokenID)
@@ -288,7 +288,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should return ErrTokenExpired for expired token", func() {
 				past := time.Now().Add(-1 * time.Hour)
-				err := store.Store(ctx, tokenID, userID, past, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, past, metadata)
 				// Some stores might reject this at Store time, so check either way
 				if err != storage.ErrTokenExpired {
 					// If Store accepts it, Retrieve should reject it
@@ -304,7 +304,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 		// ============================================================
 		Describe("Phase 6: Revoke - Idempotent and State-Changing", func() {
 			It("should mark token as revoked", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				err = store.Revoke(ctx, tokenID)
@@ -315,7 +315,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			})
 
 			It("should be idempotent (revoke twice)", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				err = store.Revoke(ctx, tokenID)
@@ -354,7 +354,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				// Store 5 tokens for same user
 				for i := 0; i < 5; i++ {
 					tid := fmt.Sprintf("token-%d", i)
-					err := store.Store(ctx, tid, userID, expiresAt, metadata)
+					err := store.Store(ctx, tid, userID, nil, expiresAt, metadata)
 					Expect(err).NotTo(HaveOccurred())
 				}
 
@@ -374,10 +374,10 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				user1ID := "user-1"
 				user2ID := "user-2"
 
-				err := store.Store(ctx, "token-1", user1ID, expiresAt, metadata)
+				err := store.Store(ctx, "token-1", user1ID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
-				err = store.Store(ctx, "token-2", user2ID, expiresAt, metadata)
+				err = store.Store(ctx, "token-2", user2ID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				// Revoke user1's tokens
@@ -410,7 +410,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			})
 
 			It("should be idempotent", func() {
-				err := store.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				err = store.RevokeAllForUser(ctx, userID)
@@ -430,7 +430,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should remove expired tokens", func() {
 				veryShortLived := time.Now().Add(100 * time.Millisecond)
 
-				err := store.Store(ctx, tokenID, userID, veryShortLived, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, veryShortLived, metadata)
 				if err != nil {
 					Skip("Store rejected short-lived token")
 				}
@@ -454,7 +454,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				// Store multiple short-lived tokens
 				for i := 0; i < 3; i++ {
 					tid := fmt.Sprintf("token-%d", i)
-					err := store.Store(ctx, tid, userID, veryShortLived, metadata)
+					err := store.Store(ctx, tid, userID, nil, veryShortLived, metadata)
 					if err != nil {
 						Skip("Store rejected short-lived tokens")
 					}
@@ -471,7 +471,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should not remove non-expired tokens", func() {
 				future := time.Now().Add(1 * time.Hour)
-				err := store.Store(ctx, tokenID, userID, future, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, future, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				count, err := store.Cleanup(ctx)
@@ -491,11 +491,11 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should handle mixed expiration states", func() {
 				future := time.Now().Add(1 * time.Hour)
-				err := store.Store(ctx, "future-token", userID, future, metadata)
+				err := store.Store(ctx, "future-token", userID, nil, future, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				shortLived := time.Now().Add(50 * time.Millisecond)
-				err = store.Store(ctx, "short-token", userID, shortLived, metadata)
+				err = store.Store(ctx, "short-token", userID, nil, shortLived, metadata)
 				if err != nil {
 					Skip("Store rejected short-lived token")
 				}
@@ -519,7 +519,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 		Describe("Phase 8: Edge Cases - Unicode", func() {
 			It("should handle unicode in tokenID", func() {
 				uuidToken := "token-🔐-abc"
-				err := store.Store(ctx, uuidToken, userID, expiresAt, metadata)
+				err := store.Store(ctx, uuidToken, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, uuidToken)
@@ -529,7 +529,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should handle unicode in userID", func() {
 				uuidUser := "user-🔐-xyz"
-				err := store.Store(ctx, tokenID, uuidUser, expiresAt, metadata)
+				err := store.Store(ctx, tokenID, uuidUser, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -546,7 +546,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should handle storing many tokens for one user", func() {
 				for i := 0; i < 100; i++ {
 					tid := fmt.Sprintf("token-%d", i)
-					err := store.Store(ctx, tid, userID, expiresAt, metadata)
+					err := store.Store(ctx, tid, userID, nil, expiresAt, metadata)
 					Expect(err).NotTo(HaveOccurred())
 				}
 
@@ -573,7 +573,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 					largeMeta[fmt.Sprintf("key-%d", i)] = fmt.Sprintf("value-%d", i)
 				}
 
-				err := store.Store(ctx, tokenID, userID, expiresAt, largeMeta)
+				err := store.Store(ctx, tokenID, userID, nil, expiresAt, largeMeta)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -589,7 +589,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 		Describe("Phase 8: Edge Cases - Far Future", func() {
 			It("should handle tokens with very far future expiration", func() {
 				farFuture := time.Now().Add(100 * 365 * 24 * time.Hour)
-				err := store.Store(ctx, tokenID, userID, farFuture, metadata)
+				err := store.Store(ctx, tokenID, userID, nil, farFuture, metadata)
 				Expect(err).NotTo(HaveOccurred())
 
 				token, err := store.Retrieve(ctx, tokenID)
@@ -631,7 +631,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 					gomock.Any(),
 					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
 
-				err := ms.Store(ctx, tokenID, userID, expiresAt, metadata)
+				err := ms.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
@@ -642,7 +642,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 					gomock.Any(),
 					map[string]string{"operation": "store", "storage_backend": backend, "namespace": ""})
 
-				err := ms.Store(ctx, "", userID, expiresAt, metadata)
+				err := ms.Store(ctx, "", userID, nil, expiresAt, metadata)
 				Expect(err).To(HaveOccurred())
 			})
 
@@ -656,7 +656,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					gomock.Any(),
 					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
-				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
+				Expect(ms.Store(ctx, tokenID, userID, nil, expiresAt, metadata)).To(Succeed())
 
 				// Retrieve expectations
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
@@ -691,7 +691,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					gomock.Any(),
 					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
-				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
+				Expect(ms.Store(ctx, tokenID, userID, nil, expiresAt, metadata)).To(Succeed())
 
 				// Revoke
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
@@ -722,7 +722,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					gomock.Any(),
 					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
-				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
+				Expect(ms.Store(ctx, tokenID, userID, nil, expiresAt, metadata)).To(Succeed())
 
 				// Revoke
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
@@ -744,7 +744,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					gomock.Any(),
 					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
-				Expect(ms.Store(ctx, tokenID, userID, expiresAt, metadata)).To(Succeed())
+				Expect(ms.Store(ctx, tokenID, userID, nil, expiresAt, metadata)).To(Succeed())
 
 				// RevokeAllForUser
 				mockM.EXPECT().IncrementCounter("jwtauth_storage_operations_total",
@@ -769,7 +769,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				mockM.EXPECT().SetGauge("jwtauth_storage_tokens_count",
 					float64(1),
 					map[string]string{"storage_backend": backend, "namespace": ""}).AnyTimes()
-				err := ms.Store(ctx, tokenID, userID, veryShortLived, metadata)
+				err := ms.Store(ctx, tokenID, userID, nil, veryShortLived, metadata)
 				if err != nil {
 					Skip("store rejected short-lived token")
 				}
@@ -815,7 +815,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should not panic when metrics is nil", func() {
 				nilMetricsStore := factory(mockLogger, nil)
 				Expect(func() {
-					_ = nilMetricsStore.Store(ctx, tokenID, userID, expiresAt, metadata)
+					_ = nilMetricsStore.Store(ctx, tokenID, userID, nil, expiresAt, metadata)
 					_, _ = nilMetricsStore.Retrieve(ctx, tokenID)
 					_ = nilMetricsStore.Revoke(ctx, tokenID)
 					_ = nilMetricsStore.RevokeAllForUser(ctx, userID)
@@ -833,7 +833,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				cancelledCtx, cancel := context.WithCancel(context.Background())
 				cancel()
 
-				err := store.Store(cancelledCtx, tokenID, userID, expiresAt, metadata)
+				err := store.Store(cancelledCtx, tokenID, userID, nil, expiresAt, metadata)
 				Expect(err).To(MatchError(context.Canceled))
 			})
 
@@ -884,7 +884,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should return all tokens in a single page when count >= total", func() {
 				for i := 0; i < 3; i++ {
-					Expect(store.Store(ctx, fmt.Sprintf("tok-single-%d", i), userID, expiresAt, nil)).To(Succeed())
+					Expect(store.Store(ctx, fmt.Sprintf("tok-single-%d", i), userID, nil, expiresAt, nil)).To(Succeed())
 				}
 
 				tokens, next, err := store.ListTokens(ctx, "", 100)
@@ -896,7 +896,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should return all tokens across multiple pages with no gaps", func() {
 				const total = 7
 				for i := 0; i < total; i++ {
-					Expect(store.Store(ctx, fmt.Sprintf("tok-page-%02d", i), userID, expiresAt, nil)).To(Succeed())
+					Expect(store.Store(ctx, fmt.Sprintf("tok-page-%02d", i), userID, nil, expiresAt, nil)).To(Succeed())
 				}
 
 				var all []*storage.RefreshToken
@@ -922,7 +922,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should return empty cursor when iteration is exhausted", func() {
 				for i := 0; i < 2; i++ {
-					Expect(store.Store(ctx, fmt.Sprintf("tok-exhaust-%d", i), userID, expiresAt, nil)).To(Succeed())
+					Expect(store.Store(ctx, fmt.Sprintf("tok-exhaust-%d", i), userID, nil, expiresAt, nil)).To(Succeed())
 				}
 
 				_, finalCursor, err := store.ListTokens(ctx, "", 100)
@@ -932,7 +932,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should return non-overlapping pages on successive calls", func() {
 				for i := 0; i < 6; i++ {
-					Expect(store.Store(ctx, fmt.Sprintf("tok-overlap-%02d", i), userID, expiresAt, nil)).To(Succeed())
+					Expect(store.Store(ctx, fmt.Sprintf("tok-overlap-%02d", i), userID, nil, expiresAt, nil)).To(Succeed())
 				}
 
 				page1, cursor1, err := store.ListTokens(ctx, "", 3)
@@ -954,7 +954,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			})
 
 			It("should return no error for count=0", func() {
-				Expect(store.Store(ctx, "tok-count0", userID, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-count0", userID, nil, expiresAt, nil)).To(Succeed())
 				_, _, err := store.ListTokens(ctx, "", 0)
 				Expect(err).NotTo(HaveOccurred())
 			})
@@ -972,13 +972,13 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				revoked := "tok-revoked"
 				expired := "tok-expired"
 
-				Expect(store.Store(ctx, active, userID, expiresAt, nil)).To(Succeed())
-				Expect(store.Store(ctx, revoked, userID, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, active, userID, nil, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, revoked, userID, nil, expiresAt, nil)).To(Succeed())
 				Expect(store.Revoke(ctx, revoked)).To(Succeed())
 				// Store expired token: use far-future expiry then mutate via Cleanup-immune path.
 				// Memory: we can store with a short expiry but Cleanup hasn't run, so it's still present.
 				// Just verify all tokens stored and visible (Cleanup hasn't run yet).
-				Expect(store.Store(ctx, expired, userID, time.Now().Add(24*time.Hour), nil)).To(Succeed())
+				Expect(store.Store(ctx, expired, userID, nil, time.Now().Add(24*time.Hour), nil)).To(Succeed())
 
 				var all []*storage.RefreshToken
 				cursor := ""
@@ -1019,7 +1019,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				user := "user-single-page"
 				ids := []string{"tok-a", "tok-b", "tok-c"}
 				for _, id := range ids {
-					Expect(store.Store(ctx, id, user, expiresAt, nil)).To(Succeed())
+					Expect(store.Store(ctx, id, user, nil, expiresAt, nil)).To(Succeed())
 				}
 
 				tokens, next, err := store.ListTokensForUser(ctx, user, "", 100)
@@ -1038,7 +1038,7 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				user := "user-paginate"
 				total := 7
 				for i := 0; i < total; i++ {
-					Expect(store.Store(ctx, fmt.Sprintf("page-tok-%d", i), user, expiresAt, nil)).To(Succeed())
+					Expect(store.Store(ctx, fmt.Sprintf("page-tok-%d", i), user, nil, expiresAt, nil)).To(Succeed())
 				}
 
 				var all []*storage.RefreshToken
@@ -1058,9 +1058,9 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			It("should isolate tokens between different users", func() {
 				userA := "user-isolation-a"
 				userB := "user-isolation-b"
-				Expect(store.Store(ctx, "tok-iso-a1", userA, expiresAt, nil)).To(Succeed())
-				Expect(store.Store(ctx, "tok-iso-a2", userA, expiresAt, nil)).To(Succeed())
-				Expect(store.Store(ctx, "tok-iso-b1", userB, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-iso-a1", userA, nil, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-iso-a2", userA, nil, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-iso-b1", userB, nil, expiresAt, nil)).To(Succeed())
 
 				tokensA, _, err := store.ListTokensForUser(ctx, userA, "", 100)
 				Expect(err).NotTo(HaveOccurred())
@@ -1082,8 +1082,8 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 
 			It("should return empty next cursor when iteration is exhausted", func() {
 				user := "user-exhaust"
-				Expect(store.Store(ctx, "tok-exhaust-1", user, expiresAt, nil)).To(Succeed())
-				Expect(store.Store(ctx, "tok-exhaust-2", user, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-exhaust-1", user, nil, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-exhaust-2", user, nil, expiresAt, nil)).To(Succeed())
 
 				_, finalCursor, err := store.ListTokensForUser(ctx, user, "", 100)
 				Expect(err).NotTo(HaveOccurred())
@@ -1103,8 +1103,8 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				active := "tok-user-active"
 				revoked := "tok-user-revoked"
 
-				Expect(store.Store(ctx, active, user, expiresAt, nil)).To(Succeed())
-				Expect(store.Store(ctx, revoked, user, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, active, user, nil, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, revoked, user, nil, expiresAt, nil)).To(Succeed())
 				Expect(store.Revoke(ctx, revoked)).To(Succeed())
 
 				var all []*storage.RefreshToken

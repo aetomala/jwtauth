@@ -27,18 +27,20 @@ type RefreshStore interface {
 	// The token should be stored with:
 	//   - Expiration time (for TTL/cleanup)
 	//   - User ID (for revocation by user)
+	//   - Audience (for audience-scoped revocation; nil inherits the manager default)
 	//   - Metadata (optional, for audit/tracking)
 	//
 	// Args:
 	//   - ctx: Request context for cancellation and deadline propagation
 	//   - tokenID: Unique identifier for the token
 	//   - userID: User who owns the token
+	//   - audience: Audience for this token; nil means caller inherits manager default
 	//   - expiresAt: When the token expires
 	//   - metadata: Optional metadata (IP, user agent, etc.)
 	//
 	// Returns:
 	//   - error: If storage fails
-	Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error
+	Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]interface{}) error
 
 	// Retrieve fetches a refresh token by ID.
 	//
@@ -139,5 +141,6 @@ type RefreshToken struct {
 	ExpiresAt time.Time
 	CreatedAt time.Time
 	Revoked   bool
+	Audience  []string
 	Metadata  map[string]interface{}
 }

@@ -97,9 +97,9 @@ func (m *MemoryRefreshStore) startSpan(ctx context.Context, operation string) (c
 // is already in the past. Returns the context error if the context is
 // cancelled before the write.
 //
-// A defensive copy of metadata is made so later mutations to the caller's map
-// do not affect the stored token.
-func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error {
+// A defensive copy of metadata and audience is made so later mutations to the
+// caller's slices or maps do not affect the stored token.
+func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]interface{}) error {
 	ctx, span := m.startSpan(ctx, "Store")
 	defer span.End()
 	span.SetAttribute("token_id", tokenID)
@@ -173,7 +173,13 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 		return ErrTokenExpired
 	}
 
-	// ===== STEP 3: Defensive Copy of Metadata =====
+	// ===== STEP 3: Defensive Copies of Audience and Metadata =====
+	var audienceCopy []string
+	if len(audience) > 0 {
+		audienceCopy = make([]string, len(audience))
+		copy(audienceCopy, audience)
+	}
+
 	var newMetadata map[string]interface{}
 	if metadata != nil {
 		newMetadata = make(map[string]interface{}, len(metadata))
@@ -197,6 +203,7 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 		ExpiresAt: expiresAt,
 		CreatedAt: time.Now(),
 		Revoked:   false,
+		Audience:  audienceCopy,
 		Metadata:  newMetadata,
 	}
 	m.tokens[tokenID] = token
@@ -316,6 +323,11 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		ExpiresAt: token.ExpiresAt,
 		CreatedAt: token.CreatedAt,
 		Revoked:   token.Revoked,
+	}
+
+	if len(token.Audience) > 0 {
+		safeToken.Audience = make([]string, len(token.Audience))
+		copy(safeToken.Audience, token.Audience)
 	}
 
 	if token.Metadata != nil {
@@ -635,20 +647,24 @@ func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, coun
 	tokens := make([]*RefreshToken, 0, len(page))
 	for _, id := range page {
 		t := m.tokens[id]
-		copy := &RefreshToken{
+		cp := &RefreshToken{
 			TokenID:   t.TokenID,
 			UserID:    t.UserID,
 			ExpiresAt: t.ExpiresAt,
 			CreatedAt: t.CreatedAt,
 			Revoked:   t.Revoked,
 		}
+		if len(t.Audience) > 0 {
+			cp.Audience = make([]string, len(t.Audience))
+			copy(cp.Audience, t.Audience)
+		}
 		if t.Metadata != nil {
-			copy.Metadata = make(map[string]interface{}, len(t.Metadata))
+			cp.Metadata = make(map[string]interface{}, len(t.Metadata))
 			for k, v := range t.Metadata {
-				copy.Metadata[k] = v
+				cp.Metadata[k] = v
 			}
 		}
-		tokens = append(tokens, copy)
+		tokens = append(tokens, cp)
 	}
 
 	// ===== STEP 6: Compute Next Cursor =====
@@ -761,6 +777,10 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 			ExpiresAt: t.ExpiresAt,
 			CreatedAt: t.CreatedAt,
 			Revoked:   t.Revoked,
+		}
+		if len(t.Audience) > 0 {
+			cp.Audience = make([]string, len(t.Audience))
+			copy(cp.Audience, t.Audience)
 		}
 		if t.Metadata != nil {
 			cp.Metadata = make(map[string]interface{}, len(t.Metadata))

@@ -147,15 +147,15 @@ func (mr *MockRefreshStoreMockRecorder) RevokeAllForUser(ctx, userID any) *gomoc
 }
 
 // Store mocks base method.
-func (m *MockRefreshStore) Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]any) error {
+func (m *MockRefreshStore) Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]any) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Store", ctx, tokenID, userID, expiresAt, metadata)
+	ret := m.ctrl.Call(m, "Store", ctx, tokenID, userID, audience, expiresAt, metadata)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Store indicates an expected call of Store.
-func (mr *MockRefreshStoreMockRecorder) Store(ctx, tokenID, userID, expiresAt, metadata any) *gomock.Call {
+func (mr *MockRefreshStoreMockRecorder) Store(ctx, tokenID, userID, audience, expiresAt, metadata any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Store", reflect.TypeOf((*MockRefreshStore)(nil).Store), ctx, tokenID, userID, expiresAt, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Store", reflect.TypeOf((*MockRefreshStore)(nil).Store), ctx, tokenID, userID, audience, expiresAt, metadata)
 }
