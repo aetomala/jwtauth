@@ -293,13 +293,13 @@ var _ = Describe("TokenManager Metrics", func() {
 	// ====================================================================
 
 	Describe("RevokeRefreshToken", func() {
-		It("records success counter with operation=single on successful revocation", func() {
+		It("records success counter with revocation_scope=single on successful revocation", func() {
 			startService()
 			mockStore.EXPECT().Revoke(gomock.Any(), "rt-1").Return(nil)
 			mockM.EXPECT().IncrementCounter("jwtauth_tokens_revoked_total", map[string]string{
-				"operation": "single",
-				"status":    "success",
-				"namespace": "",
+				"revocation_scope": "single",
+				"status":           "success",
+				"namespace":        "",
 			})
 			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "revoke_token",
@@ -311,9 +311,9 @@ var _ = Describe("TokenManager Metrics", func() {
 		It("records invalid_input counter for empty token ID", func() {
 			startService()
 			mockM.EXPECT().IncrementCounter("jwtauth_tokens_revoked_total", map[string]string{
-				"operation": "single",
-				"status":    "invalid_input",
-				"namespace": "",
+				"revocation_scope": "single",
+				"status":           "invalid_input",
+				"namespace":        "",
 			})
 			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "revoke_token",
@@ -328,13 +328,13 @@ var _ = Describe("TokenManager Metrics", func() {
 	// ====================================================================
 
 	Describe("RevokeAllUserTokens", func() {
-		It("records success counter with operation=all_user on successful bulk revocation", func() {
+		It("records success counter with revocation_scope=all_user on successful bulk revocation", func() {
 			startService()
 			mockStore.EXPECT().RevokeAllForUser(gomock.Any(), "user-1").Return(nil)
 			mockM.EXPECT().IncrementCounter("jwtauth_tokens_revoked_total", map[string]string{
-				"operation": "all_user",
-				"status":    "success",
-				"namespace": "",
+				"revocation_scope": "all_user",
+				"status":           "success",
+				"namespace":        "",
 			})
 			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "revoke_all_user_tokens",

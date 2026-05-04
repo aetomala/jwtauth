@@ -89,7 +89,7 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "tokens_revoked_total",
 		"Total number of tokens revoked",
-		[]string{"operation", "status", "namespace"})
+		[]string{"revocation_scope", "status", "namespace"})
 
 	pm.registerCounter(namespace, "tokens_introspected_total",
 		"Total number of token introspections",
