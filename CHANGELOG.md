@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+> **License change:** Starting with v0.5.0, this project is licensed under the
+> [Apache License 2.0](LICENSE). Releases v0.4.0 and earlier remain available
+> under the MIT License.
+
+---
+
 ## [Unreleased] — v0.4.0
 
 ### Breaking
