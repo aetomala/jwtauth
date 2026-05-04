@@ -416,7 +416,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 //
 // Returns ErrInvalidUserID for empty/whitespace-only user IDs, ErrManagerNotRunning
 // if the service is stopped, or the context error if the context is already cancelled.
-func (m *Manager) IssueAccessToken(ctx context.Context, userID string) (string, error) {
+func (m *Manager) IssueAccessToken(ctx context.Context, userID string, opts ...IssueOption) (string, error) {
 	ctx, span := m.startSpan(ctx, "IssueAccessToken")
 	defer span.End()
 
@@ -470,6 +470,12 @@ func (m *Manager) IssueAccessToken(ctx context.Context, userID string) (string, 
 		return "", err
 	}
 
+	audience := resolveAudience(m.audience, opts)
+	if !audienceEqual(audience, m.audience) {
+		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
+	}
+
 	// ===== STEP 4: Get Signing Key =====
 	// Retrieve current private key and its ID from KeyManager
 	// The key ID will be included in the JWT header for verification
@@ -506,7 +512,7 @@ func (m *Manager) IssueAccessToken(ctx context.Context, userID string) (string, 
 	claims := jwt.RegisteredClaims{
 		Subject:   userID,                        // "sub" - who the token is for
 		Issuer:    m.issuer,                      // "iss" - who issued the token
-		Audience:  m.audience,                    // "aud" - who can use the token
+		Audience:  audience,                      // "aud" - who can use the token
 		ExpiresAt: jwt.NewNumericDate(expiresAt), // "exp" - when it expires
 		IssuedAt:  jwt.NewNumericDate(now),       // "iat" - when it was issued
 		NotBefore: jwt.NewNumericDate(now),       // "nbf" - valid from when
@@ -562,7 +568,7 @@ func (m *Manager) IssueAccessToken(ctx context.Context, userID string) (string, 
 // and logged as a warning.
 //
 // Returns the same errors as IssueAccessToken.
-func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string, claims CustomClaims) (string, error) {
+func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string, claims CustomClaims, opts ...IssueOption) (string, error) {
 	ctx, span := m.startSpan(ctx, "IssueAccessTokenWithClaims")
 	defer span.End()
 
@@ -615,6 +621,12 @@ func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 		return "", err
 	}
 
+	audience := resolveAudience(m.audience, opts)
+	if !audienceEqual(audience, m.audience) {
+		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
+	}
+
 	// ===== STEP 4: Get Signing Key =====
 	privateKey, keyID, err := m.keyManager.GetCurrentSigningKey(ctx)
 	if err != nil {
@@ -649,7 +661,7 @@ func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 	jwtClaims := jwt.MapClaims{
 		"sub": userID,
 		"iss": m.issuer,
-		"aud": m.audience,
+		"aud": audience,
 		"exp": expiresAt.Unix(),
 		"iat": now.Unix(),
 		"nbf": now.Unix(),
@@ -715,7 +727,7 @@ func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 // not JWTs — they are 256-bit random values stored in the RefreshStore.
 //
 // Returns the same errors as IssueAccessToken.
-func (m *Manager) IssueRefreshToken(ctx context.Context, userID string) (string, error) {
+func (m *Manager) IssueRefreshToken(ctx context.Context, userID string, opts ...IssueOption) (string, error) {
 	ctx, span := m.startSpan(ctx, "IssueRefreshToken")
 	defer span.End()
 
@@ -770,6 +782,12 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string) (string,
 		return "", err
 	}
 
+	audience := resolveAudience(m.audience, opts)
+	if !audienceEqual(audience, m.audience) {
+		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
+	}
+
 	m.logger.Debug("issuing refresh token", ctx, "userID", userID)
 
 	// ===== STEP 4: Generate Refresh Token =====
@@ -805,7 +823,7 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string) (string,
 		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
-		m.audience,   // Audience — overridden per-call in Phase 3
+		audience,     // Audience for this token
 		expiresAt,    // When it expires
 		nil,          // No claims (use IssueRefreshTokenWithClaims to attach claims)
 	)
@@ -838,7 +856,7 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string) (string,
 // tags). The claims are retrievable via IntrospectToken.
 //
 // Returns the same errors as IssueAccessToken.
-func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string, claims CustomClaims) (string, error) {
+func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string, claims CustomClaims, opts ...IssueOption) (string, error) {
 	ctx, span := m.startSpan(ctx, "IssueRefreshTokenWithClaims")
 	defer span.End()
 
@@ -893,6 +911,12 @@ func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string
 		return "", err
 	}
 
+	audience := resolveAudience(m.audience, opts)
+	if !audienceEqual(audience, m.audience) {
+		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
+	}
+
 	m.logger.Debug("issuing refresh token with claims", ctx, "userID", userID)
 
 	// ===== STEP 4: Generate Refresh Token =====
@@ -928,7 +952,7 @@ func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string
 		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
-		m.audience,   // Audience — overridden per-call in Phase 3
+		audience,     // Audience for this token
 		expiresAt,    // When it expires
 		claims,       // Custom claims
 	)
@@ -964,7 +988,7 @@ func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string
 //
 // Returns (accessToken, refreshToken, error). Returns the same errors as
 // IssueAccessToken.
-func (m *Manager) IssueTokenPair(ctx context.Context, userID string) (string, string, error) {
+func (m *Manager) IssueTokenPair(ctx context.Context, userID string, opts ...IssueOption) (string, string, error) {
 	ctx, span := m.startSpan(ctx, "IssueTokenPair")
 	defer span.End()
 
@@ -1019,6 +1043,12 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string) (string, st
 		return "", "", err
 	}
 
+	audience := resolveAudience(m.audience, opts)
+	if !audienceEqual(audience, m.audience) {
+		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
+	}
+
 	m.logger.Debug("issuing token pair", ctx, "userID", userID)
 
 	// ===== STEP 4: Get Signing Key =====
@@ -1052,7 +1082,7 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string) (string, st
 	claims := jwt.RegisteredClaims{
 		Subject:   userID,                        // "sub" - who the token is for
 		Issuer:    m.issuer,                      // "iss" - who issued the token
-		Audience:  m.audience,                    // "aud" - who can use the token
+		Audience:  audience,                      // "aud" - who can use the token
 		ExpiresAt: jwt.NewNumericDate(expiresAt), // "exp" - when it expires
 		IssuedAt:  jwt.NewNumericDate(now),       // "iat" - when it was issued
 		NotBefore: jwt.NewNumericDate(now),       // "nbf" - valid from when
@@ -1110,7 +1140,7 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string) (string, st
 		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
-		m.audience,   // Audience — overridden per-call in Phase 3
+		audience,     // Audience for this token
 		expiresAt,    // When it expires
 		nil,          // No claims (use IssueRefreshTokenWithClaims to attach claims)
 	)
@@ -1145,7 +1175,7 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string) (string, st
 // the manager has not been started, ErrInvalidUserID if userID is empty or
 // whitespace-only, or the context error if the context is cancelled before
 // issuance completes.
-func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, accessClaims CustomClaims, refreshClaims CustomClaims) (string, string, error) {
+func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, accessClaims CustomClaims, refreshClaims CustomClaims, opts ...IssueOption) (string, string, error) {
 	ctx, span := m.startSpan(ctx, "IssueTokenPairWithClaims")
 	defer span.End()
 
@@ -1198,6 +1228,12 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 		return "", "", err
 	}
 
+	audience := resolveAudience(m.audience, opts)
+	if !audienceEqual(audience, m.audience) {
+		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
+	}
+
 	m.logger.Debug("issuing token pair with claims", ctx, "userID", userID)
 
 	// ===== STEP 4: Get Signing Key =====
@@ -1229,7 +1265,7 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 	jwtClaims := jwt.MapClaims{
 		"sub": userID,
 		"iss": m.issuer,
-		"aud": m.audience,
+		"aud": audience,
 		"exp": expiresAt.Unix(),
 		"iat": now.Unix(),
 		"nbf": now.Unix(),
@@ -1293,7 +1329,7 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 		ctx,
 		refreshToken,
 		userID,
-		m.audience,   // Audience — overridden per-call in Phase 3
+		audience,
 		expiresAt,
 		refreshClaims,
 	)

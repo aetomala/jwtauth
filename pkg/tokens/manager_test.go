@@ -1857,6 +1857,299 @@ var _ = Describe("TokenManager", func() {
 		})
 	})
 
+	// ========================================================================
+	// WITHAUDIENCE TESTS
+	// ========================================================================
+
+	Describe("WithAudience", func() {
+		BeforeEach(func() {
+			service = newTestManager(mockKM, mockStore, mockLogger)
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			Expect(service.Start(ctx)).To(Succeed())
+		})
+
+		Describe("IssueAccessToken", func() {
+			It("uses manager default audience when no option is given", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+
+				token, err := service.IssueAccessToken(ctx, testUserID)
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(token)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"test-audience"}))
+			})
+
+			It("overrides audience when WithAudience is given", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+
+				token, err := service.IssueAccessToken(ctx, testUserID, tokens.WithAudience("svc-payments"))
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(token)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"svc-payments"}))
+			})
+
+			It("is a no-op when WithAudience is called with zero args", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+
+				token, err := service.IssueAccessToken(ctx, testUserID, tokens.WithAudience())
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(token)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"test-audience"}))
+			})
+		})
+
+		Describe("IssueAccessTokenWithClaims", func() {
+			It("uses manager default audience when no option is given", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+
+				token, err := service.IssueAccessTokenWithClaims(ctx, testUserID, tokens.CustomClaims{"role": "admin"})
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(token)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"test-audience"}))
+			})
+
+			It("overrides audience when WithAudience is given", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+
+				token, err := service.IssueAccessTokenWithClaims(ctx, testUserID, tokens.CustomClaims{"role": "admin"}, tokens.WithAudience("svc-payments"))
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(token)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"svc-payments"}))
+			})
+
+			It("is a no-op when WithAudience is called with zero args", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+
+				token, err := service.IssueAccessTokenWithClaims(ctx, testUserID, tokens.CustomClaims{}, tokens.WithAudience())
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(token)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"test-audience"}))
+			})
+
+			It("reserved claims guard drops aud from CustomClaims; WithAudience controls the audience", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+
+				token, err := service.IssueAccessTokenWithClaims(ctx, testUserID,
+					tokens.CustomClaims{"aud": "evil"},
+					tokens.WithAudience("svc-a"),
+				)
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(token)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"svc-a"}))
+			})
+		})
+
+		Describe("IssueRefreshToken", func() {
+			It("uses manager default audience when no option is given", func() {
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"test-audience"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				_, err := service.IssueRefreshToken(ctx, testUserID)
+
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("passes overridden audience to Store when WithAudience is given", func() {
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"svc-payments"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				_, err := service.IssueRefreshToken(ctx, testUserID, tokens.WithAudience("svc-payments"))
+
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("is a no-op when WithAudience is called with zero args", func() {
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"test-audience"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				_, err := service.IssueRefreshToken(ctx, testUserID, tokens.WithAudience())
+
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+
+		Describe("IssueRefreshTokenWithClaims", func() {
+			It("uses manager default audience when no option is given", func() {
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"test-audience"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				_, err := service.IssueRefreshTokenWithClaims(ctx, testUserID, tokens.CustomClaims{"device": "mobile"})
+
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("passes overridden audience to Store when WithAudience is given", func() {
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"svc-payments"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				_, err := service.IssueRefreshTokenWithClaims(ctx, testUserID, tokens.CustomClaims{"device": "mobile"}, tokens.WithAudience("svc-payments"))
+
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("is a no-op when WithAudience is called with zero args", func() {
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"test-audience"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				_, err := service.IssueRefreshTokenWithClaims(ctx, testUserID, tokens.CustomClaims{}, tokens.WithAudience())
+
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("WithAudience controls audience; CustomClaims metadata is stored as-is", func() {
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"svc-a"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				_, err := service.IssueRefreshTokenWithClaims(ctx, testUserID,
+					tokens.CustomClaims{"aud": "evil"},
+					tokens.WithAudience("svc-a"),
+				)
+
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+
+		Describe("IssueTokenPair", func() {
+			It("uses manager default audience when no option is given", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"test-audience"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				accessToken, _, err := service.IssueTokenPair(ctx, testUserID)
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(accessToken)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"test-audience"}))
+			})
+
+			It("overrides audience in both JWT and Store when WithAudience is given", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"svc-payments"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				accessToken, _, err := service.IssueTokenPair(ctx, testUserID, tokens.WithAudience("svc-payments"))
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(accessToken)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"svc-payments"}))
+			})
+
+			It("is a no-op when WithAudience is called with zero args", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"test-audience"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				accessToken, _, err := service.IssueTokenPair(ctx, testUserID, tokens.WithAudience())
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(accessToken)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"test-audience"}))
+			})
+		})
+
+		Describe("IssueTokenPairWithClaims", func() {
+			It("uses manager default audience when no option is given", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"test-audience"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				accessToken, _, err := service.IssueTokenPairWithClaims(ctx, testUserID, tokens.CustomClaims{"role": "admin"}, nil)
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(accessToken)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"test-audience"}))
+			})
+
+			It("overrides audience in both JWT and Store when WithAudience is given", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"svc-payments"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				accessToken, _, err := service.IssueTokenPairWithClaims(ctx, testUserID, tokens.CustomClaims{"role": "admin"}, nil, tokens.WithAudience("svc-payments"))
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(accessToken)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"svc-payments"}))
+			})
+
+			It("is a no-op when WithAudience is called with zero args", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"test-audience"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				accessToken, _, err := service.IssueTokenPairWithClaims(ctx, testUserID, tokens.CustomClaims{}, nil, tokens.WithAudience())
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(accessToken)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"test-audience"}))
+			})
+
+			It("reserved claims guard drops aud from accessClaims; WithAudience controls the audience", func() {
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Store(
+					gomock.Any(), gomock.Any(), testUserID,
+					gomock.Eq([]string{"svc-a"}),
+					gomock.Any(), gomock.Any(),
+				).Return(nil)
+
+				accessToken, _, err := service.IssueTokenPairWithClaims(ctx, testUserID,
+					tokens.CustomClaims{"aud": "evil"},
+					nil,
+					tokens.WithAudience("svc-a"),
+				)
+
+				Expect(err).NotTo(HaveOccurred())
+				parsed := parseToken(accessToken)
+				Expect([]string(parsed.Audience)).To(Equal([]string{"svc-a"}))
+			})
+		})
+	})
+
 })
 
 // ============================================================================
