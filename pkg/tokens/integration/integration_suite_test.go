@@ -492,5 +492,36 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(newAccessToken).NotTo(BeEmpty())
 		})
+
+		It("should propagate WithAudience through IssueTokenPair → RefreshAccessToken", func() {
+			// Use a separate manager whose configured audience is "svc-a" so that
+			// ValidateAccessToken accepts tokens issued with WithAudience("svc-a").
+			svcMgr, _, svcCleanup := factory(tokens.TokenManagerConfig{
+				AccessTokenDuration:  5 * time.Minute,
+				RefreshTokenDuration: 1 * time.Hour,
+				CleanupInterval:      5 * time.Minute,
+				Issuer:               "integration-test",
+				Audience:             []string{"svc-a"},
+			})
+			Expect(svcMgr.Start(ctx)).To(Succeed())
+			DeferCleanup(func() {
+				shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
+				defer c()
+				_ = svcMgr.Shutdown(shutdownCtx)
+				svcCleanup()
+			})
+
+			userID := "audience-propagation-user"
+
+			_, refreshToken, err := svcMgr.IssueTokenPair(ctx, userID)
+			Expect(err).NotTo(HaveOccurred())
+
+			newAccessToken, err := svcMgr.RefreshAccessToken(ctx, refreshToken)
+			Expect(err).NotTo(HaveOccurred())
+
+			claims, err := svcMgr.ValidateAccessToken(ctx, newAccessToken)
+			Expect(err).NotTo(HaveOccurred())
+			Expect([]string(claims.Audience)).To(Equal([]string{"svc-a"}))
+		})
 	})
 }
