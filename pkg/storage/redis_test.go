@@ -80,7 +80,7 @@ var _ = Describe("RedisRefreshStore — Constructor", func() {
 		store, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
 		Expect(err).NotTo(HaveOccurred())
 		ctx := context.Background()
-		Expect(store.Store(ctx, "defaults-token", "defaults-user", time.Now().Add(time.Hour), nil)).To(Succeed())
+		Expect(store.Store(ctx, "defaults-token", "defaults-user", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 		_, err = store.Retrieve(ctx, "defaults-token")
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -103,7 +103,7 @@ var _ = Describe("RedisRefreshStore — Constructor", func() {
 		store, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client, Tracer: mockTracer})
 		Expect(err).NotTo(HaveOccurred())
 		ctx := context.Background()
-		Expect(store.Store(ctx, "tracer-token", "tracer-user", time.Now().Add(time.Hour), nil)).To(Succeed())
+		Expect(store.Store(ctx, "tracer-token", "tracer-user", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 	})
 })
 
@@ -138,7 +138,7 @@ var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix Namespace Isolation"
 			store := newStore("tenant:abc:")
 			client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
-			Expect(store.Store(ctx, "tok1", "user1", time.Now().Add(time.Hour), nil)).To(Succeed())
+			Expect(store.Store(ctx, "tok1", "user1", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 
 			storedKeys, err := client.Keys(ctx, "*").Result()
 			Expect(err).NotTo(HaveOccurred())
@@ -153,7 +153,7 @@ var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix Namespace Isolation"
 			store := newStore("")
 			client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
-			Expect(store.Store(ctx, "tok1", "user1", time.Now().Add(time.Hour), nil)).To(Succeed())
+			Expect(store.Store(ctx, "tok1", "user1", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 
 			storedKeys, err := client.Keys(ctx, "*").Result()
 			Expect(err).NotTo(HaveOccurred())
@@ -168,7 +168,7 @@ var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix Namespace Isolation"
 			storeA := newStore("ns:a:")
 			storeB := newStore("ns:b:")
 
-			Expect(storeA.Store(ctx, "shared-token", "user1", time.Now().Add(time.Hour), nil)).To(Succeed())
+			Expect(storeA.Store(ctx, "shared-token", "user1", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 
 			_, err := storeB.Retrieve(ctx, "shared-token")
 			Expect(err).To(MatchError(storage.ErrTokenNotFound))
@@ -178,8 +178,8 @@ var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix Namespace Isolation"
 			storeA := newStore("ns:a:")
 			storeB := newStore("ns:b:")
 
-			Expect(storeA.Store(ctx, "tok-a", "user1", time.Now().Add(time.Hour), nil)).To(Succeed())
-			Expect(storeB.Store(ctx, "tok-b", "user1", time.Now().Add(time.Hour), nil)).To(Succeed())
+			Expect(storeA.Store(ctx, "tok-a", "user1", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
+			Expect(storeB.Store(ctx, "tok-b", "user1", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 
 			Expect(storeA.RevokeAllForUser(ctx, "user1")).To(Succeed())
 
@@ -199,11 +199,11 @@ var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix Namespace Isolation"
 
 			// Store an already-expired token directly via miniredis manipulation:
 			// Store with a 1-second TTL, then fast-forward time.
-			Expect(storeB.Store(ctx, "expired-b", "user2", time.Now().Add(time.Hour), nil)).To(Succeed())
+			Expect(storeB.Store(ctx, "expired-b", "user2", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 			mr.FastForward(2 * time.Hour)
 
 			// Store a live token in A so A has something to scan
-			Expect(storeA.Store(ctx, "live-a", "user2", time.Now().Add(time.Hour), nil)).To(Succeed())
+			Expect(storeA.Store(ctx, "live-a", "user2", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 
 			// Cleanup on A must not touch B's expired token (it's outside A's scan pattern)
 			removed, err := storeA.Cleanup(ctx)
@@ -254,7 +254,7 @@ var _ = Describe("RedisRefreshStore — Phase 10: Tracing", func() {
 			mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 			mockSpan.EXPECT().End()
 
-			Expect(tracingStore.Store(ctx, "trace-store-token", "trace-user", time.Now().Add(time.Hour), nil)).To(Succeed())
+			Expect(tracingStore.Store(ctx, "trace-store-token", "trace-user", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 		})
 	})
 

@@ -805,6 +805,7 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string) (string,
 		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
+		m.audience,   // Audience — overridden per-call in Phase 3
 		expiresAt,    // When it expires
 		nil,          // No claims (use IssueRefreshTokenWithClaims to attach claims)
 	)
@@ -927,6 +928,7 @@ func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string
 		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
+		m.audience,   // Audience — overridden per-call in Phase 3
 		expiresAt,    // When it expires
 		claims,       // Custom claims
 	)
@@ -1108,6 +1110,7 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string) (string, st
 		ctx,          // Context for cancellation
 		refreshToken, // Token ID (the token itself is the ID)
 		userID,       // Who owns the token
+		m.audience,   // Audience — overridden per-call in Phase 3
 		expiresAt,    // When it expires
 		nil,          // No claims (use IssueRefreshTokenWithClaims to attach claims)
 	)
@@ -1290,6 +1293,7 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 		ctx,
 		refreshToken,
 		userID,
+		m.audience,   // Audience — overridden per-call in Phase 3
 		expiresAt,
 		refreshClaims,
 	)

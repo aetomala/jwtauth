@@ -31,7 +31,7 @@ var _ = Describe("MemoryRefreshStore — Constructor", func() {
 		store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{})
 		tokenID := "defaults-token"
 		userID := "defaults-user"
-		Expect(store.Store(ctx, tokenID, userID, time.Now().Add(time.Hour), nil)).To(Succeed())
+		Expect(store.Store(ctx, tokenID, userID, nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 		_, err := store.Retrieve(ctx, tokenID)
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -49,7 +49,7 @@ var _ = Describe("MemoryRefreshStore — Constructor", func() {
 		store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Tracer: mockTracer})
 		tokenID := "tracer-token"
 		userID := "tracer-user"
-		Expect(store.Store(ctx, tokenID, userID, time.Now().Add(time.Hour), nil)).To(Succeed())
+		Expect(store.Store(ctx, tokenID, userID, nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 	})
 })
 
@@ -80,7 +80,7 @@ var _ = Describe("MemoryRefreshStore — Phase 10: Tracing", func() {
 			mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 			mockSpan.EXPECT().End()
 
-			Expect(tracingStore.Store(ctx, "trace-store-token", "trace-user", time.Now().Add(time.Hour), nil)).To(Succeed())
+			Expect(tracingStore.Store(ctx, "trace-store-token", "trace-user", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 		})
 	})
 

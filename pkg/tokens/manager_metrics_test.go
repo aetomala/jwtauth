@@ -167,7 +167,7 @@ var _ = Describe("TokenManager Metrics", func() {
 	Describe("IssueRefreshToken", func() {
 		It("records success counter and duration on successful issuance", func() {
 			startService()
-			mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), "user-1", gomock.Any(), gomock.Any()).Return(nil)
+			mockStore.EXPECT().Store(gomock.Any(), gomock.Any(), "user-1", gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", map[string]string{
 				"status":     "success",
 				"error_type": "",
