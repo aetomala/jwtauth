@@ -2522,6 +2522,70 @@ func (m *Manager) ListTokensForUser(ctx context.Context, userID string, cursor s
 	return tokens, nextCursor, nil
 }
 
+// ListTokensForAudience returns a page of refresh tokens that were issued
+// with the given audience value from the underlying store. See
+// storage.RefreshStore.ListTokensForAudience for cursor and filtering
+// semantics. Returns storage.ErrInvalidAudience if audience is empty. Returns
+// the context error if the context is cancelled.
+func (m *Manager) ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*storage.RefreshToken, string, error) {
+	ctx, span := m.startSpan(ctx, "ListTokensForAudience")
+	defer span.End()
+	span.SetAttribute("token.namespace", m.namespace)
+	span.SetAttribute("token.audience", audience)
+	span.SetAttribute("token.cursor", cursor)
+	span.SetAttribute("token.count", count)
+
+	start := time.Now()
+	errorType := "error"
+	defer func() {
+		m.metrics.IncrementCounter(metricTokensListForAudienceTotal, map[string]string{
+			"namespace":  m.namespace,
+			"error_type": errorType,
+		})
+		m.metrics.RecordDuration(metricTokensListForAudienceDuration, time.Since(start), map[string]string{
+			"namespace": m.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Service State Check =====
+	if !m.isRunning.Load() {
+		errorType = "not_running"
+		m.logger.Warn("attempted listTokensForAudience while service stopped", ctx)
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
+		return nil, "", ErrManagerNotRunning
+	}
+
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		errorType = "cancelled"
+		m.logger.Info("context cancelled during listTokensForAudience", ctx, "error", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 3: Delegate to Store =====
+	tokens, nextCursor, err := m.refreshStore.ListTokensForAudience(ctx, audience, cursor, count)
+	if err != nil {
+		m.logger.Error("failed to list tokens for audience", ctx, "audience", audience, "error", err)
+		wrapped := fmt.Errorf("list tokens for audience failed: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return nil, "", wrapped
+	}
+
+	// ===== STEP 4: Record Success and Log =====
+	errorType = ""
+	span.SetAttribute("token.result_count", len(tokens))
+	span.SetStatus(tracing.StatusOK, "")
+	m.logger.Info("tokens listed for audience", ctx,
+		"audience", audience,
+		"result_count", len(tokens),
+		"next_cursor", nextCursor)
+	return tokens, nextCursor, nil
+}
+
 // generateTokenID creates a cryptographically random token identifier.
 //
 // The token ID (jti claim) is used for:

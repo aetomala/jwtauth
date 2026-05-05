@@ -122,6 +122,15 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 		[]string{"namespace"},
 		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
 
+	pm.registerCounter(namespace, "tokens_list_for_audience_total",
+		"Total number of list-tokens-for-audience operations on the token manager",
+		[]string{"namespace", "error_type"})
+
+	pm.registerHistogram(namespace, "tokens_list_for_audience_duration_seconds",
+		"Duration of list-tokens-for-audience operations on the token manager in seconds",
+		[]string{"namespace"},
+		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
+
 	pm.registerGauge(namespace, "active_tokens",
 		"Number of active tokens",
 		[]string{"storage_backend", "namespace"})

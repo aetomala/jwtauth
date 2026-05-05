@@ -242,4 +242,100 @@ var _ = Describe("TokenManager ListTokens", func() {
 			})
 		})
 	})
+
+	Describe("ListTokensForAudience", func() {
+		It("should return page from store on success", func() {
+			expected := []*storage.RefreshToken{
+				{TokenID: "tok-1", Audience: []string{"svc-payments"}},
+				{TokenID: "tok-2", Audience: []string{"svc-payments"}},
+			}
+			mockStore.EXPECT().
+				ListTokensForAudience(gomock.Any(), "svc-payments", "", 10).
+				Return(expected, "", nil)
+
+			page, next, err := service.ListTokensForAudience(ctx, "svc-payments", "", 10)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(page).To(Equal(expected))
+			Expect(next).To(BeEmpty())
+		})
+
+		It("should propagate audience, cursor, and count to store", func() {
+			mockStore.EXPECT().
+				ListTokensForAudience(gomock.Any(), "svc-payments", "cursor-abc", 5).
+				Return(nil, "", nil)
+
+			service.ListTokensForAudience(ctx, "svc-payments", "cursor-abc", 5)
+		})
+
+		It("should return next cursor from store", func() {
+			mockStore.EXPECT().
+				ListTokensForAudience(gomock.Any(), "svc-payments", "", 2).
+				Return([]*storage.RefreshToken{{TokenID: "tok-1"}}, "cursor-xyz", nil)
+
+			_, next, err := service.ListTokensForAudience(ctx, "svc-payments", "", 2)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(next).To(Equal("cursor-xyz"))
+		})
+
+		It("should log success with audience, result count, and next cursor", func() {
+			mockStore.EXPECT().
+				ListTokensForAudience(gomock.Any(), "svc-payments", "", 10).
+				Return([]*storage.RefreshToken{{TokenID: "tok-1"}}, "next", nil)
+
+			service.ListTokensForAudience(ctx, "svc-payments", "", 10)
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "tokens listed for audience")
+			}).Should(BeTrue())
+		})
+
+		Context("when store returns an error", func() {
+			It("should return wrapped error", func() {
+				storeErr := errors.New("redis unavailable")
+				mockStore.EXPECT().
+					ListTokensForAudience(gomock.Any(), "svc-payments", "", 10).
+					Return(nil, "", storeErr)
+
+				_, _, err := service.ListTokensForAudience(ctx, "svc-payments", "", 10)
+
+				Expect(err).To(HaveOccurred())
+				Expect(errors.Is(err, storeErr)).To(BeTrue())
+			})
+
+			It("should log the error", func() {
+				mockStore.EXPECT().
+					ListTokensForAudience(gomock.Any(), "svc-payments", "", 10).
+					Return(nil, "", errors.New("store error"))
+
+				service.ListTokensForAudience(ctx, "svc-payments", "", 10)
+
+				Eventually(func() bool {
+					return mockLogger.HasLog("error", "failed to list tokens for audience")
+				}).Should(BeTrue())
+			})
+		})
+
+		Context("when service is not running", func() {
+			It("should return ErrManagerNotRunning", func() {
+				stoppedService := newTestManager(mockKM, mockStore, mockLogger)
+
+				_, _, err := stoppedService.ListTokensForAudience(ctx, "svc-payments", "", 10)
+
+				Expect(err).To(MatchError(tokens.ErrManagerNotRunning))
+			})
+		})
+
+		Context("when context is cancelled", func() {
+			It("should return context error", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+
+				_, _, err := service.ListTokensForAudience(cancelledCtx, "svc-payments", "", 10)
+
+				Expect(err).To(MatchError(context.Canceled))
+			})
+		})
+	})
 })
