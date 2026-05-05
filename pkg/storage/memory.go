@@ -44,8 +44,9 @@ type MemoryRefreshStore struct {
 	mu sync.RWMutex
 
 	// ===== Storage =====
-	tokens     map[string]*RefreshToken // tokenID -> token
-	userTokens map[string][]string      // userID  -> []tokenID
+	tokens         map[string]*RefreshToken // tokenID  -> token
+	userTokens     map[string][]string      // userID   -> []tokenID
+	audienceTokens map[string][]string      // audience -> []tokenID
 
 	// ===== Observability =====
 	logger  logging.Logger  // never nil; defaults to NoOpLogger
@@ -71,12 +72,13 @@ func NewMemoryRefreshStore(cfg MemoryRefreshStoreConfig) *MemoryRefreshStore {
 	}
 
 	return &MemoryRefreshStore{
-		tokens:     make(map[string]*RefreshToken),
-		userTokens: make(map[string][]string),
-		logger:     cfg.Logger,
-		metrics:    cfg.Metrics,
-		tracer:     cfg.Tracer,
-		backend:    "memory",
+		tokens:         make(map[string]*RefreshToken),
+		userTokens:     make(map[string][]string),
+		audienceTokens: make(map[string][]string),
+		logger:         cfg.Logger,
+		metrics:        cfg.Metrics,
+		tracer:         cfg.Tracer,
+		backend:        "memory",
 	}
 }
 
@@ -208,6 +210,9 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	}
 	m.tokens[tokenID] = token
 	m.userTokens[userID] = append(m.userTokens[userID], tokenID)
+	for _, aud := range token.Audience {
+		m.audienceTokens[aud] = append(m.audienceTokens[aud], tokenID)
+	}
 	tokenCount = len(m.tokens) // captured inside the lock for gauge accuracy
 
 	// ===== STEP 6: Log Success =====
@@ -558,6 +563,7 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 				"expiredAt", token.ExpiresAt)
 			delete(m.tokens, token.TokenID)
 			m.removeFromUserTokens(token.UserID, tokenID)
+			m.removeFromAudienceTokens(token.Audience, tokenID)
 			count++
 		}
 	}
@@ -827,4 +833,190 @@ func (m *MemoryRefreshStore) removeFromUserTokens(userID, tokenID string) {
 	if len(m.userTokens[userID]) == 0 {
 		delete(m.userTokens, userID)
 	}
+}
+
+func (m *MemoryRefreshStore) removeFromAudienceTokens(audiences []string, tokenID string) {
+	for _, aud := range audiences {
+		tokenIDs := m.audienceTokens[aud]
+		for i, tid := range tokenIDs {
+			if tid == tokenID {
+				tokenIDs[i] = tokenIDs[len(tokenIDs)-1]
+				m.audienceTokens[aud] = tokenIDs[:len(tokenIDs)-1]
+				break
+			}
+		}
+		if len(m.audienceTokens[aud]) == 0 {
+			delete(m.audienceTokens, aud)
+		}
+	}
+}
+
+// RevokeAllForAudience marks every refresh token issued with the given audience
+// value as revoked. Returns the count of tokens marked revoked — including
+// tokens that were already revoked before this call. A token with multiple
+// audiences is revoked globally — not per-audience — so every service the token
+// could reach is invalidated when any one of its audiences is targeted. It is
+// idempotent — already-revoked tokens are counted but cause no error. Returns
+// ErrInvalidAudience if audience is empty. Returns the context error if the
+// context is cancelled.
+func (m *MemoryRefreshStore) RevokeAllForAudience(ctx context.Context, audience string) (int, error) {
+	ctx, span := m.startSpan(ctx, "RevokeAllForAudience")
+	defer span.End()
+	span.SetAttribute("audience", audience)
+
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+			"operation":       "revoke_all_audience",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": m.backend,
+			"namespace":       "",
+		})
+		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
+			"operation":       "revoke_all_audience",
+			"storage_backend": m.backend,
+			"namespace":       "",
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
+		m.logger.Warn("revokeAllForAudience aborted: context cancelled", ctx,
+			"audience", audience,
+			"reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return 0, err
+	}
+
+	// ===== STEP 2: Validate Inputs =====
+	if len(strings.TrimSpace(audience)) == 0 {
+		status = "validation_error"
+		errorType = "validation_error"
+		m.logger.Warn("revokeAllForAudience rejected: audience is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidAudience)
+		span.SetStatus(tracing.StatusError, ErrInvalidAudience.Error())
+		return 0, ErrInvalidAudience
+	}
+
+	// ===== STEP 3: Acquire Write Lock =====
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// ===== STEP 4: Revoke All Tokens for Audience =====
+	count := 0
+	for _, tokenID := range m.audienceTokens[audience] {
+		if token, exists := m.tokens[tokenID]; exists {
+			m.logger.Debug("revoking token for audience", ctx,
+				"tokenID", tokenID,
+				"audience", audience)
+			token.Revoked = true
+			count++
+		}
+	}
+
+	// ===== STEP 5: Log Success =====
+	status = "success"
+	errorType = ""
+	m.logger.Info("revokeAllForAudience: all tokens revoked", ctx,
+		"audience", audience,
+		"count", count)
+	span.SetStatus(tracing.StatusOK, "")
+
+	return count, nil
+}
+
+// RevokeAllForUserAndAudience marks every refresh token belonging to userID
+// that was issued with the given audience value as revoked. Returns the count
+// of tokens marked revoked. Revocation is global — see RevokeAllForAudience.
+// Returns ErrInvalidUserID if userID is empty, ErrInvalidAudience if audience
+// is empty. Returns the context error if the context is cancelled.
+func (m *MemoryRefreshStore) RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) (int, error) {
+	ctx, span := m.startSpan(ctx, "RevokeAllForUserAndAudience")
+	defer span.End()
+	span.SetAttribute("user_id", userID)
+	span.SetAttribute("audience", audience)
+
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		m.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+			"operation":       "revoke_all_user_audience",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": m.backend,
+			"namespace":       "",
+		})
+		m.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
+			"operation":       "revoke_all_user_audience",
+			"storage_backend": m.backend,
+			"namespace":       "",
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
+		m.logger.Warn("revokeAllForUserAndAudience aborted: context cancelled", ctx,
+			"userID", userID,
+			"audience", audience,
+			"reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return 0, err
+	}
+
+	// ===== STEP 2: Validate Inputs =====
+	if len(strings.TrimSpace(userID)) == 0 {
+		status = "validation_error"
+		errorType = "validation_error"
+		m.logger.Warn("revokeAllForUserAndAudience rejected: userID is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidUserID)
+		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
+		return 0, ErrInvalidUserID
+	}
+	if len(strings.TrimSpace(audience)) == 0 {
+		status = "validation_error"
+		errorType = "validation_error"
+		m.logger.Warn("revokeAllForUserAndAudience rejected: audience is empty or whitespace", ctx,
+			"userID", userID)
+		span.RecordError(ErrInvalidAudience)
+		span.SetStatus(tracing.StatusError, ErrInvalidAudience.Error())
+		return 0, ErrInvalidAudience
+	}
+
+	// ===== STEP 3: Acquire Write Lock =====
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// ===== STEP 4: Revoke Tokens for User Within Audience =====
+	count := 0
+	for _, tokenID := range m.audienceTokens[audience] {
+		if token, exists := m.tokens[tokenID]; exists && token.UserID == userID {
+			m.logger.Debug("revoking token for user and audience", ctx,
+				"tokenID", tokenID,
+				"userID", userID,
+				"audience", audience)
+			token.Revoked = true
+			count++
+		}
+	}
+
+	// ===== STEP 5: Log Success =====
+	status = "success"
+	errorType = ""
+	m.logger.Info("revokeAllForUserAndAudience: tokens revoked", ctx,
+		"userID", userID,
+		"audience", audience,
+		"count", count)
+	span.SetStatus(tracing.StatusOK, "")
+
+	return count, nil
 }

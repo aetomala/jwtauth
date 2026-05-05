@@ -1127,5 +1127,6 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				Expect(tokenIDs[revoked]).To(BeTrue(), "revoked token missing from ListTokensForUser")
 			})
 		})
+
 	})
 }

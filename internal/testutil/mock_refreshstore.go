@@ -132,6 +132,21 @@ func (mr *MockRefreshStoreMockRecorder) Revoke(ctx, tokenID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Revoke", reflect.TypeOf((*MockRefreshStore)(nil).Revoke), ctx, tokenID)
 }
 
+// RevokeAllForAudience mocks base method.
+func (m *MockRefreshStore) RevokeAllForAudience(ctx context.Context, audience string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RevokeAllForAudience", ctx, audience)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RevokeAllForAudience indicates an expected call of RevokeAllForAudience.
+func (mr *MockRefreshStoreMockRecorder) RevokeAllForAudience(ctx, audience any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForAudience", reflect.TypeOf((*MockRefreshStore)(nil).RevokeAllForAudience), ctx, audience)
+}
+
 // RevokeAllForUser mocks base method.
 func (m *MockRefreshStore) RevokeAllForUser(ctx context.Context, userID string) error {
 	m.ctrl.T.Helper()
@@ -144,6 +159,21 @@ func (m *MockRefreshStore) RevokeAllForUser(ctx context.Context, userID string) 
 func (mr *MockRefreshStoreMockRecorder) RevokeAllForUser(ctx, userID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForUser", reflect.TypeOf((*MockRefreshStore)(nil).RevokeAllForUser), ctx, userID)
+}
+
+// RevokeAllForUserAndAudience mocks base method.
+func (m *MockRefreshStore) RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RevokeAllForUserAndAudience", ctx, userID, audience)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RevokeAllForUserAndAudience indicates an expected call of RevokeAllForUserAndAudience.
+func (mr *MockRefreshStoreMockRecorder) RevokeAllForUserAndAudience(ctx, userID, audience any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForUserAndAudience", reflect.TypeOf((*MockRefreshStore)(nil).RevokeAllForUserAndAudience), ctx, userID, audience)
 }
 
 // Store mocks base method.
