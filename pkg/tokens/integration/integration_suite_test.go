@@ -523,5 +523,121 @@ func RunTokenManagerIntegrationTests(description string, factory ManagerFactory)
 			Expect(err).NotTo(HaveOccurred())
 			Expect([]string(claims.Audience)).To(Equal([]string{"svc-a"}))
 		})
+
+		It("should revoke tokens for the targeted audience while other audiences are unaffected", func() {
+			userID := "audience-revoke-user"
+
+			tokenA, err := mgr.IssueRefreshToken(ctx, userID, tokens.WithAudience("svc-payments"))
+			Expect(err).NotTo(HaveOccurred())
+
+			tokenB, err := mgr.IssueRefreshToken(ctx, userID, tokens.WithAudience("svc-reports"))
+			Expect(err).NotTo(HaveOccurred())
+
+			err = mgr.RevokeAllForAudience(ctx, "svc-payments")
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = mgr.RefreshAccessToken(ctx, tokenA)
+			Expect(err).To(Equal(tokens.ErrTokenRevoked))
+
+			_, err = mgr.RefreshAccessToken(ctx, tokenB)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should revoke a multi-audience token globally when either audience is targeted", func() {
+			userID := "multi-audience-revoke-user"
+
+			multiToken, err := mgr.IssueRefreshToken(ctx, userID, tokens.WithAudience("svc-payments", "svc-reports"))
+			Expect(err).NotTo(HaveOccurred())
+
+			err = mgr.RevokeAllForAudience(ctx, "svc-payments")
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = mgr.RefreshAccessToken(ctx, multiToken)
+			Expect(err).To(Equal(tokens.ErrTokenRevoked))
+		})
+
+		It("should return no error when no tokens exist for the given audience", func() {
+			err := mgr.RevokeAllForAudience(ctx, "nonexistent-audience")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should revoke only the specified user's tokens for the given audience", func() {
+			user1Token, err := mgr.IssueRefreshToken(ctx, "aud-user1", tokens.WithAudience("svc-payments"))
+			Expect(err).NotTo(HaveOccurred())
+
+			user2Token, err := mgr.IssueRefreshToken(ctx, "aud-user2", tokens.WithAudience("svc-payments"))
+			Expect(err).NotTo(HaveOccurred())
+
+			err = mgr.RevokeAllForUserAndAudience(ctx, "aud-user1", "svc-payments")
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = mgr.RefreshAccessToken(ctx, user1Token)
+			Expect(err).To(Equal(tokens.ErrTokenRevoked))
+
+			_, err = mgr.RefreshAccessToken(ctx, user2Token)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should prune audience indexes during cleanup so stale token IDs do not accumulate", func() {
+			userID := "cleanup-audience-user"
+			audience := "svc-cleanup-test"
+
+			mgr2, _, cleanup2 := factory(tokens.TokenManagerConfig{
+				AccessTokenDuration:  5 * time.Minute,
+				RefreshTokenDuration: 100 * time.Millisecond,
+				CleanupInterval:      10 * time.Second,
+				Issuer:               "integration-test",
+				Audience:             []string{"integration-test"},
+			})
+			Expect(mgr2.Start(ctx)).To(Succeed())
+			DeferCleanup(func() {
+				shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
+				defer c()
+				_ = mgr2.Shutdown(shutdownCtx)
+				cleanup2()
+			})
+
+			_, err := mgr2.IssueRefreshToken(ctx, userID, tokens.WithAudience(audience))
+			Expect(err).NotTo(HaveOccurred())
+
+			time.Sleep(150 * time.Millisecond)
+
+			_, err = mgr2.CleanupExpiredTokens(ctx)
+			Expect(err).NotTo(HaveOccurred())
+
+			freshToken, err := mgr2.IssueRefreshToken(ctx, userID, tokens.WithAudience(audience))
+			Expect(err).NotTo(HaveOccurred())
+
+			err = mgr2.RevokeAllForAudience(ctx, audience)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = mgr2.RefreshAccessToken(ctx, freshToken)
+			Expect(err).To(Equal(tokens.ErrTokenRevoked))
+		})
+
+		It("should correctly revoke all user tokens regardless of audience when audience indexes are populated", func() {
+			userID := "user-audience-consistency-user"
+
+			token1, err := mgr.IssueRefreshToken(ctx, userID, tokens.WithAudience("svc-payments"))
+			Expect(err).NotTo(HaveOccurred())
+
+			token2, err := mgr.IssueRefreshToken(ctx, userID, tokens.WithAudience("svc-reports"))
+			Expect(err).NotTo(HaveOccurred())
+
+			token3, err := mgr.IssueRefreshToken(ctx, userID, tokens.WithAudience("svc-payments", "svc-reports"))
+			Expect(err).NotTo(HaveOccurred())
+
+			err = mgr.RevokeAllUserTokens(ctx, userID)
+			Expect(err).NotTo(HaveOccurred())
+
+			_, err = mgr.RefreshAccessToken(ctx, token1)
+			Expect(err).To(Equal(tokens.ErrTokenRevoked))
+
+			_, err = mgr.RefreshAccessToken(ctx, token2)
+			Expect(err).To(Equal(tokens.ErrTokenRevoked))
+
+			_, err = mgr.RefreshAccessToken(ctx, token3)
+			Expect(err).To(Equal(tokens.ErrTokenRevoked))
+		})
 	})
 }
