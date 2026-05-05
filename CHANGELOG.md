@@ -16,6 +16,8 @@ All notable changes to this project will be documented in this file.
 
 - **`storage.RefreshStore.Store()` gains `audience []string` parameter** — all custom `RefreshStore` implementations must update their `Store()` method signature. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. Add a compile-time assertion to catch the gap early: `var _ storage.RefreshStore = (*MyStore)(nil)`. See #124 and `UPGRADING.md`.
 
+- **`storage.RefreshStore` gains `RevokeAllForAudience` and `RevokeAllForUserAndAudience`** — all custom `RefreshStore` implementations must add both methods or they will not compile. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. See #135 and `UPGRADING.md`.
+
 - **`jwtauth_tokens_revoked_total` label `operation` renamed to `revocation_scope`** — update any Prometheus alert rules, recording rules, or dashboards that filter or group by the old label name. Existing label values (`"single"`, `"all_user"`) are unchanged. See #124.
 
 ### Added
@@ -25,6 +27,12 @@ All notable changes to this project will be documented in this file.
 - **`RefreshToken.Audience []string`** — the stored refresh token record now carries the audience slice resolved at issuance time. `RefreshAccessToken` and `RefreshAccessTokenWithClaims` propagate this stored audience into the new access token so the refreshed token targets the same audience as the original. See #124.
 
 - **`TokenMetadata.Audience []string`** — `IntrospectToken` now populates the `Audience` field on active, revoked, and expired paths. The not-found path leaves the field nil. See #124.
+
+- **`tokens.Manager.RevokeAllForAudience(ctx, audience) error`** — revokes all non-expired refresh tokens targeting the given audience across all users. Multi-audience tokens are revoked globally — a token carrying the targeted audience is fully revoked regardless of its other audiences. Emits `revocation_scope="audience"` on `jwtauth_tokens_revoked_total`. See #135.
+
+- **`tokens.Manager.RevokeAllForUserAndAudience(ctx, userID, audience) error`** — revokes all non-expired refresh tokens for a specific user and audience. Tokens for other users in the same audience are not affected. Emits `revocation_scope="user_audience"`. See #135.
+
+- **`storage.ErrInvalidAudience`** — sentinel returned when an empty string is passed as the audience argument to the new revocation methods. See #135.
 
 ---
 
