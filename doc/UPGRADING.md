@@ -59,25 +59,42 @@ jwtauth_tokens_revoked_total{operation="single"}
 jwtauth_tokens_revoked_total{revocation_scope="single"}
 ```
 
-### 4. `storage.RefreshStore` — two new revocation methods (planned, #135)
+### 4. `storage.RefreshStore` — two new revocation methods (#135)
 
-The following methods will be added in a later v0.5.0 patch. Listed here for early awareness.
+Two new methods are added to the `RefreshStore` interface:
 
 ```go
-// RevokeAllForAudience marks all non-expired refresh tokens targeting the given
-// audience as revoked. Returns the count of tokens revoked.
 RevokeAllForAudience(ctx context.Context, audience string) (int, error)
-
-// RevokeAllForUserAndAudience marks all refresh tokens for the given user and
-// audience as revoked. Returns the count of tokens revoked.
 RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) (int, error)
 ```
+
+`MemoryRefreshStore` and `RedisRefreshStore` are already updated. All custom `RefreshStore`
+implementations must add both methods or they will not compile. Add a compile-time assertion
+to catch the gap early:
+
+```go
+var _ storage.RefreshStore = (*MyRefreshStore)(nil)
+```
+
+`tokens.Manager` exposes audience-scoped revocation at the manager level — callers use
+`mgr.RevokeAllForAudience` and `mgr.RevokeAllForUserAndAudience` directly. Both manager
+methods return `error` only; the storage-layer count is used internally for logging.
+
+**Multi-audience revocation is global.** A token issued with `WithAudience("svc-payments",
+"svc-reports")` is revoked completely when either audience is targeted — not partially. See
+[Audience-Scoped Revocation](../doc/DEPLOYMENT.md#audience-scoped-revocation) in
+`DEPLOYMENT.md` for the full semantic and use cases.
 
 ### Additive changes (no action required)
 
 `IssueOption` / `WithAudience` (#124) adds a variadic `...tokens.IssueOption` parameter
 to all six issuance methods. All existing call sites compile and behave unchanged — the
 parameter is optional and defaults to the manager's configured audience.
+
+`storage.ErrInvalidAudience` is a new sentinel returned when an empty string is passed to
+`RevokeAllForAudience` or `RevokeAllForUserAndAudience`. Code that only calls these methods
+via `tokens.Manager` does not need to import `storage` — the error is not wrapped and can
+be compared directly with `errors.Is`.
 
 ---
 

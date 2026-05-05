@@ -410,6 +410,44 @@ See `examples/token-audit/` for a runnable reference.
 
 ---
 
+## Audience-Scoped Revocation
+
+`RevokeAllForAudience` and `RevokeAllForUserAndAudience` on `tokens.Manager` mark all
+non-expired refresh tokens scoped to a given audience as revoked. The primary use case is
+instant containment after a service-side credential compromise — for example, revoking every
+token that can reach `svc-payments` without touching tokens issued for unrelated services.
+
+```go
+// Revoke all tokens for all users that can reach svc-payments.
+if err := mgr.RevokeAllForAudience(ctx, "svc-payments"); err != nil {
+    return err
+}
+
+// Revoke only tokens for a specific user in the svc-payments audience.
+if err := mgr.RevokeAllForUserAndAudience(ctx, userID, "svc-payments"); err != nil {
+    return err
+}
+```
+
+**Revocation is global for multi-audience tokens.** A token issued with
+`WithAudience("svc-payments", "svc-reports")` is revoked completely when either audience is
+targeted — the token is not partially invalidated. Callers should treat every token that
+carries the targeted audience as fully revoked, regardless of its other audiences.
+
+**Empty audience strings** are rejected with `storage.ErrInvalidAudience` before any storage
+operation is attempted.
+
+**Index maintenance** — both `MemoryRefreshStore` and `RedisRefreshStore` maintain an
+audience index that is pruned by `CleanupExpiredTokens`. Stale entries from expired tokens
+do not accumulate indefinitely. Issuing a fresh token after cleanup restores the index
+correctly, so subsequent revocations target only live tokens.
+
+**Revocation scope metric** — both operations emit `revocation_scope` labels (`"audience"`
+and `"user_audience"`) on the `jwtauth_tokens_revoked_total` counter, consistent with the
+existing `"single"` and `"all_user"` scopes.
+
+---
+
 ## Reserved Claims
 
 The fields `sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, and `jti` are silently removed from any
