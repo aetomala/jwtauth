@@ -363,6 +363,28 @@ metric names or adding routing logic.
 See [ADR-006](adr/006-keyprefix-namespace-isolation.md) and
 [ADR-007](adr/007-namespace-consistency-contract.md).
 
+### Redis Key Schema
+
+Every key written by a store instance is prefixed by the configured `KeyPrefix`. The complete
+set of patterns for a deployment with `KeyPrefix: "myapp:"` is:
+
+**`RedisRefreshStore`**:
+```
+myapp:tokens:<tokenID>                  — token hash (HSet)
+myapp:user_tokens:<userID>              — set of tokenIDs for that user (SAdd)
+myapp:audience_tokens:<aud>             — set of tokenIDs for that audience (SAdd)
+myapp:audience_user_tokens:<aud>:<uid>  — set of tokenIDs for that user+audience (SAdd)
+```
+
+**`RedisKeyStore`**:
+```
+myapp:ks:pem:<keyID>   — PKCS#1 PEM private key (string)
+myapp:ks:meta:<keyID>  — JSON KeyMetadata (string)
+```
+
+An empty `KeyPrefix` omits the prefix entirely, preserving the pre-ADR-006 key layout. Use
+these patterns when writing Redis ACL rules or verifying namespace isolation with `SCAN`.
+
 ---
 
 ## Token Enumeration

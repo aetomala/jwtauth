@@ -623,24 +623,32 @@ type MemoryRefreshStore struct {
 **Design**:
 ```go
 type RedisRefreshStore struct {
-    client  *redis.Client   // go-redis/v9 client (internally thread-safe)
-    logger  logging.Logger  // never nil; defaults to NoOpLogger
-    metrics metrics.Metrics // never nil; defaults to NoOpMetrics
-    backend string          // storage_backend label value; always "redis"
+    client               *redis.Client   // go-redis/v9 client (internally thread-safe)
+    logger               logging.Logger  // never nil; defaults to NoOpLogger
+    metrics              metrics.Metrics // never nil; defaults to NoOpMetrics
+    tracer               tracing.Tracer  // never nil; defaults to NoOpTracer
+    namespace            string          // KeyPrefix value; used as storage_namespace label
+    backend              string          // storage_backend label value; always "redis"
+    tokenPrefix          string          // KeyPrefix + "tokens:"
+    userSetPrefix        string          // KeyPrefix + "user_tokens:"
+    audienceSetPrefix    string          // KeyPrefix + "audience_tokens:"
+    audienceUserSetPrefix string         // KeyPrefix + "audience_user_tokens:"
 }
 ```
 
 **Redis Data Structure**:
 ```
-[KeyPrefix]tokens:{tokenID}        → Hash with fields: userID, expiresAt, createdAt, revoked, metadata
-[KeyPrefix]user_tokens:{userID}    → Set of tokenIDs for that user
+[KeyPrefix]tokens:<tokenID>                  → Hash with fields: userID, expiresAt, createdAt, revoked, metadata
+[KeyPrefix]user_tokens:<userID>              → Set of tokenIDs for that user
+[KeyPrefix]audience_tokens:<aud>             → Set of tokenIDs for that audience
+[KeyPrefix]audience_user_tokens:<aud>:<uid>  → Set of tokenIDs for that user+audience pair
 ```
 
-Keys are optionally prefixed by `RedisRefreshStoreConfig.KeyPrefix`. `Cleanup` scans only `{KeyPrefix}tokens:*` — expired tokens from other namespaces are not affected.
+All four patterns are prepended with `RedisRefreshStoreConfig.KeyPrefix` at construction time. `Cleanup` scans only `[KeyPrefix]tokens:*` — expired tokens from other namespaces are not affected.
 
 **Key Features**:
 - **Distributed**: Works across multiple instances (Redis is the shared backend)
-- **Cursor-based enumeration**: `ListTokens` uses `SCAN` over the token hash namespace; `ListTokensForUser` uses `SSCAN` over the per-user token set — both pass Redis cursors through directly for stable pagination without extra round-trips
+- **Cursor-based enumeration**: `ListTokens` uses `SCAN` over the token hash namespace; `ListTokensForUser` and `ListTokensForAudience` use `SSCAN` over their respective index sets — all three pass Redis cursors through directly for stable pagination without extra round-trips
 - **Pipeline atomicity**: Multi-operation transactions via Redis pipelines
 - **Millisecond-precision timestamps**: Stored as UnixMilli (preserves precision across serialization)
 - **Efficient cleanup**: SCAN-based key iteration for expired token sweeps
