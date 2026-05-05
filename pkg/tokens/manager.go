@@ -138,6 +138,10 @@ type Manager struct {
 	clockSkew            time.Duration // Leeway applied to exp and nbf validation
 	namespace            string        // Optional; opaque label for observability output
 
+	// ===== Hot-Path Label Cache =====
+	validateCounterSuccessLabels map[string]string // Pre-built success labels for validate counter; avoids per-call map alloc
+	validateDurationLabels       map[string]string // Pre-built labels for validate duration histogram; avoids per-call map alloc
+
 	// ===== State Management =====
 	isRunning    atomic.Bool    // Thread-safe running state
 	shutdownChan chan struct{}   // Signals background goroutines to stop
@@ -254,6 +258,15 @@ func NewManager(config TokenManagerConfig) (*Manager, error) {
 		audience:             config.Audience,
 		namespace:            config.Namespace,
 		shutdownChan:         make(chan struct{}),
+		validateCounterSuccessLabels: map[string]string{
+			"status":     "success",
+			"error_type": "",
+			"namespace":  config.Namespace,
+		},
+		validateDurationLabels: map[string]string{
+			"operation": "validate_access_token",
+			"namespace":  config.Namespace,
+		},
 	}
 
 	return m, nil
@@ -1379,15 +1392,18 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 	status := "error"
 	errorType := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricTokensValidatedTotal, map[string]string{
-			"status":     status,
-			"error_type": errorType,
-			"namespace":  m.namespace,
-		})
-		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
-			"operation": "validate_access_token",
-			"namespace":  m.namespace,
-		})
+		var counterLabels map[string]string
+		if status == "success" {
+			counterLabels = m.validateCounterSuccessLabels
+		} else {
+			counterLabels = map[string]string{
+				"status":     status,
+				"error_type": errorType,
+				"namespace":  m.namespace,
+			}
+		}
+		m.metrics.IncrementCounter(metricTokensValidatedTotal, counterLabels)
+		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), m.validateDurationLabels)
 	}()
 
 	// ===== STEP 1: Service State Check =====
