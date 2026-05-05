@@ -1029,6 +1029,16 @@ func (r *RedisRefreshStore) fetchTokensByIDs(ctx context.Context, tokenIDs []str
 	return tokens, nil
 }
 
+// RevokeAllForAudience is a stub — full implementation ships in Phase 2.
+func (r *RedisRefreshStore) RevokeAllForAudience(_ context.Context, _ string) (int, error) {
+	return 0, errors.New("not yet implemented: RevokeAllForAudience (Phase 2)")
+}
+
+// RevokeAllForUserAndAudience is a stub — full implementation ships in Phase 2.
+func (r *RedisRefreshStore) RevokeAllForUserAndAudience(_ context.Context, _, _ string) (int, error) {
+	return 0, errors.New("not yet implemented: RevokeAllForUserAndAudience (Phase 2)")
+}
+
 var _ RefreshStore = (*RedisRefreshStore)(nil)
 
 // Sentinel errors for RedisRefreshStore operations.

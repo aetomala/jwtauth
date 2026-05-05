@@ -87,6 +87,22 @@ type RefreshStore interface {
 	//   - error: If revocation fails
 	RevokeAllForUser(ctx context.Context, userID string) error
 
+	// RevokeAllForAudience revokes every refresh token that was issued with the
+	// given audience value. Returns the count of tokens marked revoked. A token
+	// with multiple audiences is revoked globally — not per-audience — so every
+	// service the token could reach is invalidated when any one of its audiences
+	// is targeted. It is idempotent — already-revoked tokens are counted but
+	// cause no error. Returns ErrInvalidAudience if audience is empty. Returns
+	// the context error if the context is cancelled.
+	RevokeAllForAudience(ctx context.Context, audience string) (int, error)
+
+	// RevokeAllForUserAndAudience revokes every refresh token belonging to
+	// userID that was issued with the given audience value. Returns the count of
+	// tokens marked revoked. Revocation is global — see RevokeAllForAudience.
+	// Returns ErrInvalidUserID if userID is empty, ErrInvalidAudience if
+	// audience is empty. Returns the context error if the context is cancelled.
+	RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) (int, error)
+
 	// Cleanup removes expired tokens.
 	//
 	// This should be called periodically to:
