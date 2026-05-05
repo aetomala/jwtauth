@@ -816,6 +816,133 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 	return tokens, nextCursor, nil
 }
 
+// ListTokensForAudience returns a page of refresh tokens that were issued with
+// the given audience value, starting from cursor. Pass an empty string for
+// cursor to begin from the start. Returns the next cursor and a nil error on
+// success. Returns an empty next cursor when iteration is exhausted.
+//
+// All tokens are returned regardless of revocation or expiry status — the
+// caller is responsible for filtering. A token issued with multiple audiences
+// appears in the listing for each of its audience values. The cursor is an
+// integer offset into the stable insertion-order slice for audience —
+// best-effort when tokens are added or removed between pages. Returns
+// ErrInvalidAudience if audience is empty. Returns the context error if the
+// context is cancelled.
+func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*RefreshToken, string, error) {
+	ctx, span := m.startSpan(ctx, "ListTokensForAudience")
+	defer span.End()
+	span.SetAttribute("storage.audience", audience)
+	span.SetAttribute("storage.cursor", cursor)
+	span.SetAttribute("storage.count", count)
+
+	start := time.Now()
+	errorType := "error"
+	resultCount := 0
+	defer func() {
+		m.metrics.IncrementCounter(metricListTokensForAudienceTotal, map[string]string{
+			"storage_backend": m.backend,
+			"namespace":       "",
+			"error_type":      errorType,
+		})
+		m.metrics.RecordDuration(metricListTokensForAudienceDuration, time.Since(start), map[string]string{
+			"storage_backend": m.backend,
+			"namespace":       "",
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		errorType = "cancelled"
+		m.logger.Warn("listTokensForAudience aborted: context cancelled", ctx, "reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 2: Validate Inputs =====
+	if len(strings.TrimSpace(audience)) == 0 {
+		errorType = "validation_error"
+		m.logger.Warn("listTokensForAudience rejected: audience is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidAudience)
+		span.SetStatus(tracing.StatusError, ErrInvalidAudience.Error())
+		return nil, "", ErrInvalidAudience
+	}
+
+	// ===== STEP 3: Acquire Read Lock =====
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// ===== STEP 4: Parse Cursor as Integer Offset =====
+	offset := 0
+	if cursor != "" {
+		if parsed, err := strconv.Atoi(cursor); err == nil && parsed > 0 {
+			offset = parsed
+		}
+	}
+
+	// ===== STEP 5: Build Page from Audience's Token Slice =====
+	tokenIDs := m.audienceTokens[audience]
+	if offset >= len(tokenIDs) {
+		errorType = ""
+		span.SetStatus(tracing.StatusOK, "")
+		m.logger.Info("listTokensForAudience: page returned", ctx,
+			"audience", audience,
+			"result_count", 0,
+			"next_cursor", "")
+		return nil, "", nil
+	}
+
+	end := offset + count
+	if count <= 0 || end > len(tokenIDs) {
+		end = len(tokenIDs)
+	}
+	page := tokenIDs[offset:end]
+
+	tokens := make([]*RefreshToken, 0, len(page))
+	for _, id := range page {
+		t, ok := m.tokens[id]
+		if !ok {
+			continue
+		}
+		cp := &RefreshToken{
+			TokenID:   t.TokenID,
+			UserID:    t.UserID,
+			ExpiresAt: t.ExpiresAt,
+			CreatedAt: t.CreatedAt,
+			Revoked:   t.Revoked,
+		}
+		if len(t.Audience) > 0 {
+			cp.Audience = make([]string, len(t.Audience))
+			copy(cp.Audience, t.Audience)
+		}
+		if t.Metadata != nil {
+			cp.Metadata = make(map[string]interface{}, len(t.Metadata))
+			for k, v := range t.Metadata {
+				cp.Metadata[k] = v
+			}
+		}
+		tokens = append(tokens, cp)
+	}
+
+	// ===== STEP 6: Compute Next Cursor =====
+	nextCursor := ""
+	if end < len(tokenIDs) {
+		nextCursor = strconv.Itoa(end)
+	}
+
+	// ===== STEP 7: Log and Return =====
+	errorType = ""
+	resultCount = len(tokens)
+	span.SetAttribute("storage.result_count", resultCount)
+	span.SetStatus(tracing.StatusOK, "")
+	m.logger.Info("listTokensForAudience: page returned", ctx,
+		"audience", audience,
+		"result_count", resultCount,
+		"next_cursor", nextCursor)
+
+	return tokens, nextCursor, nil
+}
+
 func (m *MemoryRefreshStore) removeFromUserTokens(userID, tokenID string) {
 	tokenIDs := m.userTokens[userID]
 

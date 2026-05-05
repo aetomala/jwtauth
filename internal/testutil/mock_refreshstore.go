@@ -73,6 +73,22 @@ func (mr *MockRefreshStoreMockRecorder) ListTokens(ctx, cursor, count any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokens", reflect.TypeOf((*MockRefreshStore)(nil).ListTokens), ctx, cursor, count)
 }
 
+// ListTokensForAudience mocks base method.
+func (m *MockRefreshStore) ListTokensForAudience(ctx context.Context, audience, cursor string, count int) ([]*storage.RefreshToken, string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListTokensForAudience", ctx, audience, cursor, count)
+	ret0, _ := ret[0].([]*storage.RefreshToken)
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListTokensForAudience indicates an expected call of ListTokensForAudience.
+func (mr *MockRefreshStoreMockRecorder) ListTokensForAudience(ctx, audience, cursor, count any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokensForAudience", reflect.TypeOf((*MockRefreshStore)(nil).ListTokensForAudience), ctx, audience, cursor, count)
+}
+
 // ListTokensForUser mocks base method.
 func (m *MockRefreshStore) ListTokensForUser(ctx context.Context, userID, cursor string, count int) ([]*storage.RefreshToken, string, error) {
 	m.ctrl.T.Helper()
