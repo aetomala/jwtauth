@@ -1265,8 +1265,113 @@ func (r *RedisRefreshStore) RevokeAllForUserAndAudience(ctx context.Context, use
 	return count, nil
 }
 
-func (r *RedisRefreshStore) ListTokensForAudience(_ context.Context, _ string, _ string, _ int) ([]*RefreshToken, string, error) {
-	return nil, "", errors.New("not implemented")
+// ListTokensForAudience returns a page of refresh tokens that were issued
+// with the given audience value, starting from cursor. Pass an empty string
+// for cursor to begin from the start. Returns the next cursor and a nil
+// error on success. Returns an empty next cursor when iteration is exhausted.
+//
+// All tokens are returned regardless of revocation or expiry status — the
+// caller is responsible for filtering. A token issued with multiple audiences
+// appears in the listing for each of its audience values — callers
+// enumerating across multiple audiences should de-duplicate. Cursor semantics
+// mirror Redis SSCAN: tokens inserted or deleted between pages may appear, be
+// skipped, or duplicated. Returns ErrInvalidAudience if audience is empty.
+// Returns the context error if the context is cancelled.
+func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*RefreshToken, string, error) {
+	ctx, span := r.startSpan(ctx, "ListTokensForAudience")
+	defer span.End()
+	span.SetAttribute("storage.audience", audience)
+	span.SetAttribute("storage.cursor", cursor)
+	span.SetAttribute("storage.count", count)
+
+	start := time.Now()
+	errorType := "error"
+	resultCount := 0
+	defer func() {
+		r.metrics.IncrementCounter(metricListTokensForAudienceTotal, map[string]string{
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+			"error_type":      errorType,
+		})
+		r.metrics.RecordDuration(metricListTokensForAudienceDuration, time.Since(start), map[string]string{
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		errorType = "cancelled"
+		r.logger.Warn("listTokensForAudience aborted: context cancelled", ctx, "reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 2: Validate Inputs =====
+	if len(strings.TrimSpace(audience)) == 0 {
+		errorType = "validation_error"
+		r.logger.Warn("listTokensForAudience rejected: audience is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidAudience)
+		span.SetStatus(tracing.StatusError, ErrInvalidAudience.Error())
+		return nil, "", ErrInvalidAudience
+	}
+
+	// ===== STEP 3: Parse Cursor =====
+	var redisCursor uint64
+	if cursor != "" {
+		parsed, err := strconv.ParseUint(cursor, 10, 64)
+		if err != nil {
+			errorType = "invalid_cursor"
+			r.logger.Warn("listTokensForAudience: invalid cursor — starting from 0", ctx, "cursor", cursor)
+		} else {
+			redisCursor = parsed
+		}
+	}
+
+	// ===== STEP 4: SSCAN the Audience's Token Set =====
+	scanCount := int64(count)
+	if scanCount <= 0 {
+		scanCount = 10
+	}
+	audienceSetKey := r.audienceSetPrefix + audience
+	tokenIDs, nextRedisCursor, err := r.client.SScan(ctx, audienceSetKey, redisCursor, "*", scanCount).Result()
+	if err != nil {
+		errorType = "redis_error"
+		r.logger.Error("listTokensForAudience failed: redis sscan error", ctx,
+			"audience", audience, "error", err)
+		wrapped := fmt.Errorf("failed to scan audience tokens: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return nil, "", wrapped
+	}
+
+	// ===== STEP 5: Hydrate Token IDs =====
+	tokens, err := r.fetchTokensByIDs(ctx, tokenIDs)
+	if err != nil {
+		errorType = "redis_error"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 6: Compute Next Cursor =====
+	nextCursor := ""
+	if nextRedisCursor != 0 {
+		nextCursor = strconv.FormatUint(nextRedisCursor, 10)
+	}
+
+	// ===== STEP 7: Log and Return =====
+	errorType = ""
+	resultCount = len(tokens)
+	span.SetAttribute("storage.result_count", resultCount)
+	span.SetStatus(tracing.StatusOK, "")
+	r.logger.Info("listTokensForAudience: page returned", ctx,
+		"audience", audience,
+		"result_count", resultCount,
+		"next_cursor", nextCursor)
+
+	return tokens, nextCursor, nil
 }
 
 var _ RefreshStore = (*RedisRefreshStore)(nil)
