@@ -153,6 +153,13 @@ var (
 	ErrTokenRevoked        = errors.New("token revoked")
 )
 
+// reservedJWTClaims is the set of standard JWT claim keys that Manager controls.
+// Hoisted to package scope so ValidateAccessTokenWithClaims does not allocate a
+// new map on every call.
+var reservedJWTClaims = map[string]struct{}{
+	"sub": {}, "exp": {}, "nbf": {}, "iat": {}, "jti": {}, "iss": {}, "aud": {},
+}
+
 // ErrInvalidConfig returns a configuration error with the given message.
 // Returned by NewManager when required fields are missing or values are invalid.
 func ErrInvalidConfig(msg string) error {
@@ -1403,12 +1410,10 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 		return nil, err
 	}
 
-	m.logger.Debug("validating access token", ctx)
-
 	// ===== STEP 3: Parse JWT Token =====
-	parseOpts := []jwt.ParserOption{}
+	var parseOpts []jwt.ParserOption
 	if m.clockSkew > 0 {
-		parseOpts = append(parseOpts, jwt.WithLeeway(m.clockSkew))
+		parseOpts = []jwt.ParserOption{jwt.WithLeeway(m.clockSkew)}
 	}
 
 	token, err := jwt.ParseWithClaims(
@@ -1439,9 +1444,6 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 					"error", err)
 				return nil, fmt.Errorf("failed to get public key: %w", err)
 			}
-			m.logger.Debug("public key retrieved for token validation", ctx,
-				"kid", kid)
-
 			return publicKey, nil
 		},
 		parseOpts...,
@@ -1600,12 +1602,9 @@ func (m *Manager) ValidateAccessTokenWithClaims(ctx context.Context, tokenString
 	}
 
 	// ===== STEP 3: Strip Reserved Claims =====
-	reserved := map[string]struct{}{
-		"sub": {}, "exp": {}, "nbf": {}, "iat": {}, "jti": {}, "iss": {}, "aud": {},
-	}
 	custom := make(map[string]interface{}, len(mapClaims))
 	for k, v := range mapClaims {
-		if _, isReserved := reserved[k]; !isReserved {
+		if _, isReserved := reservedJWTClaims[k]; !isReserved {
 			custom[k] = v
 		}
 	}
