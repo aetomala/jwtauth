@@ -42,6 +42,8 @@ All notable changes to this project will be documented in this file.
 
 - **4 additional Prometheus metrics registered in `PrometheusMetrics`** — storage-layer metrics (`jwtauth_storage_list_tokens_for_audience_total`, `jwtauth_storage_list_tokens_for_audience_duration_seconds`) and token-manager-layer metrics (`jwtauth_tokens_list_for_audience_total`, `jwtauth_tokens_list_for_audience_duration_seconds`); all carry `namespace` and `error_type` labels. See #143.
 
+- **Microbenchmark suite** — `testing.B` benchmarks in `pkg/storage/bench_test.go`, `pkg/keys/bench_test.go`, and `pkg/tokens/bench_test.go` covering all storage operations (MemoryRefreshStore + RedisRefreshStore via miniredis), key manager cache and rotation paths, token issuance and validation (serial and parallel), rotation-under-load concurrency, observability tax (NoOp vs PrometheusMetrics vs OtelTracer), and a baseline comparison against raw `golang-jwt/jwt`. Results and reproduction instructions in `doc/PERFORMANCE.md`. See #141.
+
 ---
 
 ## [v0.4.0] — 2026-04-30
