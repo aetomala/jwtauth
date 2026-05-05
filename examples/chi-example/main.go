@@ -94,6 +94,7 @@ func main() {
 	// Public endpoints
 	r.Post("/login", issueTokensHandler(mgr))
 	r.Post("/login/rich", issueTokensWithClaimsHandler(mgr))
+	r.Post("/login/service", issueTokensForServiceHandler(mgr))
 	r.Post("/refresh", refreshHandler(mgr))
 	r.Post("/refresh/claims", refreshWithClaimsHandler(mgr))
 
@@ -161,6 +162,45 @@ func issueTokensHandler(mgr *tokens.Manager) http.HandlerFunc {
 			AccessToken:  accessToken,
 			RefreshToken: refreshToken,
 			ExpiresIn:    900, // 15 minutes
+		})
+	}
+}
+
+// ServiceLoginRequest is the request body for service-scoped token issuance.
+type ServiceLoginRequest struct {
+	UserID  string `json:"user_id"`
+	Service string `json:"service"`
+}
+
+// issueTokensForServiceHandler issues a token pair scoped to a specific downstream
+// service — demonstrating WithAudience for per-call audience targeting.
+func issueTokensForServiceHandler(mgr *tokens.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req ServiceLoginRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.UserID == "" || req.Service == "" {
+			http.Error(w, "user_id and service are required", http.StatusBadRequest)
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		accessToken, refreshToken, err := mgr.IssueTokenPair(ctx, req.UserID, tokens.WithAudience(req.Service))
+		if err != nil {
+			http.Error(w, "failed to issue tokens", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(TokenResponse{
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+			ExpiresIn:    900,
 		})
 	}
 }

@@ -10,6 +10,24 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased — v0.5.0]
+
+### Breaking
+
+- **`storage.RefreshStore.Store()` gains `audience []string` parameter** — all custom `RefreshStore` implementations must update their `Store()` method signature. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. Add a compile-time assertion to catch the gap early: `var _ storage.RefreshStore = (*MyStore)(nil)`. See #124 and `UPGRADING.md`.
+
+- **`jwtauth_tokens_revoked_total` label `operation` renamed to `revocation_scope`** — update any Prometheus alert rules, recording rules, or dashboards that filter or group by the old label name. Existing label values (`"single"`, `"all_user"`) are unchanged. See #124.
+
+### Added
+
+- **`IssueOption` type and `WithAudience` functional option** — all six issuance methods (`IssueAccessToken`, `IssueAccessTokenWithClaims`, `IssueRefreshToken`, `IssueRefreshTokenWithClaims`, `IssueTokenPair`, `IssueTokenPairWithClaims`) now accept a variadic `...tokens.IssueOption` parameter. All existing call sites compile unchanged — the parameter is optional and defaults to the manager's configured audience. Use `tokens.WithAudience("svc-payments")` to target a specific audience for a single call. See #124.
+
+- **`RefreshToken.Audience []string`** — the stored refresh token record now carries the audience slice resolved at issuance time. `RefreshAccessToken` and `RefreshAccessTokenWithClaims` propagate this stored audience into the new access token so the refreshed token targets the same audience as the original. See #124.
+
+- **`TokenMetadata.Audience []string`** — `IntrospectToken` now populates the `Audience` field on active, revoked, and expired paths. The not-found path leaves the field nil. See #124.
+
+---
+
 ## [v0.4.0] — 2026-04-30
 
 ### Breaking

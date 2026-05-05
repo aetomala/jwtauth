@@ -236,7 +236,7 @@ type Metrics interface {
 | `jwtauth_tokens_issued_total` | Counter | status, error_type |
 | `jwtauth_tokens_validated_total` | Counter | status, error_type |
 | `jwtauth_tokens_refreshed_total` | Counter | status, error_type |
-| `jwtauth_tokens_revoked_total` | Counter | operation, status |
+| `jwtauth_tokens_revoked_total` | Counter | revocation_scope, status |
 | `jwtauth_tokens_introspected_total` | Counter | status |
 | `jwtauth_tokens_list_total` | Counter | namespace, error_type |
 | `jwtauth_tokens_list_duration_seconds` | Histogram | namespace |

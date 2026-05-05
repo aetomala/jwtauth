@@ -6,26 +6,62 @@ This document describes breaking changes and the mechanical steps required to up
 
 ## v0.4.x → v0.5.0
 
-v0.5.0 introduces two sets of changes to `storage.RefreshStore`. Code that only
-*calls* jwtauth is unaffected. Code that provides a custom `RefreshStore` implementation
-must add the new members or it will not compile.
+v0.5.0 introduces breaking changes to `storage.RefreshStore` and the Prometheus metric
+`jwtauth_tokens_revoked_total`. Code that only *calls* jwtauth is unaffected, except for
+Prometheus consumers that query by the renamed label. Code that provides a custom
+`RefreshStore` implementation must update the `Store()` method signature or it will not compile.
 
 ### 1. `storage.RefreshToken` — new `Audience` field
 
-A new `Audience string` field is added to `RefreshToken`. Custom serialization or
+A new `Audience []string` field is added to `RefreshToken`. Custom serialization or
 storage backends that persist `RefreshToken` structs must handle the new field.
 
 ```go
 type RefreshToken struct {
     // ... existing fields unchanged ...
-    Audience string // NEW — audience of the paired access token at issuance time
+    Audience []string // NEW — audience resolved at issuance time
 }
 ```
 
 The value is populated from the per-call `WithAudience` IssueOption when provided,
 or from the manager's configured `TokenManagerConfig.Audience` otherwise.
 
-### 2. `storage.RefreshStore` — two new revocation methods
+### 2. `storage.RefreshStore.Store()` — new `audience []string` parameter
+
+The `Store()` method gains an `audience []string` parameter:
+
+```go
+// Before
+Store(ctx context.Context, userID string, expiresAt time.Time) (*RefreshToken, error)
+
+// After
+Store(ctx context.Context, userID string, expiresAt time.Time, audience []string) (*RefreshToken, error)
+```
+
+All custom `RefreshStore` implementations must update this signature. Add a compile-time
+assertion to catch the gap early:
+
+```go
+var _ storage.RefreshStore = (*MyRefreshStore)(nil)
+```
+
+### 3. `jwtauth_tokens_revoked_total` — label `operation` renamed to `revocation_scope`
+
+The `operation` label on `jwtauth_tokens_revoked_total` is renamed to `revocation_scope`.
+Update any Prometheus alert rules, recording rules, or dashboards that filter or group
+by the old label name. Existing label values (`"single"`, `"all_user"`) are unchanged.
+
+```promql
+# Before
+jwtauth_tokens_revoked_total{operation="single"}
+
+# After
+jwtauth_tokens_revoked_total{revocation_scope="single"}
+```
+
+### 4. `storage.RefreshStore` — two new revocation methods (planned, #135)
+
+The following methods will be added in a later v0.5.0 patch. Listed here for early awareness.
 
 ```go
 // RevokeAllForAudience marks all non-expired refresh tokens targeting the given
@@ -37,16 +73,10 @@ RevokeAllForAudience(ctx context.Context, audience string) (int, error)
 RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) (int, error)
 ```
 
-Add compile-time assertions to catch missed methods early:
-
-```go
-var _ storage.RefreshStore = (*MyRefreshStore)(nil)
-```
-
 ### Additive changes (no action required)
 
 `IssueOption` / `WithAudience` (#124) adds a variadic `...tokens.IssueOption` parameter
-to four issuance methods. All existing call sites compile and behave unchanged — the
+to all six issuance methods. All existing call sites compile and behave unchanged — the
 parameter is optional and defaults to the manager's configured audience.
 
 ---
