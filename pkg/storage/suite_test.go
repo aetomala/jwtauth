@@ -1128,5 +1128,181 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 			})
 		})
 
+		// ============================================================
+		// ============================================================
+		Describe("Phase 14: RevokeAllForAudience", func() {
+			var expiresAt time.Time
+			BeforeEach(func() {
+				expiresAt = time.Now().Add(24 * time.Hour)
+			})
+
+			It("should revoke all tokens for the target audience and return the count", func() {
+				aud := []string{"svc-payments"}
+				Expect(store.Store(ctx, "tok-pay-1", "user-aud", aud, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-pay-2", "user-aud", aud, expiresAt, nil)).To(Succeed())
+
+				n, err := store.RevokeAllForAudience(ctx, "svc-payments")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(Equal(2))
+
+				_, err = store.Retrieve(ctx, "tok-pay-1")
+				Expect(err).To(MatchError(storage.ErrTokenRevoked))
+				_, err = store.Retrieve(ctx, "tok-pay-2")
+				Expect(err).To(MatchError(storage.ErrTokenRevoked))
+			})
+
+			It("should not affect tokens issued for a different audience", func() {
+				Expect(store.Store(ctx, "tok-pay", "user-aud", []string{"svc-payments"}, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-rep", "user-aud", []string{"svc-reports"}, expiresAt, nil)).To(Succeed())
+
+				_, err := store.RevokeAllForAudience(ctx, "svc-payments")
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = store.Retrieve(ctx, "tok-pay")
+				Expect(err).To(MatchError(storage.ErrTokenRevoked))
+
+				tok, err := store.Retrieve(ctx, "tok-rep")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tok.Revoked).To(BeFalse())
+			})
+
+			It("should not affect tokens issued with no audience", func() {
+				Expect(store.Store(ctx, "tok-noaud", "user-aud", nil, expiresAt, nil)).To(Succeed())
+
+				_, err := store.RevokeAllForAudience(ctx, "svc-payments")
+				Expect(err).NotTo(HaveOccurred())
+
+				tok, err := store.Retrieve(ctx, "tok-noaud")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tok.Revoked).To(BeFalse())
+			})
+
+			It("should revoke a multi-audience token when either audience is targeted", func() {
+				Expect(store.Store(ctx, "tok-multi", "user-aud", []string{"svc-payments", "svc-reports"}, expiresAt, nil)).To(Succeed())
+
+				n, err := store.RevokeAllForAudience(ctx, "svc-payments")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(Equal(1))
+
+				_, err = store.Retrieve(ctx, "tok-multi")
+				Expect(err).To(MatchError(storage.ErrTokenRevoked))
+			})
+
+			It("should count already-revoked tokens and not error (idempotent)", func() {
+				Expect(store.Store(ctx, "tok-pre-rev", "user-aud", []string{"svc-payments"}, expiresAt, nil)).To(Succeed())
+				Expect(store.Revoke(ctx, "tok-pre-rev")).To(Succeed())
+
+				n, err := store.RevokeAllForAudience(ctx, "svc-payments")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(Equal(1))
+			})
+
+			It("should return zero count and no error when audience has no tokens", func() {
+				n, err := store.RevokeAllForAudience(ctx, "svc-nonexistent")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(Equal(0))
+			})
+
+			It("should return ErrInvalidAudience for empty audience", func() {
+				_, err := store.RevokeAllForAudience(ctx, "")
+				Expect(err).To(MatchError(storage.ErrInvalidAudience))
+			})
+
+			It("should return ErrInvalidAudience for whitespace-only audience", func() {
+				_, err := store.RevokeAllForAudience(ctx, "   ")
+				Expect(err).To(MatchError(storage.ErrInvalidAudience))
+			})
+
+			It("should return context error on cancelled context", func() {
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				_, err := store.RevokeAllForAudience(cancelledCtx, "svc-payments")
+				Expect(err).To(MatchError(context.Canceled))
+			})
+
+			It("should prune stale audience index entries after Cleanup", func() {
+				shortExp := time.Now().Add(50 * time.Millisecond)
+				Expect(store.Store(ctx, "tok-expire-aud", "user-aud", []string{"svc-payments"}, shortExp, nil)).To(Succeed())
+
+				time.Sleep(100 * time.Millisecond)
+				_, err := store.Cleanup(ctx)
+				Expect(err).NotTo(HaveOccurred())
+
+				n, err := store.RevokeAllForAudience(ctx, "svc-payments")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(Equal(0))
+			})
+		})
+		// ============================================================
+
+		// ============================================================
+		Describe("Phase 15: RevokeAllForUserAndAudience", func() {
+			var expiresAt time.Time
+			BeforeEach(func() {
+				expiresAt = time.Now().Add(24 * time.Hour)
+			})
+
+			It("should revoke only the specified user's tokens for that audience", func() {
+				user1 := "user-ua-1"
+				user2 := "user-ua-2"
+				aud := []string{"svc-payments"}
+
+				Expect(store.Store(ctx, "tok-u1-pay", user1, aud, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-u2-pay", user2, aud, expiresAt, nil)).To(Succeed())
+
+				n, err := store.RevokeAllForUserAndAudience(ctx, user1, "svc-payments")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(Equal(1))
+
+				_, err = store.Retrieve(ctx, "tok-u1-pay")
+				Expect(err).To(MatchError(storage.ErrTokenRevoked))
+
+				tok, err := store.Retrieve(ctx, "tok-u2-pay")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tok.Revoked).To(BeFalse())
+			})
+
+			It("should not affect the same user's tokens for a different audience", func() {
+				Expect(store.Store(ctx, "tok-ua-pay", "user-ua", []string{"svc-payments"}, expiresAt, nil)).To(Succeed())
+				Expect(store.Store(ctx, "tok-ua-rep", "user-ua", []string{"svc-reports"}, expiresAt, nil)).To(Succeed())
+
+				_, err := store.RevokeAllForUserAndAudience(ctx, "user-ua", "svc-payments")
+				Expect(err).NotTo(HaveOccurred())
+
+				_, err = store.Retrieve(ctx, "tok-ua-pay")
+				Expect(err).To(MatchError(storage.ErrTokenRevoked))
+
+				tok, err := store.Retrieve(ctx, "tok-ua-rep")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tok.Revoked).To(BeFalse())
+			})
+
+			It("should return zero count and no error when user has no tokens for that audience", func() {
+				n, err := store.RevokeAllForUserAndAudience(ctx, "user-ua", "svc-nonexistent")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(Equal(0))
+			})
+
+			It("should return ErrInvalidUserID for empty userID", func() {
+				_, err := store.RevokeAllForUserAndAudience(ctx, "", "svc-payments")
+				Expect(err).To(MatchError(storage.ErrInvalidUserID))
+			})
+
+			It("should return ErrInvalidAudience for empty audience", func() {
+				_, err := store.RevokeAllForUserAndAudience(ctx, "user-ua", "")
+				Expect(err).To(MatchError(storage.ErrInvalidAudience))
+			})
+
+			It("should return context error on cancelled context", func() {
+				cancelledCtx, cancel := context.WithCancel(context.Background())
+				cancel()
+
+				_, err := store.RevokeAllForUserAndAudience(cancelledCtx, "user-ua", "svc-payments")
+				Expect(err).To(MatchError(context.Canceled))
+			})
+		})
+		// ============================================================
+
 	})
 }
