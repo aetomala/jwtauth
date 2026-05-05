@@ -72,6 +72,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -1585,27 +1586,36 @@ func (m *Manager) ValidateAccessTokenWithClaims(ctx context.Context, tokenString
 	span.SetAttribute("user_id", registered.Subject)
 	span.SetAttribute("token_id", registered.ID)
 
-	// ===== STEP 2: Re-Parse for Custom Claims =====
-	// Signature is already verified above; ParseUnverified is safe here and
-	// avoids a second key-manager round-trip.
-	rawToken, _, parseErr := jwt.NewParser().ParseUnverified(tokenString, jwt.MapClaims{})
-	if parseErr != nil {
-		// Token validated above — treat missing custom claims as empty rather than error.
+	// ===== STEP 2: Extract Payload Bytes =====
+	// Signature already verified above — only payload bytes are needed.
+	// Splitting directly avoids a second jwt.Parser + jwt.Token + MapClaims alloc.
+	parts := strings.SplitN(tokenString, ".", 3)
+	if len(parts) != 3 {
+		span.SetStatus(tracing.StatusOK, "")
+		return registered, map[string]interface{}{}, nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
 		span.SetStatus(tracing.StatusOK, "")
 		return registered, map[string]interface{}{}, nil
 	}
 
-	mapClaims, ok := rawToken.Claims.(jwt.MapClaims)
-	if !ok {
+	// ===== STEP 3: Decode Payload and Strip Reserved Claims =====
+	// Decode into map[string]json.RawMessage first — defers per-value
+	// deserialization so the 7 reserved keys are skipped without boxing.
+	var rawFields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &rawFields); err != nil {
 		span.SetStatus(tracing.StatusOK, "")
 		return registered, map[string]interface{}{}, nil
 	}
 
-	// ===== STEP 3: Strip Reserved Claims =====
-	custom := make(map[string]interface{}, len(mapClaims))
-	for k, v := range mapClaims {
+	custom := make(map[string]interface{}, max(0, len(rawFields)-len(reservedJWTClaims)))
+	for k, rawVal := range rawFields {
 		if _, isReserved := reservedJWTClaims[k]; !isReserved {
-			custom[k] = v
+			var v interface{}
+			if err := json.Unmarshal(rawVal, &v); err == nil {
+				custom[k] = v
+			}
 		}
 	}
 
