@@ -85,6 +85,41 @@ methods return `error` only; the storage-layer count is used internally for logg
 [Audience-Scoped Revocation](../doc/DEPLOYMENT.md#audience-scoped-revocation) in
 `DEPLOYMENT.md` for the full semantic and use cases.
 
+### 5. `storage.RefreshStore` — one new enumeration method (#143)
+
+One new method is added to the `RefreshStore` interface:
+
+```go
+ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*RefreshToken, string, error)
+```
+
+`MemoryRefreshStore` and `RedisRefreshStore` are already updated. All custom `RefreshStore`
+implementations must add this method or they will not compile. Add a compile-time assertion
+to catch the gap early:
+
+```go
+var _ storage.RefreshStore = (*MyRefreshStore)(nil)
+```
+
+Returns a page of refresh tokens whose stored audience slice contains `audience`, starting
+from `cursor`. Pass `""` to begin from the start; returns `""` as the next cursor when
+iteration is exhausted. Returns `storage.ErrInvalidAudience` if `audience` is empty.
+`count` is a hint — actual page size may vary.
+
+`tokens.Manager` exposes audience-scoped enumeration at the manager level — callers use
+`mgr.ListTokensForAudience` directly. The primary use case is the audit-before-revoke
+workflow: enumerate tokens for an audience, log or validate them, then call
+`mgr.RevokeAllForAudience`. See
+[Audience-Scoped Revocation](../doc/DEPLOYMENT.md#audience-scoped-revocation) in
+`DEPLOYMENT.md`.
+
+**Multi-audience visibility** — a token issued with `WithAudience("svc-payments",
+"svc-reports")` appears in the listing for **each** of its audiences. The same token will
+appear once in the `svc-payments` listing and once in the `svc-reports` listing; it is not
+double-counted within either listing.
+
+---
+
 ### Additive changes (no action required)
 
 `IssueOption` / `WithAudience` (#124) adds a variadic `...tokens.IssueOption` parameter
@@ -92,9 +127,9 @@ to all six issuance methods. All existing call sites compile and behave unchange
 parameter is optional and defaults to the manager's configured audience.
 
 `storage.ErrInvalidAudience` is a new sentinel returned when an empty string is passed to
-`RevokeAllForAudience` or `RevokeAllForUserAndAudience`. Code that only calls these methods
-via `tokens.Manager` does not need to import `storage` — the error is not wrapped and can
-be compared directly with `errors.Is`.
+`RevokeAllForAudience`, `RevokeAllForUserAndAudience`, or `ListTokensForAudience`. Code that
+only calls these methods via `tokens.Manager` does not need to import `storage` — the error
+is wrapped by the manager and can be compared with `errors.Is`.
 
 ---
 
