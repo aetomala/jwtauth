@@ -1055,7 +1055,7 @@ Measured on Apple M4 Max, Go 1.26.2, `GOMAXPROCS=16`. Redis numbers use in-proce
 | Operation | ns/op | B/op | allocs/op |
 |---|---|---|---|
 | `IssueAccessToken` | 78,775 | 6,893 | 75 |
-| `ValidateAccessToken` | 5,580 | 7,384 | 109 |
+| `ValidateAccessToken` | 5,067 | 6,633 | 102 |
 | `IssueTokenPair` | 69,436 | 8,612 | 90 |
 | `RefreshAccessToken` | 867,641 | 9,497 | 109 |
 | `Store` (Memory) | 797 | 2,034 | 23 |
