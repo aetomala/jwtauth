@@ -144,6 +144,22 @@ type RefreshStore interface {
 	// userID is empty. Returns the context error if the context is cancelled.
 	ListTokensForUser(ctx context.Context, userID string, cursor string, count int) ([]*RefreshToken, string, error)
 
+	// ListTokensForAudience returns a page of refresh tokens that were issued
+	// with the given audience value, starting from cursor. Pass an empty string
+	// for cursor to begin from the start. Returns the next cursor and a nil
+	// error on success. Returns an empty next cursor when iteration is
+	// exhausted. Count is a hint — actual page size may vary.
+	//
+	// All tokens are returned regardless of revocation or expiry status — the
+	// caller is responsible for filtering. A token issued with multiple
+	// audiences appears in the listing for each of its audience values —
+	// callers enumerating across multiple audiences should de-duplicate.
+	//
+	// Cursor semantics are best-effort and share the same guarantees as
+	// ListTokens. Returns ErrInvalidAudience if audience is empty. Returns the
+	// context error if the context is cancelled.
+	ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*RefreshToken, string, error)
+
 	// Namespace returns the namespace this store is operating in. For Redis-backed
 	// stores this matches the configured KeyPrefix. Implementations that do not
 	// support namespacing return empty string.

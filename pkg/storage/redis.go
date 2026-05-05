@@ -1265,6 +1265,10 @@ func (r *RedisRefreshStore) RevokeAllForUserAndAudience(ctx context.Context, use
 	return count, nil
 }
 
+func (r *RedisRefreshStore) ListTokensForAudience(_ context.Context, _ string, _ string, _ int) ([]*RefreshToken, string, error) {
+	return nil, "", errors.New("not implemented")
+}
+
 var _ RefreshStore = (*RedisRefreshStore)(nil)
 
 // Sentinel errors for RedisRefreshStore operations.
