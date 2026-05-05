@@ -18,4 +18,7 @@ const (
 
 	metricTokensListForUserTotal    = "jwtauth_tokens_list_for_user_total"
 	metricTokensListForUserDuration = "jwtauth_tokens_list_for_user_duration_seconds"
+
+	metricTokensListForAudienceTotal    = "jwtauth_tokens_list_for_audience_total"
+	metricTokensListForAudienceDuration = "jwtauth_tokens_list_for_audience_duration_seconds"
 )
