@@ -18,6 +18,8 @@ All notable changes to this project will be documented in this file.
 
 - **`storage.RefreshStore` gains `RevokeAllForAudience` and `RevokeAllForUserAndAudience`** — all custom `RefreshStore` implementations must add both methods or they will not compile. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. See #135 and `UPGRADING.md`.
 
+- **`storage.RefreshStore` gains `ListTokensForAudience(ctx, audience, cursor, count)`** — all custom `RefreshStore` implementations must add this method or they will not compile. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. Add a compile-time assertion to catch the gap early: `var _ storage.RefreshStore = (*MyStore)(nil)`. See #143 and `UPGRADING.md`.
+
 - **`jwtauth_tokens_revoked_total` label `operation` renamed to `revocation_scope`** — update any Prometheus alert rules, recording rules, or dashboards that filter or group by the old label name. Existing label values (`"single"`, `"all_user"`) are unchanged. See #124.
 
 ### Added
@@ -32,7 +34,13 @@ All notable changes to this project will be documented in this file.
 
 - **`tokens.Manager.RevokeAllForUserAndAudience(ctx, userID, audience) error`** — revokes all non-expired refresh tokens for a specific user and audience. Tokens for other users in the same audience are not affected. Emits `revocation_scope="user_audience"`. See #135.
 
-- **`storage.ErrInvalidAudience`** — sentinel returned when an empty string is passed as the audience argument to the new revocation methods. See #135.
+- **`storage.ErrInvalidAudience`** — sentinel returned when an empty string is passed as the audience argument to the new revocation or enumeration methods. See #135 and #143.
+
+- **`ListTokensForAudience(ctx, audience, cursor, count)` added to `RefreshStore` interface and both implementations** — audience-scoped cursor-based token iteration for the audit-before-revoke workflow. `MemoryRefreshStore` uses an integer offset cursor; `RedisRefreshStore` uses Redis SSCAN cursor passthrough on the `audience_tokens:<aud>` set, hydrating tokens via the existing `fetchTokensByIDs` pipeline helper. Returns `ErrInvalidAudience` if `audience` is empty. Tokens issued with multiple audiences appear in the listing for each of their audiences. All other cursor and filtering semantics are identical to `ListTokensForUser`. `MockRefreshStore` regenerated. See #143.
+
+- **`tokens.Manager.ListTokensForAudience(ctx, audience, cursor, count)`** — thin delegation to `RefreshStore.ListTokensForAudience`. Emits a `token.list_tokens_for_audience` span (attrs: `token.namespace`, `token.audience`, `token.cursor`, `token.count`, `token.result_count`), logs success and failure, and records `jwtauth_tokens_list_for_audience_total` counter and `jwtauth_tokens_list_for_audience_duration_seconds` histogram with `namespace` and `error_type` labels. See #143.
+
+- **4 additional Prometheus metrics registered in `PrometheusMetrics`** — storage-layer metrics (`jwtauth_storage_list_tokens_for_audience_total`, `jwtauth_storage_list_tokens_for_audience_duration_seconds`) and token-manager-layer metrics (`jwtauth_tokens_list_for_audience_total`, `jwtauth_tokens_list_for_audience_duration_seconds`); all carry `namespace` and `error_type` labels. See #143.
 
 ---
 

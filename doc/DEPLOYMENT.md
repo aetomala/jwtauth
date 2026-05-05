@@ -403,6 +403,18 @@ To enumerate tokens for a specific user, replace the first line of the loop body
 page, next, err := mgr.ListTokensForUser(ctx, userID, cursor, 100)
 ```
 
+To enumerate tokens scoped to a specific audience:
+
+```go
+page, next, err := mgr.ListTokensForAudience(ctx, "svc-payments", cursor, 100)
+```
+
+Tokens issued with multiple audiences (e.g. `WithAudience("svc-payments", "svc-reports")`) appear
+in the listing for **each** of their audiences — a token is not double-counted within a single
+audience listing, but it will appear once in the `svc-payments` listing and once in the
+`svc-reports` listing. The primary use case for `ListTokensForAudience` is the audit-before-revoke
+workflow described in [Audience-Scoped Revocation](#audience-scoped-revocation).
+
 `count` is a hint — the actual page size may vary. Cursor semantics are best-effort under
 concurrent mutation: tokens created or deleted between pages may appear, disappear, or shift.
 
@@ -445,6 +457,42 @@ correctly, so subsequent revocations target only live tokens.
 **Revocation scope metric** — both operations emit `revocation_scope` labels (`"audience"`
 and `"user_audience"`) on the `jwtauth_tokens_revoked_total` counter, consistent with the
 existing `"single"` and `"all_user"` scopes.
+
+### Audit before revoke
+
+`ListTokensForAudience` lets you enumerate the sessions that would be affected before
+committing to a revocation — useful for compliance logging, dry-run validation, or building
+a confirmation step into an admin workflow:
+
+```go
+// Enumerate active sessions for svc-payments.
+var cursor string
+for {
+    page, next, err := mgr.ListTokensForAudience(ctx, "svc-payments", cursor, 100)
+    if err != nil {
+        return err
+    }
+    for _, t := range page {
+        if t.ExpiresAt.After(time.Now()) {
+            log.Printf("will revoke token %s for user %s", t.TokenID, t.UserID)
+        }
+    }
+    if next == "" {
+        break
+    }
+    cursor = next
+}
+
+// Revoke all tokens for svc-payments.
+if err := mgr.RevokeAllForAudience(ctx, "svc-payments"); err != nil {
+    return err
+}
+```
+
+Tokens issued with multiple audiences (e.g. `WithAudience("svc-payments", "svc-reports")`)
+appear in the `ListTokensForAudience` listing for **each** of their audiences. The token is
+stored and revoked as a single record — appearing in multiple listings does not cause it to
+be revoked multiple times.
 
 ---
 
