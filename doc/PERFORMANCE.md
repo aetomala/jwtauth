@@ -111,15 +111,41 @@ All token manager benchmarks use `MemoryRefreshStore` for deterministic crypto i
 | `IssueAccessTokenWithClaims` — Small (2 fields) | 68,787 | 8,660 | 94 |
 | `IssueAccessTokenWithClaims` — Medium (10 fields) | 79,835 | 11,751 | 113 |
 | `IssueAccessTokenWithClaims` — Large (50 fields) | 106,376 | 30,066 | 202 |
-| `ValidateAccessToken` | 5,580 | 7,384 | 109 |
-| `ValidateAccessTokenWithClaims` | 7,116 | 11,752 | 194 |
+| `ValidateAccessToken` | 5,067 | 6,633 | 102 |
+| `ValidateAccessTokenWithClaims` | 6,140 | 9,840 | 159 |
 | `IssueTokenPair` | 69,436 | 8,612 | 90 |
 
-Issuance (~70–80 µs) is dominated by RSA 2048-bit signing. Validation (~5.6 µs) is PKCS#1
-v1.5 verification — roughly 14× faster than signing.
+Issuance (~70–80 µs) is dominated by RSA 2048-bit signing. Validation (~5.1 µs) is PKCS#1
+v1.5 verification — roughly 15× faster than signing.
 
 `WithAudience` adds no measurable overhead — the functional-option closure dispatch is
 noise relative to RSA signing cost.
+
+#### v0.5.0 Alloc Reduction — Issue #142
+
+Three-phase structural fix targeting the `ValidateAccessToken` / `ValidateAccessTokenWithClaims`
+hot path. All changes are in `pkg/tokens/manager.go`. No interface changes. Stdlib only.
+
+| Method | Before (v0.4.0) | After (v0.5.0) | Alloc Δ |
+|---|---|---|---|
+| `ValidateAccessToken` | 5,580 ns / 7,384 B / 109 allocs | 5,067 ns / 6,633 B / 102 allocs | −7 allocs (−6%) |
+| `ValidateAccessTokenWithClaims` | 7,116 ns / 11,752 B / 194 allocs | 6,140 ns / 9,840 B / 159 allocs | −35 allocs (−18%) |
+
+**Phase 1 (PR #169):** Hoisted `reservedJWTClaims` from a per-call map literal to a package-level
+`var`; changed `parseOpts` from an empty-slice literal to nil (saves a slice-header alloc when
+`ClockSkew` is zero); removed two `Debug` log calls on the critical path.
+
+**Phase 2 (PR #170):** Replaced `jwt.NewParser().ParseUnverified(tokenString, jwt.MapClaims{})` in
+`ValidateAccessTokenWithClaims` with direct payload extraction — `strings.SplitN` +
+`base64.RawURLEncoding.DecodeString` + `json.Unmarshal` into `map[string]json.RawMessage`. The
+signature is already verified by the preceding `ParseWithClaims` call; the second parse existed
+solely to extract raw claim values. Decoding into `json.RawMessage` defers per-value
+deserialization so the seven reserved keys are skipped before any boxing occurs.
+
+**Phase 3 (PR #171):** Added `validateCounterSuccessLabels` and `validateDurationLabels` fields to
+`Manager`, initialized once in `NewManager`. The `ValidateAccessToken` defer reuses the pre-built
+maps on the success path — fresh maps are allocated only on error paths, which are off the hot
+path.
 
 ### Token Lifecycle
 

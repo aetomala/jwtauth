@@ -44,6 +44,10 @@ All notable changes to this project will be documented in this file.
 
 - **Microbenchmark suite** — `testing.B` benchmarks in `pkg/storage/bench_test.go`, `pkg/keys/bench_test.go`, and `pkg/tokens/bench_test.go` covering all storage operations (MemoryRefreshStore + RedisRefreshStore via miniredis), key manager cache and rotation paths, token issuance and validation (serial and parallel), rotation-under-load concurrency, observability tax (NoOp vs PrometheusMetrics vs OtelTracer), and a baseline comparison against raw `golang-jwt/jwt`. Results and reproduction instructions in `doc/PERFORMANCE.md`. See #141.
 
+### Performance
+
+- **`ValidateAccessToken` and `ValidateAccessTokenWithClaims` hot-path alloc reduction** — three-phase structural optimization reduces `ValidateAccessToken` from 109 → 102 allocs/op (−7, −6%) and `ValidateAccessTokenWithClaims` from 194 → 159 allocs/op (−35, −18%). Changes are internal to `pkg/tokens/manager.go`: package-level `reservedJWTClaims` map (Phase 1, PR #169); direct base64+JSON payload extraction replacing a second `jwt.ParseUnverified` call (Phase 2, PR #170); pre-built metric label maps reused on the success path (Phase 3, PR #171). No interface changes. Stdlib only. See `doc/PERFORMANCE.md` and #142.
+
 ---
 
 ## [v0.4.0] — 2026-04-30
