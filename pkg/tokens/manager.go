@@ -1900,9 +1900,9 @@ func (m *Manager) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	status := "error"
 	defer func() {
 		m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
-			"operation": "single",
-			"status":    status,
-			"namespace":  m.namespace,
+			"revocation_scope": "single",
+			"status":           status,
+			"namespace":        m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "revoke_token",
@@ -1972,9 +1972,9 @@ func (m *Manager) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	status := "error"
 	defer func() {
 		m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
-			"operation": "all_user",
-			"status":    status,
-			"namespace":  m.namespace,
+			"revocation_scope": "all_user",
+			"status":           status,
+			"namespace":        m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "revoke_all_user_tokens",
