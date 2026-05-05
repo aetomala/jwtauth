@@ -1587,6 +1587,133 @@ var _ = Describe("TokenManager", func() {
 		})
 	})
 
+	// ==========================
+	// AUDIENCE TOKEN REVOCATION
+	// ==========================
+
+	Describe("RevokeAllForAudience", func() {
+		BeforeEach(func() {
+			service = newTestManager(mockKM, mockStore, mockLogger)
+
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should revoke all tokens for audience", func() {
+			mockStore.EXPECT().
+				RevokeAllForAudience(gomock.Any(), "svc-payments").
+				Return(3, nil).
+				Times(1)
+
+			err := service.RevokeAllForAudience(ctx, "svc-payments")
+
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should log bulk audience revocation", func() {
+			mockStore.EXPECT().RevokeAllForAudience(gomock.Any(), gomock.Any()).Return(3, nil)
+
+			service.RevokeAllForAudience(ctx, "svc-payments")
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "all refresh tokens revoked for audience")
+			}).Should(BeTrue())
+		})
+
+		It("should return wrapped error when store fails", func() {
+			mockStore.EXPECT().RevokeAllForAudience(gomock.Any(), "svc-payments").Return(0, errors.New("db error"))
+			err := service.RevokeAllForAudience(ctx, "svc-payments")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("db error"))
+		})
+
+		Context("guard conditions", func() {
+			It("should return ErrManagerNotRunning when manager is not running", func() {
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
+				err := mgr.RevokeAllForAudience(ctx, "svc-payments")
+				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
+			})
+
+			It("should return context error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				err := service.RevokeAllForAudience(cancelledCtx, "svc-payments")
+				Expect(err).To(Equal(context.Canceled))
+			})
+
+			It("should return ErrInvalidAudience for empty audience", func() {
+				err := service.RevokeAllForAudience(ctx, "")
+				Expect(err).To(Equal(storage.ErrInvalidAudience))
+			})
+		})
+	})
+
+	Describe("RevokeAllForUserAndAudience", func() {
+		BeforeEach(func() {
+			service = newTestManager(mockKM, mockStore, mockLogger)
+
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should revoke all tokens for user and audience", func() {
+			mockStore.EXPECT().
+				RevokeAllForUserAndAudience(gomock.Any(), testUserID, "svc-payments").
+				Return(2, nil).
+				Times(1)
+
+			err := service.RevokeAllForUserAndAudience(ctx, testUserID, "svc-payments")
+
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should log user+audience revocation", func() {
+			mockStore.EXPECT().RevokeAllForUserAndAudience(gomock.Any(), gomock.Any(), gomock.Any()).Return(2, nil)
+
+			service.RevokeAllForUserAndAudience(ctx, testUserID, "svc-payments")
+
+			Eventually(func() bool {
+				return mockLogger.HasLog("info", "all refresh tokens revoked for user and audience")
+			}).Should(BeTrue())
+		})
+
+		It("should return wrapped error when store fails", func() {
+			mockStore.EXPECT().RevokeAllForUserAndAudience(gomock.Any(), testUserID, "svc-payments").Return(0, errors.New("db error"))
+			err := service.RevokeAllForUserAndAudience(ctx, testUserID, "svc-payments")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("db error"))
+		})
+
+		Context("guard conditions", func() {
+			It("should return ErrManagerNotRunning when manager is not running", func() {
+				mgr := newTestManager(mockKM, mockStore, mockLogger)
+				err := mgr.RevokeAllForUserAndAudience(ctx, testUserID, "svc-payments")
+				Expect(err).To(Equal(tokens.ErrManagerNotRunning))
+			})
+
+			It("should return context error when context is cancelled", func() {
+				cancelledCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				err := service.RevokeAllForUserAndAudience(cancelledCtx, testUserID, "svc-payments")
+				Expect(err).To(Equal(context.Canceled))
+			})
+
+			It("should return ErrInvalidUserID for empty userID", func() {
+				err := service.RevokeAllForUserAndAudience(ctx, "", "svc-payments")
+				Expect(err).To(Equal(tokens.ErrInvalidUserID))
+			})
+
+			It("should return ErrInvalidAudience for empty audience", func() {
+				err := service.RevokeAllForUserAndAudience(ctx, testUserID, "")
+				Expect(err).To(Equal(storage.ErrInvalidAudience))
+			})
+		})
+	})
+
 	// ==================
 	// TOKEN INTROSPECTION
 	// ===================
