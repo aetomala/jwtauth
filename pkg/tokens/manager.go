@@ -12,7 +12,7 @@
 //   - Access token issuance (short-lived, typically 15 minutes)
 //   - Refresh token issuance and rotation (long-lived, typically 30 days)
 //   - Token validation with signature verification and claims enforcement
-//   - Instant revocation (RevokeRefreshToken, RevokeAllUserTokens)
+//   - Instant revocation (RevokeRefreshToken, RevokeAllUserTokens, RevokeAllForAudience, RevokeAllForUserAndAudience)
 //   - Token introspection per RFC 7662 (IntrospectToken)
 //   - Background cleanup of expired refresh tokens
 //   - Clock skew tolerance for distributed deployments (ClockSkew field)
@@ -2030,6 +2030,174 @@ func (m *Manager) RevokeAllUserTokens(ctx context.Context, userID string) error 
 	status = "success"
 	m.logger.Info("all refresh tokens revoked for user", ctx,
 		"userID", userID)
+	span.SetStatus(tracing.StatusOK, "")
+	return nil
+}
+
+// RevokeAllForAudience revokes every active refresh token that was issued with
+// the given audience value. Use this for service compromise scenarios — e.g., if
+// svc-payments credentials are leaked, revoke every token that can reach it.
+//
+// A token with multiple audiences is revoked globally, not per-audience — every
+// service the token could reach is invalidated when any one of its audiences is
+// targeted.
+//
+// Returns ErrManagerNotRunning, storage.ErrInvalidAudience for empty audience,
+// or the context error.
+func (m *Manager) RevokeAllForAudience(ctx context.Context, audience string) error {
+	ctx, span := m.startSpan(ctx, "RevokeAllForAudience")
+	defer span.End()
+
+	start := time.Now()
+	status := "error"
+	defer func() {
+		m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
+			"revocation_scope": "audience",
+			"status":           status,
+			"namespace":        m.namespace,
+		})
+		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			"operation": "revoke_all_for_audience",
+			"namespace": m.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Service State Check =====
+	if !m.isRunning.Load() {
+		status = "not_running"
+		m.logger.Warn("attempted to revoke audience tokens while service stopped", ctx)
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
+		return ErrManagerNotRunning
+	}
+
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		m.logger.Info("context cancelled during audience token revocation", ctx,
+			"error", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return err
+	}
+
+	// ===== STEP 3: Input Validation =====
+	if audience == "" {
+		status = "invalid_input"
+		m.logger.Warn("empty audience provided for revocation", ctx)
+		span.RecordError(storage.ErrInvalidAudience)
+		span.SetStatus(tracing.StatusError, storage.ErrInvalidAudience.Error())
+		return storage.ErrInvalidAudience
+	}
+
+	span.SetAttribute("audience", audience)
+
+	// ===== STEP 4: Revoke All Tokens For Audience =====
+	// storage.ErrInvalidAudience cannot surface here — audience is validated above.
+	n, err := m.refreshStore.RevokeAllForAudience(ctx, audience)
+	if err != nil {
+		m.logger.Error("failed to revoke all audience tokens", ctx,
+			"audience", audience,
+			"error", err)
+		wrapped := fmt.Errorf("failed to revoke all audience tokens: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return wrapped
+	}
+
+	// ===== STEP 5: Record Success and Log =====
+	status = "success"
+	m.logger.Info("all refresh tokens revoked for audience", ctx,
+		"audience", audience, "count", n)
+	span.SetStatus(tracing.StatusOK, "")
+	return nil
+}
+
+// RevokeAllForUserAndAudience revokes every active refresh token belonging to
+// userID that was issued with the given audience value. Use this for targeted
+// revocation — e.g., revoking one user's access to a specific service without
+// affecting other users or the user's tokens for other services.
+//
+// Revocation is global — a token with multiple audiences is revoked completely,
+// not just for the targeted audience. See RevokeAllForAudience for details.
+//
+// Returns ErrManagerNotRunning, ErrInvalidUserID for empty userID,
+// storage.ErrInvalidAudience for empty audience, or the context error.
+func (m *Manager) RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) error {
+	ctx, span := m.startSpan(ctx, "RevokeAllForUserAndAudience")
+	defer span.End()
+
+	start := time.Now()
+	status := "error"
+	defer func() {
+		m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
+			"revocation_scope": "user_audience",
+			"status":           status,
+			"namespace":        m.namespace,
+		})
+		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
+			"operation": "revoke_all_for_user_and_audience",
+			"namespace": m.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Service State Check =====
+	if !m.isRunning.Load() {
+		status = "not_running"
+		m.logger.Warn("attempted to revoke user+audience tokens while service stopped", ctx)
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
+		return ErrManagerNotRunning
+	}
+
+	// ===== STEP 2: Context Check =====
+	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		m.logger.Info("context cancelled during user+audience token revocation", ctx,
+			"error", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return err
+	}
+
+	// ===== STEP 3: Input Validation =====
+	if userID == "" {
+		status = "invalid_input"
+		m.logger.Warn("empty user ID provided for user+audience revocation", ctx)
+		span.RecordError(ErrInvalidUserID)
+		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
+		return ErrInvalidUserID
+	}
+	if audience == "" {
+		status = "invalid_input"
+		m.logger.Warn("empty audience provided for user+audience revocation", ctx)
+		span.RecordError(storage.ErrInvalidAudience)
+		span.SetStatus(tracing.StatusError, storage.ErrInvalidAudience.Error())
+		return storage.ErrInvalidAudience
+	}
+
+	span.SetAttribute("user_id", userID)
+	span.SetAttribute("audience", audience)
+
+	// ===== STEP 4: Revoke All Tokens For User and Audience =====
+	// storage.ErrInvalidUserID and storage.ErrInvalidAudience cannot surface here —
+	// both inputs are validated above before this call.
+	n, err := m.refreshStore.RevokeAllForUserAndAudience(ctx, userID, audience)
+	if err != nil {
+		m.logger.Error("failed to revoke all user+audience tokens", ctx,
+			"userID", userID,
+			"audience", audience,
+			"error", err)
+		wrapped := fmt.Errorf("failed to revoke all user+audience tokens: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return wrapped
+	}
+
+	// ===== STEP 5: Record Success and Log =====
+	status = "success"
+	m.logger.Info("all refresh tokens revoked for user and audience", ctx,
+		"userID", userID, "audience", audience, "count", n)
 	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
