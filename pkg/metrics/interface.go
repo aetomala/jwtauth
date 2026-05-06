@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Generate mock from this interface using mockgen
 //go:generate mockgen -source=interface.go -destination=../../internal/testutil/mock_metrics.go -package=testutil -mock_names=Metrics=MockMetrics
 

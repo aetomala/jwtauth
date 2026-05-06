@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // correlation-example demonstrates end-to-end correlation ID support using only
 // the standard library. Every log line produced during a request carries the
 // same correlation_id, making production log filtering trivial:

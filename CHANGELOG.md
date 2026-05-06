@@ -44,6 +44,10 @@ All notable changes to this project will be documented in this file.
 
 - **Microbenchmark suite** — `testing.B` benchmarks in `pkg/storage/bench_test.go`, `pkg/keys/bench_test.go`, and `pkg/tokens/bench_test.go` covering all storage operations (MemoryRefreshStore + RedisRefreshStore via miniredis), key manager cache and rotation paths, token issuance and validation (serial and parallel), rotation-under-load concurrency, observability tax (NoOp vs PrometheusMetrics vs OtelTracer), and a baseline comparison against raw `golang-jwt/jwt`. Results and reproduction instructions in `doc/PERFORMANCE.md`. See #141.
 
+### Chore
+
+- **Apache 2.0 SPDX license headers added to all Go source files** — every `.go` file under `pkg/`, `internal/`, and `examples/` now carries a 3-line header (`Copyright 2026 Angel Tomala-Reyes` + `SPDX-License-Identifier: Apache-2.0`). `goheader` added to `.golangci.yml` to enforce headers on new files going forward. See #144.
+
 ### Documentation
 
 - **`SECURITY.md` created** — vulnerability disclosure policy at the repo root: supported versions table, private advisory reporting flow via GitHub Security Advisories, coordinated disclosure policy, in-scope / out-of-scope matrix (rate limiting and middleware explicitly out of scope), and an ADR reference table for all security-relevant design decisions. See #133.

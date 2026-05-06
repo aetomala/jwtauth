@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Package keys provides zero-downtime RSA key rotation for JWT signing.
 //
 // KeyManager generates RSA key pairs, rotates them on a configurable schedule, and

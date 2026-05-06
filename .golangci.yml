@@ -3,10 +3,16 @@ linters:
   default: none
   enable:
     - errcheck
+    - goheader
     - govet
     - ineffassign
     - staticcheck
   settings:
+    goheader:
+      template: |-
+        Copyright 2026 Angel Tomala-Reyes
+
+        SPDX-License-Identifier: Apache-2.0
     errcheck:
       check-type-assertions: false
       exclude-functions:

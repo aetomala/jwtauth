@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package keys
 
 // Metric names for KeyStore operations. Both DiskKeyStore and any future
