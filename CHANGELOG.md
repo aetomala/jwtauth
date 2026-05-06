@@ -44,6 +44,14 @@ All notable changes to this project will be documented in this file.
 
 - **Microbenchmark suite** — `testing.B` benchmarks in `pkg/storage/bench_test.go`, `pkg/keys/bench_test.go`, and `pkg/tokens/bench_test.go` covering all storage operations (MemoryRefreshStore + RedisRefreshStore via miniredis), key manager cache and rotation paths, token issuance and validation (serial and parallel), rotation-under-load concurrency, observability tax (NoOp vs PrometheusMetrics vs OtelTracer), and a baseline comparison against raw `golang-jwt/jwt`. Results and reproduction instructions in `doc/PERFORMANCE.md`. See #141.
 
+### Documentation
+
+- **Redis Security Hardening guide** added to `doc/DEPLOYMENT.md` — TLS configuration via `tls.Config`, AUTH/ACL credentials via environment variables, minimum ACL command sets for `RedisKeyStore` and `RedisRefreshStore`, and network isolation guidance for Kubernetes, bare-metal, and managed Redis deployments. See #131.
+
+- **Custom Claims Validation section** added to `doc/DEPLOYMENT.md` — documents that jwtauth validates token structure and standard claims but does not validate custom claim values; includes a type-assert and range-check example plus a common-pitfalls table. A corresponding callout added to `README.md`. See #132.
+
+- **Rate Limiting section extended** in `doc/DEPLOYMENT.md` — adds a recommended starting-values table (token issuance 10 req/min, refresh 30 req/min, revocation 20 req/min, internal validation 1 000 req/min) and gateway configuration references for Kong, NGINX Ingress, and AWS API Gateway. See #134.
+
 ### Performance
 
 - **`ValidateAccessToken` and `ValidateAccessTokenWithClaims` hot-path alloc reduction** — three-phase structural optimization reduces `ValidateAccessToken` from 109 → 102 allocs/op (−7, −6%) and `ValidateAccessTokenWithClaims` from 194 → 159 allocs/op (−35, −18%). Changes are internal to `pkg/tokens/manager.go`: package-level `reservedJWTClaims` map (Phase 1, PR #169); direct base64+JSON payload extraction replacing a second `jwt.ParseUnverified` call (Phase 2, PR #170); pre-built metric label maps reused on the success path (Phase 3, PR #171). No interface changes. Stdlib only. See `doc/PERFORMANCE.md` and #142.

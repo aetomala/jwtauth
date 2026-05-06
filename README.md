@@ -577,6 +577,11 @@ func main() {
 }
 ```
 
+> **Validation responsibility**: `ValidateAccessTokenWithClaims` validates token structure,
+> signature, and standard claims. It does not validate custom claim values — type-assert and
+> range-check every claim before use. See
+> [Custom Claims Validation](doc/DEPLOYMENT.md#custom-claims-validation) in the Deployment Guide.
+
 **Key Features**:
 - ✅ Automatic lifecycle management (Start/Shutdown)
 - ✅ Service state checking (IsRunning) ensures tokens only issue when running
