@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Package tokens provides stateful JWT authorization token management.
 //
 // Manager handles the complete token lifecycle: access token issuance with

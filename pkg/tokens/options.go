@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package tokens
 
 // IssueOption configures per-call behaviour of token issuing methods.
