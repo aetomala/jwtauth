@@ -387,6 +387,93 @@ these patterns when writing Redis ACL rules or verifying namespace isolation wit
 
 ---
 
+## Redis Security Hardening
+
+jwtauth delegates all Redis I/O to the `go-redis` client — any security options supported by
+that client apply directly to `RedisKeyStore` and `RedisRefreshStore`.
+
+### TLS
+
+Pass a `tls.Config` via `redis.Options.TLSConfig` to enforce encrypted transport:
+
+```go
+import (
+    "crypto/tls"
+    "crypto/x509"
+    "os"
+)
+
+caCert, _ := os.ReadFile("/etc/ssl/redis-ca.crt")
+pool := x509.NewCertPool()
+pool.AppendCertsFromPEM(caCert)
+
+redisClient := redis.NewClient(&redis.Options{
+    Addr: os.Getenv("REDIS_ADDR"),
+    TLSConfig: &tls.Config{
+        RootCAs:    pool,
+        MinVersion: tls.VersionTLS12,
+    },
+})
+```
+
+Do not set `InsecureSkipVerify: true` in production — it defeats TLS certificate validation.
+
+### Authentication
+
+Pass credentials via environment variables — never hardcode them:
+
+```go
+redisClient := redis.NewClient(&redis.Options{
+    Addr:     os.Getenv("REDIS_ADDR"),
+    Password: os.Getenv("REDIS_PASSWORD"), // Redis AUTH or ACL password
+    Username: os.Getenv("REDIS_USERNAME"), // Required for Redis 6+ ACL users
+})
+```
+
+### ACL Minimum Command Sets
+
+Redis 6+ ACLs allow a least-privilege user per store type. The minimum command sets required
+by jwtauth are:
+
+**`RedisKeyStore`** — RSA key persistence:
+```
+ACL SETUSER jwtauth-keys on ><password>
+  ~<prefix>ks:pem:*
+  ~<prefix>ks:meta:*
+  +GET +SET +DEL +SCAN
+  +PING
+```
+
+**`RedisRefreshStore`** — refresh token lifecycle:
+```
+ACL SETUSER jwtauth-tokens on ><password>
+  ~<prefix>tokens:*
+  ~<prefix>user_tokens:*
+  ~<prefix>audience_tokens:*
+  ~<prefix>audience_user_tokens:*
+  +HSET +HGET +HGETALL +HDEL
+  +SADD +SREM +SMEMBERS +SSCAN
+  +DEL +EXISTS +EXPIRE +SCAN
+  +PING
+```
+
+Replace `<prefix>` with your configured `KeyPrefix` value (e.g. `myapp:`). An empty
+`KeyPrefix` uses no prefix — set the key pattern to `~*` and tighten it after deploying
+with namespace isolation enabled.
+
+### Network Isolation
+
+Bind Redis to a private network interface — never expose it on a public address:
+
+- **Kubernetes**: deploy Redis in the same namespace or use a `NetworkPolicy` that restricts
+  ingress to your service pods only.
+- **VMs / bare-metal**: bind to `127.0.0.1` or a private VLAN; use a firewall rule to allow
+  only application host IPs.
+- **Managed Redis** (Elasticache, MemoryDB, Redis Cloud): enable VPC-only access and disable
+  public endpoints.
+
+---
+
 ## Token Enumeration
 
 `ListTokens` and `ListTokensForUser` expose the full token inventory in the `RefreshStore`
@@ -530,6 +617,50 @@ See [ADR-008](adr/008-reserved-claims-at-issuance.md).
 
 ---
 
+## Custom Claims Validation
+
+jwtauth validates token structure, signature, and standard claims (`alg`, `kid`, `iss`, `aud`,
+`exp`, `nbf`) but does **not** validate the values of custom claims. That responsibility belongs
+to the caller.
+
+After a successful `ValidateAccessToken` or `ValidateAccessTokenWithClaims`, you must:
+
+1. **Type-assert** each custom claim before use — the underlying type is `interface{}`, and a
+   missing or malformed claim will panic if asserted without a check.
+2. **Range-check** values — the library cannot know your application's constraints.
+
+```go
+_, custom, err := mgr.ValidateAccessTokenWithClaims(ctx, rawToken)
+if err != nil {
+    return err
+}
+
+// Type-assert before use — never assume the claim exists or has the expected type.
+role, ok := custom["role"].(string)
+if !ok || role == "" {
+    return errors.New("missing or invalid role claim")
+}
+
+// Range-check against your application's allowed values.
+if role != "admin" && role != "editor" && role != "viewer" {
+    return fmt.Errorf("unrecognized role: %q", role)
+}
+```
+
+**Common pitfalls**:
+
+| Mistake | Consequence |
+|---------|-------------|
+| `claims.CustomClaims["role"].(string)` without the `, ok` form | Panics if the claim is absent or the wrong type |
+| Accepting any non-empty string without an allowlist check | Privilege escalation if a token carries an unexpected role value |
+| Not checking whether `claims.CustomClaims` is nil | Panics if no custom claims were set at issuance |
+
+The reserved-claim guard (see [Reserved Claims](#reserved-claims)) prevents overwriting `sub`,
+`iss`, `aud`, `exp`, `nbf`, `iat`, and `jti` at issuance — it does not validate custom claim
+values at validation time.
+
+---
+
 ## ClockSkew Tuning
 
 In distributed deployments, servers may have slight clock drift. `ClockSkew` adds leeway to `exp` and `nbf` validation without inflating token lifetimes:
@@ -576,6 +707,25 @@ Rate limiting is a deployment concern, not a library concern. Apply it at the la
 - **Application middleware** — only for single-instance deployments or when gateway-level limiting is unavailable
 
 `jwtauth` intentionally does not include rate limiting — building it in would force per-instance counters (incorrect for distributed deployments) and an opinionated policy on users who already have gateway infrastructure.
+
+### Recommended Starting Values
+
+These are conservative starting points — tune based on observed traffic and SLOs.
+
+| Endpoint | Limit | Rationale |
+|----------|-------|-----------|
+| `POST /login` (token issuance) | 10 req/min per IP | Brute-force protection |
+| `POST /refresh` (token refresh) | 30 req/min per IP | Normal session activity |
+| `POST /revoke` | 20 req/min per user | Prevent revocation-flood DoS |
+| Internal validation (service-to-service) | 1 000 req/min per service | High-frequency, low-cost operation |
+
+Observe p99 latency and error rates for the first week in production before tightening or relaxing these limits.
+
+### Gateway Configuration References
+
+- **Kong**: [Rate Limiting plugin](https://docs.konghq.com/hub/kong-inc/rate-limiting/) — supports Redis-backed shared counters for multi-instance deployments
+- **NGINX Ingress**: [`nginx.ingress.kubernetes.io/limit-rps`](https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#rate-limiting) annotation
+- **AWS API Gateway**: [Usage Plans and API Keys](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-api-usage-plans.html)
 
 ---
 
