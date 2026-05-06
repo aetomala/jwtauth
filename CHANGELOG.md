@@ -46,6 +46,8 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+- **`SECURITY.md` created** — vulnerability disclosure policy at the repo root: supported versions table, private advisory reporting flow via GitHub Security Advisories, coordinated disclosure policy, in-scope / out-of-scope matrix (rate limiting and middleware explicitly out of scope), and an ADR reference table for all security-relevant design decisions. See #133.
+
 - **Redis Security Hardening guide** added to `doc/DEPLOYMENT.md` — TLS configuration via `tls.Config`, AUTH/ACL credentials via environment variables, minimum ACL command sets for `RedisKeyStore` and `RedisRefreshStore`, and network isolation guidance for Kubernetes, bare-metal, and managed Redis deployments. See #131.
 
 - **Custom Claims Validation section** added to `doc/DEPLOYMENT.md` — documents that jwtauth validates token structure and standard claims but does not validate custom claim values; includes a type-assert and range-check example plus a common-pitfalls table. A corresponding callout added to `README.md`. See #132.
