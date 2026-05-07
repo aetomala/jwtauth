@@ -248,6 +248,7 @@ var _ = Describe("TokenManager Metrics", func() {
 			}
 			mockStore.EXPECT().Retrieve(gomock.Any(), "rt-1").Return(storedToken, nil)
 			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+			mockStore.EXPECT().Revoke(gomock.Any(), "rt-1").Return(nil)
 			// IssueAccessToken metrics (called internally by RefreshAccessToken)
 			mockM.EXPECT().IncrementCounter("jwtauth_tokens_issued_total", gomock.Any())
 			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{

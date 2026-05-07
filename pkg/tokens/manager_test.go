@@ -1162,6 +1162,7 @@ var _ = Describe("TokenManager", func() {
 
 				// Expect new access token signed
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(nil)
 
 				accessToken, err := service.RefreshAccessToken(ctx, validRefreshToken)
 
@@ -1176,6 +1177,7 @@ var _ = Describe("TokenManager", func() {
 					Times(1)
 
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(nil)
 
 				service.RefreshAccessToken(ctx, validRefreshToken)
 			})
@@ -1183,6 +1185,7 @@ var _ = Describe("TokenManager", func() {
 			It("should preserve user ID from refresh token", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(nil)
 
 				accessToken, _ := service.RefreshAccessToken(ctx, validRefreshToken)
 
@@ -1193,12 +1196,36 @@ var _ = Describe("TokenManager", func() {
 			It("should log refresh operation", func() {
 				mockStore.EXPECT().Retrieve(gomock.Any(), gomock.Any()).Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(1 * time.Hour)}, nil)
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(nil)
 
 				service.RefreshAccessToken(ctx, validRefreshToken)
 
 				Eventually(func() bool {
 					return mockLogger.HasLog("info", "access token refreshed")
 				}).Should(BeTrue())
+			})
+
+			It("should revoke the old refresh token after issuing a new access token", func() {
+				mockStore.EXPECT().
+					Retrieve(gomock.Any(), validRefreshToken).
+					Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour)}, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(nil).Times(1)
+
+				_, err := service.RefreshAccessToken(ctx, validRefreshToken)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should still return the new access token when old token revocation fails", func() {
+				mockStore.EXPECT().
+					Retrieve(gomock.Any(), validRefreshToken).
+					Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour)}, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(errors.New("store unavailable"))
+
+				accessToken, err := service.RefreshAccessToken(ctx, validRefreshToken)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(accessToken).NotTo(BeEmpty())
 			})
 		})
 
@@ -1313,6 +1340,7 @@ var _ = Describe("TokenManager", func() {
 						ExpiresAt: time.Now().Add(time.Hour),
 					}, nil)
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(nil)
 
 				accessToken, err := service.RefreshAccessTokenWithClaims(ctx, validRefreshToken, claims)
 				Expect(err).NotTo(HaveOccurred())
@@ -1333,6 +1361,7 @@ var _ = Describe("TokenManager", func() {
 						ExpiresAt: time.Now().Add(time.Hour),
 					}, nil)
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(nil)
 
 				accessToken, err := service.RefreshAccessTokenWithClaims(ctx, validRefreshToken, nil)
 				Expect(err).NotTo(HaveOccurred())
@@ -1348,12 +1377,36 @@ var _ = Describe("TokenManager", func() {
 					ExpiresAt: time.Now().Add(time.Hour),
 				}, nil)
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(nil)
 
 				service.RefreshAccessTokenWithClaims(ctx, validRefreshToken, nil)
 
 				Eventually(func() bool {
 					return mockLogger.HasLog("info", "access token refreshed with claims")
 				}).Should(BeTrue())
+			})
+
+			It("should revoke the old refresh token after issuing a new access token", func() {
+				mockStore.EXPECT().
+					Retrieve(gomock.Any(), validRefreshToken).
+					Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour)}, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(nil).Times(1)
+
+				_, err := service.RefreshAccessTokenWithClaims(ctx, validRefreshToken, nil)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should still return the new access token when old token revocation fails", func() {
+				mockStore.EXPECT().
+					Retrieve(gomock.Any(), validRefreshToken).
+					Return(&storage.RefreshToken{UserID: testUserID, ExpiresAt: time.Now().Add(time.Hour)}, nil)
+				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), validRefreshToken).Return(errors.New("store unavailable"))
+
+				accessToken, err := service.RefreshAccessTokenWithClaims(ctx, validRefreshToken, nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(accessToken).NotTo(BeEmpty())
 			})
 		})
 
@@ -2302,6 +2355,7 @@ var _ = Describe("TokenManager", func() {
 					ExpiresAt: time.Now().Add(1 * time.Hour),
 				}, nil)
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), "tok").Return(nil)
 
 				accessToken, err := service.RefreshAccessToken(ctx, "tok")
 
@@ -2320,6 +2374,7 @@ var _ = Describe("TokenManager", func() {
 					ExpiresAt: time.Now().Add(1 * time.Hour),
 				}, nil)
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), "tok").Return(nil)
 
 				accessToken, err := service.RefreshAccessToken(ctx, "tok")
 
@@ -2351,6 +2406,7 @@ var _ = Describe("TokenManager", func() {
 					ExpiresAt: time.Now().Add(1 * time.Hour),
 				}, nil)
 				mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+				mockStore.EXPECT().Revoke(gomock.Any(), "tok").Return(nil)
 
 				accessToken, err := service.RefreshAccessTokenWithClaims(ctx, "tok", nil)
 
@@ -2722,6 +2778,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			}
 			mockStore.EXPECT().Retrieve(gomock.Any(), refreshTok).Return(record, nil)
 			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+			mockStore.EXPECT().Revoke(gomock.Any(), refreshTok).Return(nil)
 
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.RefreshAccessToken"), gomock.Any()).Return(ctx, testSpan)
 			// IssueAccessToken is called internally — route to setupSpan to avoid expectation conflicts.
@@ -2800,6 +2857,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			}
 			mockStore.EXPECT().Retrieve(gomock.Any(), refreshTok).Return(record, nil)
 			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+			mockStore.EXPECT().Revoke(gomock.Any(), refreshTok).Return(nil)
 
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.RefreshAccessTokenWithClaims"), gomock.Any()).Return(ctx, testSpan)
 			// IssueAccessTokenWithClaims is called internally — route to setupSpan to avoid expectation conflicts.
