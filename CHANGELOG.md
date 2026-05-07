@@ -44,6 +44,14 @@ All notable changes to this project will be documented in this file.
 
 - **Microbenchmark suite** — `testing.B` benchmarks in `pkg/storage/bench_test.go`, `pkg/keys/bench_test.go`, and `pkg/tokens/bench_test.go` covering all storage operations (MemoryRefreshStore + RedisRefreshStore via miniredis), key manager cache and rotation paths, token issuance and validation (serial and parallel), rotation-under-load concurrency, observability tax (NoOp vs PrometheusMetrics vs OtelTracer), and a baseline comparison against raw `golang-jwt/jwt`. Results and reproduction instructions in `doc/PERFORMANCE.md`. See #141.
 
+### Fixed
+
+- **`tokens.ErrTokenMissingKid` exported sentinel** — `ValidateAccessToken` previously returned an inline `errors.New(...)` when the JWT header lacked a `kid` field, making the missing-kid case indistinguishable from generic `ErrInvalidToken` via `errors.Is`. The sentinel is now exported and surfaced directly so middleware can return a precise 401 payload. `ValidateAccessTokenWithClaims` inherits the fix by delegation. See #178.
+
+- **`cleanupExpiredKeys` current-key guard covered by spec** — the guard that prevents the active signing key from being deleted during a cleanup sweep was already implemented (`if keyID == m.currentKeyID { continue }`) but had no test coverage. A new Phase 12 spec in the KeyManager suite verifies the guard using a `CleanupExpiredKeysForTest` test export that triggers the sweep synchronously. See #179.
+
+- **`jti` claim switched to UUID v4** — `generateTokenID()` previously used `crypto/rand` + `base64.RawURLEncoding` to produce a 22-character base64url string. It now returns `uuid.New().String()` (36-character UUID v4), aligning `jti` with the `kid` format and making the implementation match what ADR-005 already documents. No interface changes; no new module dependencies. See #196.
+
 ### Chore
 
 - **Apache 2.0 SPDX license headers added to all Go source files** — every `.go` file under `pkg/`, `internal/`, and `examples/` now carries a 3-line header (`Copyright 2026 Angel Tomala-Reyes` + `SPDX-License-Identifier: Apache-2.0`). `goheader` added to `.golangci.yml` to enforce headers on new files going forward. See #144.
