@@ -89,7 +89,7 @@ Build what's needed now:
 | Package | Purpose | Status |
 |---------|---------|--------|
 | `pkg/keys` | Cryptographic key lifecycle, rotation, JWKS generation | ✅ Stable |
-| `pkg/tokens` | JWT token issuance and validation | 🟡 Beta |
+| `pkg/tokens` | JWT token issuance and validation | ✅ Stable |
 | `pkg/storage` | Refresh token storage — memory and Redis backends | ✅ Stable |
 | `pkg/logging` | Logging abstraction with slog adapter | ✅ Stable |
 | `pkg/metrics` | Metrics abstraction with Prometheus implementation | ✅ Stable |
@@ -98,7 +98,6 @@ Build what's needed now:
 `internal/testutil` holds shared mocks and test utilities — not part of the public API.
 
 > ✅ **Stable** — no breaking changes planned before v1.0.
-> 🟡 **Beta** — core operations complete; API may change before v1.0.
 
 ---
 
@@ -118,7 +117,7 @@ graph TB
             L[Logging] ~~~ M[Metrics] ~~~ T[Tracing]
         end
         subgraph comp["Component Layer"]
-            KM[KeyManager] ~~~ TK[Tokens] ~~~ ST[Storage]
+            KM[KeyManager] ~~~ TK[TokenManager] ~~~ ST[RefreshTokenStore]
         end
     end
     L -- signals --> slog["slog · Zap · Zerolog"]
@@ -242,6 +241,8 @@ type Metrics interface {
 | `jwtauth_tokens_list_duration_seconds` | Histogram | namespace |
 | `jwtauth_tokens_list_for_user_total` | Counter | namespace, error_type |
 | `jwtauth_tokens_list_for_user_duration_seconds` | Histogram | namespace |
+| `jwtauth_tokens_list_for_audience_total` | Counter | namespace, error_type |
+| `jwtauth_tokens_list_for_audience_duration_seconds` | Histogram | namespace |
 | `jwtauth_operations_total` | Counter | operation, status |
 | `jwtauth_operation_duration_seconds` | Histogram | operation |
 | `jwtauth_active_tokens` | Gauge | storage_backend |
@@ -254,6 +255,8 @@ type Metrics interface {
 | `jwtauth_storage_list_tokens_duration_seconds` | Histogram | storage_backend, namespace |
 | `jwtauth_storage_list_tokens_for_user_total` | Counter | storage_backend, namespace, error_type |
 | `jwtauth_storage_list_tokens_for_user_duration_seconds` | Histogram | storage_backend, namespace |
+| `jwtauth_storage_list_tokens_for_audience_total` | Counter | storage_backend, namespace, error_type |
+| `jwtauth_storage_list_tokens_for_audience_duration_seconds` | Histogram | storage_backend, namespace |
 | `jwtauth_keystore_operations_total` | Counter | operation, status, error_type, storage_backend |
 | `jwtauth_keystore_operation_duration_seconds` | Histogram | operation, storage_backend |
 | `jwtauth_keystore_keys_count` | Gauge | storage_backend |
@@ -550,7 +553,7 @@ Use cases:
 
 `SetGauge(jwtauth_keystore_keys_count)` is recorded only by `LoadAll` — set to the count of valid non-expired keys returned. This is sufficient because `GetCurrentSigningKey` never calls the store after startup and `GetPublicKey` only calls `LoadKey` on rare cache misses, so KeyStore operations are not on the hot path.
 
-### TokenManager (Beta)
+### TokenManager
 
 **Responsibilities**:
 - Issue access tokens (short-lived, e.g., 15 minutes) with optional custom claims
@@ -559,6 +562,10 @@ Use cases:
 - Validate access tokens (signature, expiration, issuer, audience)
 - Rotate tokens via refresh flow with expiration and revocation checks
 - Revoke single or all tokens for a user
+- Issue tokens targeting a specific audience per-call via `WithAudience` `IssueOption`
+- Revoke all tokens for a given audience (`RevokeAllForAudience`)
+- Revoke all tokens for a specific user and audience (`RevokeAllForUserAndAudience`)
+- Enumerate tokens by audience via cursor-based pagination (`ListTokensForAudience`)
 - Introspect token status per RFC 7662
 - Sign tokens with current key from KeyManager
 
@@ -577,15 +584,16 @@ Created → Start() → Running → Shutdown() → Stopped
 **Key Design Decisions**:
 - Rate limiting is intentionally **not** in TokenManager — it belongs at the infrastructure layer (API Gateway, Ingress, Load Balancer) where per-route and per-IP policies apply globally
 - All storage operations accept `context.Context` for cancellation propagation
-- Reserved JWT claims (`sub`, `iss`, `aud`, `exp`, `iat`, `jti`) cannot be overridden by custom claims
+- Reserved JWT claims (`sub`, `iss`, `aud`, `exp`, `iat`, `nbf`, `jti`) cannot be overridden by custom claims; per-call audience targeting uses `WithAudience(...string) IssueOption` on all six issuance methods
+- `ErrTokenMissingKid` — exported sentinel returned by `ValidateAccessToken` when the JWT header lacks a `kid` field; distinguishable from generic `ErrInvalidToken` via `errors.Is`
 
 ### RefreshTokenStore
 
 **Responsibilities**:
 - Store refresh tokens with expiration and revocation tracking
 - Retrieve tokens with validation checks (expiry, revocation)
-- Revoke individual or bulk tokens (by userID)
-- Enumerate all tokens or tokens for a specific user via cursor-based pagination (`ListTokens`, `ListTokensForUser`)
+- Revoke individual or bulk tokens (by userID, audience, or user+audience)
+- Enumerate all tokens or tokens for a specific user or audience via cursor-based pagination (`ListTokens`, `ListTokensForUser`, `ListTokensForAudience`)
 - Clean up expired tokens
 - Maintain lookups optimized for each implementation
 
@@ -596,18 +604,21 @@ Created → Start() → Running → Shutdown() → Stopped
 **Design**:
 ```go
 type MemoryRefreshStore struct {
-    mu         sync.RWMutex             // Thread safety
-    tokens     map[string]*RefreshToken // tokenID → token
-    userTokens map[string][]string      // userID → []tokenID (for bulk ops)
-    logger     logging.Logger           // never nil; defaults to NoOpLogger
-    metrics    metrics.Metrics          // never nil; defaults to NoOpMetrics
-    backend    string                   // storage_backend label value; always "memory"
+    mu              sync.RWMutex               // Thread safety
+    tokens          map[string]*RefreshToken   // tokenID → token
+    userTokens      map[string][]string        // userID → []tokenID (for bulk ops)
+    audienceTokens  map[string][]string        // audience → []tokenID (for audience ops)
+    logger          logging.Logger             // never nil; defaults to NoOpLogger
+    metrics         metrics.Metrics            // never nil; defaults to NoOpMetrics
+    tracer          tracing.Tracer             // never nil; defaults to NoOpTracer
+    namespace       string                     // observability label; empty disables labeling
+    backend         string                     // storage_backend label value; always "memory"
 }
 ```
 
 **Key Features**:
-- **Dual-index data structure**: `tokens` map for O(1) lookup, `userTokens` slice for O(1) bulk revocation and insertion-order enumeration
-- **Cursor-based enumeration**: `ListTokens` iterates all tokens; `ListTokensForUser` iterates a single user's tokens — both use integer offsets as cursors for stable, allocation-free pagination
+- **Triple-index data structure**: `tokens` for O(1) lookup, `userTokens` for user-scoped bulk revocation and enumeration, `audienceTokens` for audience-scoped revocation and enumeration
+- **Cursor-based enumeration**: `ListTokens` iterates all tokens; `ListTokensForUser` iterates a single user's tokens; `ListTokensForAudience` iterates an audience's tokens — all use integer offsets as cursors for stable, allocation-free pagination
 - **Defensive copying**: Metadata and token structs isolated from caller mutations
 - **RWMutex locking**: RLock for Retrieve and listing (concurrent reads), Lock for mutations
 - **Idempotent operations**: Revoke returns nil if token doesn't exist
@@ -669,9 +680,10 @@ All four patterns are prepended with `RedisRefreshStoreConfig.KeyPrefix` at cons
 
 | Aspect | Details |
 |--------|---------|
-| **Error Handling** | `ErrInvalidTokenID` / `ErrInvalidUserID`, `ErrInvalidCursor`, `ErrTokenNotFound`, `ErrTokenExpired`, `ErrTokenRevoked` |
+| **Error Handling** | `ErrInvalidTokenID` / `ErrInvalidUserID`, `ErrInvalidCursor`, `ErrInvalidAudience`, `ErrTokenNotFound`, `ErrTokenExpired`, `ErrTokenRevoked` |
 | **Validation** | Empty/whitespace input rejection, expiry checks, revocation checks |
-| **Enumeration** | `ListTokens(ctx, cursor, count)` for global iteration; `ListTokensForUser(ctx, userID, cursor, count)` for user-scoped iteration — both use best-effort cursors; pass `""` to start from the beginning |
+| **Revocation** | `RevokeToken` (single), `RevokeAllForUser` (user-scoped), `RevokeAllForAudience` (audience-scoped), `RevokeAllForUserAndAudience` (user+audience-scoped) |
+| **Enumeration** | `ListTokens(ctx, cursor, count)` for global iteration; `ListTokensForUser(ctx, userID, cursor, count)` for user-scoped iteration; `ListTokensForAudience(ctx, audience, cursor, count)` for audience-scoped iteration — all use best-effort cursors; pass `""` to start from the beginning |
 | **Idempotence** | Revoke returns nil if token doesn't exist (safe to call multiple times) |
 | **Context** | Full support for context.Context cancellation propagation |
 | **Logging** | Structured key-value logs with operation names and fields |
@@ -928,12 +940,12 @@ Catches:
 
 ### Phase 2: Metrics ✅
 - ✅ Metrics interface defined
-- ✅ Prometheus implementation (`PrometheusMetrics`) with 22 pre-registered metrics, 100% test coverage
+- ✅ Prometheus implementation (`PrometheusMetrics`) with 34 pre-registered metrics, 100% test coverage
 - ✅ NoOp implementation
 - ✅ gomock `MockMetrics` for dependency injection in tests
 - ✅ Wired into KeyManager, TokenManager, and RefreshStore — all components fully instrumented
 
-### Phase 3: TokenManager ✅ (Beta)
+### Phase 3: TokenManager ✅
 - ✅ JWT creation with RS256 signing and custom claims
 - ✅ Access token validation (signature, expiration, issuer, audience)
 - ✅ Refresh token rotation with revocation checks
@@ -943,7 +955,7 @@ Catches:
 - ✅ Background cleanup goroutine with configurable interval
 - ✅ Clock skew tolerance (`ClockSkew time.Duration` in `TokenManagerConfig` — `jwt.WithLeeway()` integration)
 - ✅ `ValidateAccessTokenWithClaims` — returns registered claims and custom claims map after validation
-- ✅ Comprehensive test coverage (153 tests, ~87% coverage, race-detection clean)
+- ✅ Comprehensive test coverage (956 specs — 896 unit + 60 integration — all race-detection clean)
 - ✅ RefreshStore interface with context propagation
 
 ### Phase 4: RefreshToken Storage Implementations ✅
@@ -988,7 +1000,21 @@ Catches:
 - ✅ `MockTracer` / `MockSpan` generated via gomock for dependency injection in component tests
 - ✅ Tracing wired into all six components — `DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore`, `KeyManager`, `TokenManager`
 - ✅ `OtelTracer` adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
-- 🚧 Additional v0.4.0 items in progress
+
+### Phase 7: Audience Lifecycle Management (v0.5.0) ✅
+- ✅ `IssueOption` type and `WithAudience` functional option — all six issuance methods accept `...tokens.IssueOption`; existing call sites unchanged
+- ✅ `RefreshToken.Audience []string` — audience propagates through the refresh cycle; `RefreshAccessToken` uses the stored audience for the new token
+- ✅ `TokenMetadata.Audience []string` — populated by `IntrospectToken` on active, revoked, and expired paths
+- ✅ `RevokeAllForAudience` / `RevokeAllForUserAndAudience` on `RefreshStore` and `tokens.Manager`
+- ✅ `ListTokensForAudience` on `RefreshStore` and `tokens.Manager` — enables audit-before-revoke workflow
+- ✅ `ErrTokenMissingKid` exported sentinel — `ValidateAccessToken` surfaces missing `kid` distinctly from `ErrInvalidToken`
+- ✅ `ErrInvalidAudience` sentinel — returned by audience methods when empty audience string is passed
+- ✅ `jti` claim switched to UUID v4 (`uuid.New().String()`) — aligns with `kid` format; ADR-005 is now accurate
+- ✅ `ValidateAccessToken` / `ValidateAccessTokenWithClaims` hot-path alloc reductions (−7 and −35 allocs/op)
+- ✅ Microbenchmark suite across all three packages (`pkg/storage`, `pkg/keys`, `pkg/tokens`)
+- ✅ Apache 2.0 SPDX headers on all source files; `goheader` linter enforces on new files
+- ✅ `SECURITY.md` — vulnerability disclosure policy
+- ✅ `doc/DEPLOYMENT.md` — Redis TLS/ACL hardening, custom claims validation, rate limiting guidance, audience-scoped revocation workflow
 
 ---
 
@@ -1096,6 +1122,6 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 
 ---
 
-**Last Updated**: April 29, 2026
-**Version**: v0.4.0
-**Status**: Stable (KeyManager + DiskKeyStore + RedisKeyStore + RefreshStore [Memory + Redis] + Metrics [Prometheus] + Logging [Correlation ID] + Distributed Tracing + TokenManager — all stable and fully instrumented)
+**Last Updated**: May 7, 2026
+**Version**: v0.5.0
+**Status**: Stable — all components fully instrumented (KeyManager, DiskKeyStore, RedisKeyStore, MemoryRefreshStore, RedisRefreshStore, Metrics [Prometheus, 34 metrics], Logging [Correlation ID], Distributed Tracing, TokenManager)
