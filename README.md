@@ -1085,9 +1085,9 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 
 ### Test Coverage
 
-**Current**: 947 comprehensive specs (887 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~90%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
+**Current**: 948 comprehensive specs (888 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~81%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
 
-**KeyManager** (3 test suites — 168 total specs):
+**KeyManager** (3 test suites — 169 total specs):
 - **9-phase Manager tests** (MockKeyStore — no I/O):
   - Constructor validation, config defaults, ErrInvalidKeyStore
   - Start: loads from store, generates key on empty store, error paths
@@ -1378,5 +1378,5 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 **Status**: v0.5.0-dev — production-quality, pre-v1.0 (see API Stability note at top)
 **Version**: v0.5.0 (active development; latest release: v0.4.0)
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
-**Test Coverage**: 947 specs (887 unit + 60 integration) — KeyManager ~90%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
+**Test Coverage**: 948 specs (888 unit + 60 integration) — KeyManager ~81%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
 **Last Updated**: May 6, 2026

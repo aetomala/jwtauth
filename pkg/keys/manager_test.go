@@ -1292,6 +1292,39 @@ var _ = Describe("Manager", func() {
 			})
 		})
 
+		Context("when a key is cached as public-only via GetPublicKey", func() {
+			var externalKeyID string
+
+			BeforeEach(func() {
+				externalKeyID = "key-external"
+				extKey := newTestKey()
+				mockKS.EXPECT().LoadAll(gomock.Any()).Return([]*keys.StoredKey{
+					{
+						KeyID:      "key-main",
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: "key-main", CreatedAt: time.Now()},
+					},
+				}, nil)
+				var err error
+				m, err = keys.NewManager(newTestConfig(mockKS))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(m.Start(ctx)).To(Succeed())
+
+				// Prime the public-only cache entry for key-external.
+				mockKS.EXPECT().LoadKey(gomock.Any(), externalKeyID).Return(extKey, &keys.KeyMetadata{ID: externalKeyID, CreatedAt: time.Now()}, nil)
+				_, err = m.GetPublicKey(ctx, externalKeyID)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			AfterEach(shutdownManager)
+
+			It("returns correct KeySizeBits when the key is cached as public-only via GetPublicKey", func() {
+				info, err := m.GetKeyInfo(ctx, externalKeyID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(info.KeySizeBits).To(Equal(2048))
+			})
+		})
+
 		Context("GetCurrentKeyInfo", func() {
 			var currentKeyID string
 
