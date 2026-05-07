@@ -677,6 +677,15 @@ func (m *Manager) GetJWKS(ctx context.Context) (*JWKS, error) {
 	return &JWKS{Keys: keys}, nil
 }
 
+// keyPairKeySize returns the RSA key size in bits.
+// PublicKey.N and PrivateKey.N share the same modulus — use whichever is present.
+func keyPairKeySize(kp *KeyPair) int {
+	if kp.PrivateKey != nil {
+		return kp.PrivateKey.N.BitLen()
+	}
+	return kp.PublicKey.N.BitLen()
+}
+
 // GetKeyInfo returns public metadata for a specific key by ID.
 // If keyID is empty, returns metadata for the current signing key.
 // Returns ErrManagerNotRunning if the manager is not running.
@@ -742,7 +751,7 @@ func (m *Manager) GetKeyInfo(ctx context.Context, keyID string) (*KeyInfo, error
 		CreatedAt:   keyPair.CreatedAt,
 		RotateAt:    rotateAt,
 		ExpiresAt:   keyPair.ExpiresAt,
-		KeySizeBits: keyPair.PrivateKey.N.BitLen(),
+		KeySizeBits: keyPairKeySize(keyPair),
 		Algorithm:   "RS256",
 		IsCurrent:   isCurrent,
 		IsValid:     isValid,
