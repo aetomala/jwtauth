@@ -189,4 +189,8 @@ var (
 
 	// ErrInvalidIssuer indicates the token issuer doesn't match
 	ErrInvalidIssuer = errors.New("invalid token issuer")
+
+	// ErrTokenMissingKid indicates the JWT is missing the required kid header field.
+	// Callers may use errors.Is to distinguish this case from other validation failures.
+	ErrTokenMissingKid = errors.New("token missing kid header")
 )

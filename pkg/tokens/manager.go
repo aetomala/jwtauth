@@ -1384,10 +1384,10 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 // It verifies the RS256 signature using the public key identified by the token's
 // "kid" header, then checks expiration, issuer, and audience claims.
 //
-/// Returns the parsed RegisteredClaims on success, or one of: ErrManagerNotRunning,
-// ErrTokenExpired, ErrTokenNotYetValid, ErrInvalidIssuer, ErrInvalidAudience,
-// ErrInvalidToken (covers malformed tokens, wrong signing method, and unknown key IDs),
-// or the context error.
+// Returns the parsed RegisteredClaims on success, or one of: ErrManagerNotRunning,
+// ErrTokenExpired, ErrTokenNotYetValid, ErrTokenMissingKid if the JWT has no kid
+// header, ErrInvalidIssuer, ErrInvalidAudience, ErrInvalidToken (covers malformed
+// tokens, wrong signing method, and unknown key IDs), or the context error.
 func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, error) {
 	ctx, span := m.startSpan(ctx, "ValidateAccessToken")
 	defer span.End()
@@ -1452,7 +1452,7 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 			kid, ok := token.Header["kid"].(string)
 			if !ok {
 				m.logger.Warn("token missing kid in header", ctx)
-				return nil, errors.New("missing kid in token header")
+				return nil, ErrTokenMissingKid
 			}
 			m.logger.Debug("token kid extracted from header", ctx,
 				"kid", kid)
@@ -1498,6 +1498,13 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 			span.RecordError(ErrInvalidToken)
 			span.SetStatus(tracing.StatusError, ErrInvalidToken.Error())
 			return nil, ErrInvalidToken
+		}
+		if errors.Is(err, ErrTokenMissingKid) {
+			status = "error"
+			errorType = "missing_kid"
+			span.RecordError(ErrTokenMissingKid)
+			span.SetStatus(tracing.StatusError, ErrTokenMissingKid.Error())
+			return nil, ErrTokenMissingKid
 		}
 
 		span.RecordError(ErrInvalidToken)
@@ -1586,9 +1593,10 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 //
 // Returns ErrManagerNotRunning if the service has not been started, ErrTokenExpired
 // if the token has expired beyond the configured ClockSkew, ErrTokenNotYetValid if
-// the nbf claim has not been reached, ErrInvalidIssuer or ErrInvalidAudience if
-// configured values do not match, ErrInvalidToken for malformed tokens or unknown
-// key IDs, or the context error if the context is cancelled.
+// the nbf claim has not been reached, ErrTokenMissingKid if the JWT has no kid
+// header, ErrInvalidIssuer or ErrInvalidAudience if configured values do not match,
+// ErrInvalidToken for malformed tokens or unknown key IDs, or the context error if
+// the context is cancelled.
 func (m *Manager) ValidateAccessTokenWithClaims(ctx context.Context, tokenString string) (*jwt.RegisteredClaims, map[string]interface{}, error) {
 	ctx, span := m.startSpan(ctx, "ValidateAccessTokenWithClaims")
 	defer span.End()
