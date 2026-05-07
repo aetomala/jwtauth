@@ -1102,13 +1102,13 @@ var _ = Describe("TokenManager", func() {
 		Context("with missing kid header", func() {
 			var noKidToken string
 			BeforeEach(func() {
-				tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
+				unsignedToken := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
 					Subject:   "user-123",
 					ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
 				})
 				// kid deliberately NOT set
 				var err error
-				noKidToken, err = tok.SignedString(testKey)
+				noKidToken, err = unsignedToken.SignedString(testKey)
 				Expect(err).NotTo(HaveOccurred())
 			})
 
