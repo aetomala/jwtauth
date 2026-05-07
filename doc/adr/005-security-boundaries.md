@@ -34,6 +34,7 @@ The gates implemented in jwtauth are:
 | `iss` | Compared against configured `Issuer` after parse | `ErrTokenInvalidClaims` |
 | `aud` | Compared against configured `Audience` after parse | `ErrTokenInvalidClaims` |
 | `exp` | Checked against `time.Now()` with leeway | `ErrTokenExpired` |
+| `nbf` | Checked against `time.Now()` with leeway | `ErrTokenNotValidYet` |
 | Custom claims | Caller-validated after extraction | n/a (caller responsibility) |
 
 The gates are applied in the order listed above. An invalid `alg` or `kid` is

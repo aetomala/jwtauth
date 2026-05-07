@@ -33,7 +33,7 @@ Users should implement rate limiting at the infrastructure layer:
 - Cloudflare / CDN
 
 For application-level rate limiting, users can choose from existing Go libraries:
-- `golang.org/x/time/rate` (standard library)
+- `golang.org/x/time/rate` (golang.org/x extended package — separate module)
 - `github.com/ulule/limiter` (Redis-backed)
 - `github.com/throttled/throttled` (flexible)
 
