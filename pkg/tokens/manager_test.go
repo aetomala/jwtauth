@@ -16,6 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/google/uuid"
 	"go.uber.org/mock/gomock"
 
 	"github.com/aetomala/jwtauth/internal/testutil"
@@ -240,6 +241,18 @@ var _ = Describe("TokenManager", func() {
 			token, err := service.IssueAccessToken(ctx, testUserID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(token).NotTo((BeEmpty()))
+		})
+
+		It("should embed a valid UUID v4 as the jti claim", func() {
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil)
+			tokenString, err := service.IssueAccessToken(ctx, testUserID)
+			Expect(err).NotTo(HaveOccurred())
+			parsedToken, _, parseErr := new(jwt.Parser).ParseUnverified(tokenString, &jwt.RegisteredClaims{})
+			Expect(parseErr).NotTo(HaveOccurred())
+			claims, ok := parsedToken.Claims.(*jwt.RegisteredClaims)
+			Expect(ok).To(BeTrue())
+			_, uuidErr := uuid.Parse(claims.ID)
+			Expect(uuidErr).NotTo(HaveOccurred())
 		})
 
 		It("should use KeyManager to sign token", func() {

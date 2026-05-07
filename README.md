@@ -1087,7 +1087,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 
 ### Test Coverage
 
-**Current**: 955 comprehensive specs (895 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
+**Current**: 956 comprehensive specs (896 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
 
 **KeyManager** (3 test suites — 170 total specs):
 - **9-phase Manager tests** (MockKeyStore — no I/O):
@@ -1107,7 +1107,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
   - Concurrency, metrics recording (storage_backend: "redis")
 
-**TokenManager** (7 test suites, 257 total specs):
+**TokenManager** (7 test suites, 258 total specs):
 - **Lifecycle Management Tests**:
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency, restart after clean shutdown
@@ -1380,5 +1380,5 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 **Status**: v0.5.0-dev — production-quality, pre-v1.0 (see API Stability note at top)
 **Version**: v0.5.0 (active development; latest release: v0.4.0)
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
-**Test Coverage**: 955 specs (895 unit + 60 integration) — KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
-**Last Updated**: May 6, 2026
+**Test Coverage**: 956 specs (896 unit + 60 integration) — KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
+**Last Updated**: May 7, 2026
