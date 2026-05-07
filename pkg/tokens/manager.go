@@ -90,6 +90,7 @@ import (
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tracing"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 // TokenManagerConfig holds the configuration for a Manager.
@@ -2631,24 +2632,16 @@ func (m *Manager) ListTokensForAudience(ctx context.Context, audience string, cu
 	return tokens, nextCursor, nil
 }
 
-// generateTokenID creates a cryptographically random token identifier.
+// generateTokenID returns a new UUID v4 string to use as the jti claim.
 //
 // The token ID (jti claim) is used for:
 //   - Token revocation (blacklisting)
 //   - Audit trails
 //   - Preventing replay attacks
 //
-// Returns a URL-safe base64 encoded string (22 characters).
+// Returns a 36-character UUID v4 string (e.g. "550e8400-e29b-41d4-a716-446655440000").
 func generateTokenID() (string, error) {
-	// Generate 16 random bytes
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("failed to generate random bytes: %w", err)
-	}
-
-	// Encode as URL-safe base64 (no padding)
-	// Example: "xF7hN2kP9mQ8rT4vL6wY3g"
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	return uuid.New().String(), nil
 }
 
 // generateRefreshToken creates a cryptographically random refresh token.
