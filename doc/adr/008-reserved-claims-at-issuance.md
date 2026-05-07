@@ -70,9 +70,30 @@ and does not require callers to know which claim keys are reserved.
   they will issue tokens without their intended custom claim. This is the standard
   tradeoff for reserved-key guards in extensible claim maps.
 
+## Addendum — v0.5.0 (#124)
+
+`WithAudience` has been implemented as described in the Decision section above. All six
+issuing methods now accept a variadic `...IssueOption` parameter:
+
+```go
+IssueAccessToken(ctx, userID, tokens.WithAudience("svc-payments"))
+IssueTokenPair(ctx, userID, tokens.WithAudience("svc-payments"))
+// and IssueAccessTokenWithClaims, IssueRefreshToken, IssueRefreshTokenWithClaims, IssueTokenPairWithClaims
+```
+
+`WithAudience` overrides the manager's configured audience for a single call. Passing no
+arguments to `WithAudience` is a no-op — the manager's configured audience is used.
+`RefreshAccessToken` and `RefreshAccessTokenWithClaims` propagate the stored audience
+from the refresh token record into the new access token, so the refreshed token targets
+the same audience as the original without requiring the caller to re-specify it.
+
+The negative consequence noted above — "callers who need per-call audience targeting cannot
+do so today" — is resolved.
+
 ## References
 
 - Related: ADR-005 (Security Boundaries — Attacker-Controlled Token Fields) — covers
   the validation-side gate for `aud` and other claims
 - Issue #109 — identified the missing `aud` entry in the reserved claims guard
+- Issue #124 — implemented `WithAudience` IssueOption
 - RFC 7519 §4.1 — Registered Claim Names

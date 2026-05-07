@@ -73,6 +73,22 @@ func (mr *MockRefreshStoreMockRecorder) ListTokens(ctx, cursor, count any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokens", reflect.TypeOf((*MockRefreshStore)(nil).ListTokens), ctx, cursor, count)
 }
 
+// ListTokensForAudience mocks base method.
+func (m *MockRefreshStore) ListTokensForAudience(ctx context.Context, audience, cursor string, count int) ([]*storage.RefreshToken, string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListTokensForAudience", ctx, audience, cursor, count)
+	ret0, _ := ret[0].([]*storage.RefreshToken)
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// ListTokensForAudience indicates an expected call of ListTokensForAudience.
+func (mr *MockRefreshStoreMockRecorder) ListTokensForAudience(ctx, audience, cursor, count any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListTokensForAudience", reflect.TypeOf((*MockRefreshStore)(nil).ListTokensForAudience), ctx, audience, cursor, count)
+}
+
 // ListTokensForUser mocks base method.
 func (m *MockRefreshStore) ListTokensForUser(ctx context.Context, userID, cursor string, count int) ([]*storage.RefreshToken, string, error) {
 	m.ctrl.T.Helper()
@@ -132,6 +148,21 @@ func (mr *MockRefreshStoreMockRecorder) Revoke(ctx, tokenID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Revoke", reflect.TypeOf((*MockRefreshStore)(nil).Revoke), ctx, tokenID)
 }
 
+// RevokeAllForAudience mocks base method.
+func (m *MockRefreshStore) RevokeAllForAudience(ctx context.Context, audience string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RevokeAllForAudience", ctx, audience)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RevokeAllForAudience indicates an expected call of RevokeAllForAudience.
+func (mr *MockRefreshStoreMockRecorder) RevokeAllForAudience(ctx, audience any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForAudience", reflect.TypeOf((*MockRefreshStore)(nil).RevokeAllForAudience), ctx, audience)
+}
+
 // RevokeAllForUser mocks base method.
 func (m *MockRefreshStore) RevokeAllForUser(ctx context.Context, userID string) error {
 	m.ctrl.T.Helper()
@@ -146,16 +177,31 @@ func (mr *MockRefreshStoreMockRecorder) RevokeAllForUser(ctx, userID any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForUser", reflect.TypeOf((*MockRefreshStore)(nil).RevokeAllForUser), ctx, userID)
 }
 
-// Store mocks base method.
-func (m *MockRefreshStore) Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]any) error {
+// RevokeAllForUserAndAudience mocks base method.
+func (m *MockRefreshStore) RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) (int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Store", ctx, tokenID, userID, expiresAt, metadata)
+	ret := m.ctrl.Call(m, "RevokeAllForUserAndAudience", ctx, userID, audience)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RevokeAllForUserAndAudience indicates an expected call of RevokeAllForUserAndAudience.
+func (mr *MockRefreshStoreMockRecorder) RevokeAllForUserAndAudience(ctx, userID, audience any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForUserAndAudience", reflect.TypeOf((*MockRefreshStore)(nil).RevokeAllForUserAndAudience), ctx, userID, audience)
+}
+
+// Store mocks base method.
+func (m *MockRefreshStore) Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]any) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Store", ctx, tokenID, userID, audience, expiresAt, metadata)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Store indicates an expected call of Store.
-func (mr *MockRefreshStoreMockRecorder) Store(ctx, tokenID, userID, expiresAt, metadata any) *gomock.Call {
+func (mr *MockRefreshStoreMockRecorder) Store(ctx, tokenID, userID, audience, expiresAt, metadata any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Store", reflect.TypeOf((*MockRefreshStore)(nil).Store), ctx, tokenID, userID, expiresAt, metadata)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Store", reflect.TypeOf((*MockRefreshStore)(nil).Store), ctx, tokenID, userID, audience, expiresAt, metadata)
 }

@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package logging
 
 // Logger is the standard logging interface for the JWT authorization token engine.

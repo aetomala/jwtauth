@@ -8,7 +8,7 @@
 
 **You verify identity. jwtauth manages everything after:** zero-downtime key rotation, access token issuance, refresh token lifecycle, and instant revocation across horizontal scale.
 
-> **API Stability (pre-v1.0)**: All components are production-quality with comprehensive test coverage. The API surface is still evolving before v1.0.0. **v0.5.0 planned changes:** `IssueOption` / `WithAudience` for per-call audience targeting (#124) — additive, all existing call sites compile unchanged. Audience-based token revocation `RevokeAllForAudience` (#135) — adds `Audience string` to `RefreshToken` and two new methods to `RefreshStore`; custom implementations must be updated (see `UPGRADING.md`).
+> **API Stability (pre-v1.0)**: All components are production-quality with comprehensive test coverage. The API surface is still evolving before v1.0.0. **v0.5.0 shipped:** `IssueOption` / `WithAudience` for per-call audience targeting (#124) — all six issuing methods accept `...tokens.IssueOption`; existing call sites compile unchanged. **v0.5.0 planned:** Audience-based token revocation `RevokeAllForAudience` (#135) — adds `Audience []string` to `RefreshToken` and two new methods to `RefreshStore`; custom implementations must be updated (see `UPGRADING.md`).
 
 ## Overview
 
@@ -577,6 +577,11 @@ func main() {
 }
 ```
 
+> **Validation responsibility**: `ValidateAccessTokenWithClaims` validates token structure,
+> signature, and standard claims. It does not validate custom claim values — type-assert and
+> range-check every claim before use. See
+> [Custom Claims Validation](doc/DEPLOYMENT.md#custom-claims-validation) in the Deployment Guide.
+
 **Key Features**:
 - ✅ Automatic lifecycle management (Start/Shutdown)
 - ✅ Service state checking (IsRunning) ensures tokens only issue when running
@@ -663,11 +668,11 @@ sequenceDiagram
     Client->>API: POST /login (credentials)
     API->>API: Verify credentials
     API->>Manager: IssueTokenPair(ctx, userID)
-    Manager->>KeyMgr: GetCurrentSigningKey()
-    KeyMgr-->>Manager: RSA private key
-    Manager->>Manager: Sign JWT access token
-    Manager->>Manager: Generate refresh token (UUID)
-    Manager->>Redis: Store(refreshToken, userID, expiry)
+    Manager->>KeyMgr: GetCurrentSigningKey(ctx)
+    KeyMgr-->>Manager: RSA private key + keyID
+    Manager->>Manager: Sign JWT access token (kid header = keyID)
+    Manager->>Manager: Generate refresh token (256-bit random)
+    Manager->>Redis: Store(refreshToken, userID, audience, expiry)
     Redis-->>Manager: OK
     Manager-->>API: accessToken, refreshToken
     API-->>Client: 200 OK {access, refresh}
@@ -676,10 +681,11 @@ sequenceDiagram
     
     Client->>API: GET /protected (Bearer accessToken)
     API->>Manager: ValidateAccessToken(ctx, accessToken)
-    Manager->>KeyMgr: GetPublicKeys()
-    KeyMgr-->>Manager: RSA public keys
+    Manager->>Manager: Extract kid from token header
+    Manager->>KeyMgr: GetPublicKey(ctx, kid)
+    KeyMgr-->>Manager: RSA public key
     Manager->>Manager: Verify signature + claims
-    Manager-->>API: claims (userID, exp, iss, aud)
+    Manager-->>API: *jwt.RegisteredClaims
     API->>API: Process request
     API-->>Client: 200 OK {data}
 
@@ -687,12 +693,14 @@ sequenceDiagram
     
     Client->>API: POST /refresh (refreshToken)
     API->>Manager: RefreshAccessToken(ctx, refreshToken)
-    Manager->>Redis: Get(refreshToken)
-    Redis-->>Manager: {userID, expiry}
+    Manager->>Redis: Retrieve(refreshToken)
+    Redis-->>Manager: {userID, audience, expiry}
     Manager->>Manager: Check expiry
-    Manager->>KeyMgr: GetCurrentSigningKey()
-    KeyMgr-->>Manager: RSA private key
+    Manager->>KeyMgr: GetCurrentSigningKey(ctx)
+    KeyMgr-->>Manager: RSA private key + keyID
     Manager->>Manager: Sign new JWT access token
+    Manager->>Redis: Revoke(refreshToken)
+    Redis-->>Manager: OK
     Manager-->>API: newAccessToken
     API-->>Client: 200 OK {access}
 
@@ -700,7 +708,7 @@ sequenceDiagram
     
     Client->>API: POST /logout (refreshToken)
     API->>Manager: RevokeRefreshToken(ctx, refreshToken)
-    Manager->>Redis: Delete(refreshToken)
+    Manager->>Redis: Revoke(refreshToken)
     Redis-->>Manager: OK
     Manager-->>API: OK
     API-->>Client: 200 OK
@@ -1048,6 +1056,29 @@ mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
 All spans set `StatusOK` on success and `RecordError` + `StatusError` on failure. For deployment setup and `TracerProvider` configuration, see [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
 
 
+## Performance
+
+Measured on Apple M4 Max, Go 1.26.2, `GOMAXPROCS=16`. Redis numbers use in-process miniredis — add your Redis network RTT for real deployments.
+
+| Operation | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `IssueAccessToken` | 78,775 | 6,893 | 75 |
+| `ValidateAccessToken` | 5,067 | 6,633 | 102 |
+| `IssueTokenPair` | 69,436 | 8,612 | 90 |
+| `RefreshAccessToken` | 867,641 | 9,497 | 109 |
+| `Store` (Memory) | 797 | 2,034 | 23 |
+| `Store` (Redis/miniredis) | 37,031 | 6,083 | 137 |
+
+The rotation-under-load benchmark (`BenchmarkValidateAccessToken_DuringRotation`) runs parallel validators against a key manager rotating every 50 ms — quantifying validation latency variance during the key overlap window. This is the library's primary differentiator: zero-downtime key rotation cannot be reproduced by single-key JWT libraries.
+
+Reproduction:
+```bash
+go test -bench=. -benchmem ./pkg/storage/ ./pkg/keys/ ./pkg/tokens/
+```
+
+For full methodology, per-operation tables (all N variants, observability tax, and golang-jwt baseline comparison), and `benchstat` regression workflow, see [doc/PERFORMANCE.md](doc/PERFORMANCE.md).
+
+
 ## Project Structure
 
 See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package layout and API stability status.
@@ -1056,47 +1087,49 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 
 ### Test Coverage
 
-**Current**: 605 comprehensive tests across KeyManager, TokenManager, RefreshStore, Metrics, Logging, and Tracing, all passing with race detection (KeyManager ~90%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
+**Current**: 956 comprehensive specs (896 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
 
-**KeyManager** (3 test suites — 125 total specs):
-- **9-phase Manager tests** (52 specs, MockKeyStore — no I/O):
+**KeyManager** (3 test suites — 170 total specs):
+- **9-phase Manager tests** (MockKeyStore — no I/O):
   - Constructor validation, config defaults, ErrInvalidKeyStore
   - Start: loads from store, generates key on empty store, error paths
   - GetCurrentSigningKey, GetPublicKey (cache hit/miss), GetJWKS
   - RotateKeys: Save + UpdateMetadata calls, currentKeyID update
   - Shutdown: scheduler stop, idempotency, context timeout
   - Metrics recording: rotation counter/duration, signing/validation counters, active-versions gauge
-- **10-phase DiskKeyStore tests** (42 specs, real tmp directory):
+- **10-phase DiskKeyStore tests** (real tmp directory):
   - Constructor, Save (0600 permissions, companion JSON), LoadAll
   - LoadKey (key size validation), UpdateMetadata, Delete (idempotent)
   - Error handling, concurrency, metrics recording (storage_backend: "disk"), tracing
-- **10-phase RedisKeyStore tests** (39 specs, miniredis):
+- **10-phase RedisKeyStore tests** (miniredis):
   - Constructor (nil client returns ErrNilRedisClient), Save round-trip, LoadAll (skip expired)
   - LoadKey, UpdateMetadata, Delete (idempotent)
   - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
   - Concurrency, metrics recording (storage_backend: "redis")
 
-**TokenManager** (7 test suites, 153 total tests):
-- **Lifecycle Management Tests** (20 tests):
+**TokenManager** (7 test suites, 258 total specs):
+- **Lifecycle Management Tests**:
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
-  - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency
+  - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency, restart after clean shutdown
   - IsRunning: state tracking and thread-safety verification
-  - Complete Lifecycle: integration test of start → use → shutdown cycle
+  - Complete Lifecycle: integration test of start → use → shutdown → restart cycle
 - **Token Issuance Tests**:
-  - IssueAccessToken / IssueAccessTokenWithClaims: successful issuance, custom claims, reserved claim protection, guard conditions
-  - IssueRefreshToken: successful issuance, storage, metadata handling, guard conditions
-  - IssueTokenPair: coordinated access and refresh token issuance, guard conditions
+  - IssueAccessToken / IssueAccessTokenWithClaims: successful issuance, custom claims, reserved claim protection, per-call audience override via `WithAudience`, guard conditions
+  - IssueRefreshToken / IssueRefreshTokenWithClaims: issuance, storage, audience stored on token, metadata handling, guard conditions
+  - IssueTokenPair / IssueTokenPairWithClaims: coordinated access and refresh token issuance, guard conditions
 - **Validation & Refresh Tests**:
   - ValidateAccessToken / ValidateAccessTokenWithClaims: signature verification, claims extraction, custom claims round-trip, clock skew leeway, expiration, audience/issuer enforcement, wrong signing method, missing kid header, guard conditions
-  - RefreshAccessToken: token rotation, revocation checks, expiration handling, error propagation, guard conditions
+  - RefreshAccessToken / RefreshAccessTokenWithClaims: token rotation, audience propagation, revocation checks, expiration handling, error propagation, guard conditions
 - **Revocation & Introspection Tests**:
   - RevokeRefreshToken / RevokeAllUserTokens: single and bulk revocation flows
-  - IntrospectToken: active/inactive/revoked/expired status per RFC 7662
+  - RevokeAllForAudience / RevokeAllForUserAndAudience: audience-scoped token revocation
+  - IntrospectToken: active/inactive/revoked/expired status per RFC 7662; `TokenID` and `Audience` populated on all paths
   - CleanupExpiredTokens: manual sweep with error handling
+- **Enumeration Tests**: ListTokens, ListTokensForUser, ListTokensForAudience — cursor-based pagination, audience isolation
 - **Concurrent Operations**: parallel token issuance and service state safety
 
-**RefreshStore** (154 total tests: 77 per implementation × 2):
-- **Shared Test Suite** (77 tests, runs against both Memory and Redis):
+**RefreshStore** (218 total specs: 109 per implementation × 2):
+- **Shared Test Suite** (109 specs, runs against both Memory and Redis):
   - **Phase 1**: Constructor initialization
   - **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
   - **Phase 3**: Input validation (empty/whitespace tokenID/userID, expired tokens, metadata defensive copy)
@@ -1104,12 +1137,40 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - **Phase 5**: Retrieve validation and state checks (revocation, expiration)
   - **Phase 6**: Revoke idempotency and state-changing operations
   - **Phase 7**: RevokeAllForUser bulk operations with user isolation
+  - **Phase 7.5**: RevokeAllForAudience / RevokeAllForUserAndAudience — audience-scoped revocation with isolation guarantees
   - **Phase 8**: Cleanup (expired token removal, mixed expiration states)
   - **Phase 8.5**: Edge cases (unicode characters, large-scale operations, far-future timestamps)
   - **Phase 9**: Context cancellation handling across all operations
   - **Phase 12**: `ListTokens` — global cursor-based pagination (empty store, single page, multi-page, empty cursor, exhausted cursor, cancelled context)
   - **Phase 13**: `ListTokensForUser` — user-scoped cursor-based pagination (user isolation, empty userID validation, multi-page, cancelled context)
+  - **Phase 14**: `ListTokensForAudience` — audience-scoped cursor-based pagination (audience isolation, SSCAN passthrough on Redis, multi-page, cancelled context)
 - **Test Suite Architecture**: Single parameterized suite eliminates 800+ lines of duplication, ensures both implementations have identical semantics
+
+**Logging** (104 specs):
+- Correlation ID injection — `WithCorrelationID`, `GetCorrelationID` context helpers
+- `CorrelationIDHandler` — slog handler wrapping for correlation ID propagation across service boundaries
+- `SlogAdapter` — context-aware routing to `*Context()` slog methods
+- `NewCorrelationJSONLogger` / `NewCorrelationTextLogger` — pre-wired production constructors
+- `NoOpLogger` — no-op implementation
+
+**Metrics** (66 specs):
+- `PrometheusMetrics` — 27 pre-registered metrics covering all six components
+- `IncrementCounter`, `AddCounter`, `SetGauge`, `RecordHistogram`, `RecordDuration` implementations
+- Label correctness: `error_type` label on all counters, `namespace` label propagation
+- `NoOpMetrics` — no-op implementation
+
+**Tracing** (78 specs):
+- `NoOpTracer` / `NoOpSpan` — no-op implementation, race-detection clean
+- `OtelTracer` adapter — bridges `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
+- `SpanOption` functional options: `WithAttributes`, `WithSpanKind`
+- All `StatusCode` and `SpanKind` enum values exercised
+
+**Integration Tests** (60 specs, `pkg/tokens/integration/`):
+- Runs against both disk+memory and Redis backends (miniredis)
+- Full token lifecycle: issuance, validation, refresh, revocation, enumeration
+- Audience-scoped revocation (`RevokeAllForAudience`, `RevokeAllForUserAndAudience`) and enumeration (`ListTokensForAudience`)
+- Custom claims round-trip, cursor-based pagination (`ListTokens`, `ListTokensForUser`, `ListTokensForAudience`)
+- `--fail-on-pending` enforced in CI
 
 **Test Organization**:
 - Separate test files for logical concerns (`manager_test.go`, `manager_lifecycle_test.go`)
@@ -1183,7 +1244,7 @@ Tests follow **progressive phase-based development**:
 
 ### v0.4.0
 - ✅ `pkg/tracing` interfaces scaffolded — `Tracer`, `Span`, `SpanOption`, `StatusCode`, `SpanKind`
-- ✅ `NoOpTracer` / `NoOpSpan` implementations (36 tests, race-detection clean)
+- ✅ `NoOpTracer` / `NoOpSpan` implementations (race-detection clean)
 - ✅ `MockTracer` / `MockSpan` generated for dependency injection in component tests
 - ✅ Tracing wired into all six components — `DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore`, `KeyManager`, `TokenManager`
 - ✅ `OtelTracer` adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
@@ -1191,12 +1252,50 @@ Tests follow **progressive phase-based development**:
 - ✅ `KeyPrefix` field on `RedisKeyStoreConfig` and `RedisRefreshStoreConfig` — isolates Redis keys per instance for multi-tenant deployments
 - ✅ Cursor-based token enumeration: `ListTokens` and `ListTokensForUser` on `RefreshStore` and `TokenManager`
 
+### v0.5.0 ✅ Complete
+- ✅ Relicensed MIT → Apache 2.0 (effective v0.5.0; v0.4.0 and earlier remain MIT)
+- ✅ Apache 2.0 SPDX headers on all 66 `.go` source files; `goheader` linter added to CI
+- ✅ `IssueOption` / `WithAudience` — per-call audience targeting on all 6 issuing methods
+- ✅ `RefreshToken.Audience []string` — audience stored with token and propagated through refresh
+- ✅ `RevokeAllForAudience` + `RevokeAllForUserAndAudience` — audience-scoped instant revocation
+- ✅ `ListTokensForAudience` — audience-scoped cursor-based token enumeration
+- ✅ `TokenMetadata.Audience` and `TokenMetadata.TokenID` populated by `IntrospectToken` on all paths
+- ✅ Microbenchmark suite — library-level performance baselines for storage, key management, and token lifecycle
+- ✅ Hot-path alloc reduction — `ValidateAccessToken`: 109→102 allocs/op; `ValidateAccessTokenWithClaims`: 194→159 allocs/op
+- ✅ `SECURITY.md` — vulnerability disclosure policy, coordinated disclosure, in/out-of-scope matrix
+- ✅ Redis Security Hardening guide — TLS, ACL minimum command sets, network isolation in `doc/DEPLOYMENT.md`
+- ✅ Custom Claims Validation guidance — type-assert and range-check responsibility in `doc/DEPLOYMENT.md`
+- ✅ Rate Limiting recommended starting values table + gateway configuration references
+
+### v0.6.0
+- Standardize expiration boundary semantics across `MemoryRefreshStore` and `RedisRefreshStore` — eliminate `Before` vs `Before || Equal` divergence
+- Fix nil pointer dereference in `GetKeyInfo` when a key was loaded via `GetPublicKey` (public-only cached `KeyPair`)
+- Add `ErrTokenMissingKid` package-level sentinel — replace inline `errors.New` so callers can use `errors.Is`
+- Guard `cleanupExpiredKeys` from removing the current signing key — prevent token signing failures during rotation
+- Pin `Cleanup()` return value to deleted-token count across both `RefreshStore` implementations
+- Add missing duration histograms for `RevokeAllForAudience` and `RevokeAllForUserAndAudience` in `PrometheusMetrics`
+- ADR-009 — document multi-audience token revocation atomicity (why revoking by audience A fully revokes multi-audience tokens)
+
+### v0.7.0
+- `GetAllKeyInfo() ([]KeyInfo, error)` on `KeyManager` — enumerate all active keys for admin surfaces and health checks
+- Namespace field — wire through logs, spans, and metric labels across all six components; or formally demote and document as a v1.1 commitment
+- ADR-010 — JTI uniqueness and replay prevention stance (JTI is for audit correlation, not replay prevention)
+- ADR-011 — cursor semantics and pagination consistency contract (opaque cursors, best-effort ordering guarantees)
+- Example: `examples/audience-revocation/` — multi-audience issuance, `ListTokensForAudience`, `RevokeAllForAudience` round-trip
+- Example: `examples/redis-production/` — `RedisKeyStore` + `RedisRefreshStore` with `KeyPrefix` and `Namespace`
+- Example: `examples/custom-store/` — minimal `RefreshStore` implementation stub with compile-time assertion
+
 ### v1.0.0 (Stable)
-- API stability guarantee
-- Production-ready for all components
-- Comprehensive documentation
-- OpenTelemetry integration complete
-- Performance benchmarks
+- API stability guarantee across `KeyManager`, `TokenManager`, `RefreshStore`, `KeyStore`, and all observability interfaces
+- Production-ready documentation for all components
+- Example: `IntrospectToken` in framework middleware
+- Example: `GetJWKS` endpoint pattern
+- Example: `CleanupExpiredTokens` manual trigger
+- Span attribute naming convention enforced and documented
+- `PrometheusMetrics.MetricNames()` — programmatic enumeration of registered metric names
+
+### v1.1.0
+- PostgreSQL `RefreshStore` implementation — durable, transactional token storage for deployments that already operate a PostgreSQL cluster and want to avoid a Redis dependency
 
 ## Architecture
 
@@ -1216,7 +1315,7 @@ This library follows SOLID principles and clean architecture patterns. For detai
 | ADR | Decision | Date |
 |-----|----------|------|
 | [ADR-001](doc/adr/001-no-rate-limiting.md) | No rate limiting — belongs at API Gateway / infrastructure layer | 2026-03-11 |
-| [ADR-002](doc/adr/002-stateful-refresh-tokens.md) | Stateful refresh tokens — opaque UUIDs for instant revocation | 2026-03-18 |
+| [ADR-002](doc/adr/002-stateful-refresh-tokens.md) | Stateful refresh tokens — opaque 256-bit random values for instant revocation | 2026-03-18 |
 | [ADR-003](doc/adr/003-rs256-only.md) | RS256 only — prevents algorithm confusion attacks | 2026-04-01 |
 | [ADR-004](doc/adr/004-kid-validation.md) | `kid` UUID validation at every `KeyStore` boundary — path traversal prevention | 2026-04-21 |
 | [ADR-005](doc/adr/005-security-boundaries.md) | Security boundaries — explicit validation gate for every attacker-controlled token field | 2026-04-21 |
@@ -1253,7 +1352,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for requirements, 
 
 ## Requirements
 
-- **Go 1.21+**
+- **Go 1.26+**
 - No external dependencies for core functionality
 - Optional: Ginkgo/Gomega for running tests
 
@@ -1278,8 +1377,8 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 
 ---
 
-**Status**: v0.4.0 — production-quality, pre-v1.0 (see API Stability note at top)
-**Version**: v0.4.0
+**Status**: v0.5.0-dev — production-quality, pre-v1.0 (see API Stability note at top)
+**Version**: v0.5.0 (active development; latest release: v0.4.0)
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
-**Test Coverage**: 605 tests (KeyManager ~90%, TokenManager ~87%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%), all passing, race-detection enabled
-**Last Updated**: April 29, 2026
+**Test Coverage**: 956 specs (896 unit + 60 integration) — KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
+**Last Updated**: May 7, 2026

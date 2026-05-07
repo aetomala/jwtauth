@@ -26,9 +26,9 @@ The zero value preserves existing behavior exactly — no label is injected into
 or metrics. When non-empty, the namespace is stored in the manager struct and is available for
 attachment to observability output.
 
-The field is inert in this phase. No existing log call, span attribute, or metric label is
-modified here. This ADR records the configuration surface; a subsequent phase wires the field
-into observability output (see issue #112).
+At the time of this decision the field was inert — no log call, span attribute, or metric label
+was modified. This ADR recorded the configuration surface only; wiring was deferred to a
+subsequent phase (see issue #112 and Addendum below).
 
 The field is not validated or interpreted. The library treats it as an opaque label — format,
 naming conventions, and semantics are entirely the consumer's decision.
@@ -43,3 +43,16 @@ naming conventions, and semantics are entirely the consumer's decision.
 - The contract between `Namespace` on a manager config and `KeyPrefix` on a store config is
   intentionally loose: both solve isolation in their respective layers (observability vs.
   data storage), and callers are free to use different values for each
+
+## Addendum — Namespace fully wired (issue #112, PRs #113–#118, 2026-04-27)
+
+The `Namespace` field is now fully wired across all observability output in both managers:
+
+- **Log lines** — every `Logger` call in `KeyManager` and `TokenManager` carries the namespace
+  as a structured key (`"namespace"`) when the field is non-empty.
+- **Trace spans** — span attributes include `namespace` on every span opened by either manager.
+- **Metric labels** — all counters, gauges, histograms, and duration recordings carry a
+  `namespace` label; an empty namespace emits an empty string (preserving prior cardinality).
+
+The deferred "subsequent phase" referenced in the original Decision is complete. No interface
+changes were required — the field was already present on both config types.

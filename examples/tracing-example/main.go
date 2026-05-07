@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // tracing-example demonstrates distributed tracing with jwtauth using the
 // OpenTelemetry SDK and the stdout exporter. Spans are printed to stdout — no
 // external backend (Jaeger, Zipkin, etc.) is required.

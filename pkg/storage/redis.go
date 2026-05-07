@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package storage
 
 import (
@@ -47,9 +51,11 @@ type RedisRefreshStore struct {
 	client *redis.Client // Redis client; internally thread-safe
 
 	// ===== Key Prefixes =====
-	namespace     string // = cfg.KeyPrefix; returned by Namespace()
-	tokenPrefix   string // = cfg.KeyPrefix + tokenKeyPrefix;   applied to all token hash keys
-	userSetPrefix string // = cfg.KeyPrefix + userSetKeyPrefix; applied to all user-set keys
+	namespace            string // = cfg.KeyPrefix; returned by Namespace()
+	tokenPrefix          string // = cfg.KeyPrefix + tokenKeyPrefix;         applied to all token hash keys
+	userSetPrefix        string // = cfg.KeyPrefix + userSetKeyPrefix;        applied to all user-set keys
+	audienceSetPrefix    string // = cfg.KeyPrefix + audienceSetKeyPrefix;    applied to audience-scoped index sets
+	audienceUserSetPrefix string // = cfg.KeyPrefix + audienceUserSetKeyPrefix; applied to per-user audience index sets
 
 	// ===== Observability =====
 	logger  logging.Logger  // never nil; defaults to NoOpLogger
@@ -82,14 +88,16 @@ func NewRedisRefreshStore(cfg RedisRefreshStoreConfig) (*RedisRefreshStore, erro
 	}
 
 	return &RedisRefreshStore{
-		client:        cfg.Client,
-		namespace:     cfg.KeyPrefix,
-		tokenPrefix:   cfg.KeyPrefix + tokenKeyPrefix,
-		userSetPrefix: cfg.KeyPrefix + userSetKeyPrefix,
-		logger:        cfg.Logger,
-		metrics:       cfg.Metrics,
-		tracer:        cfg.Tracer,
-		backend:       "redis",
+		client:               cfg.Client,
+		namespace:            cfg.KeyPrefix,
+		tokenPrefix:          cfg.KeyPrefix + tokenKeyPrefix,
+		userSetPrefix:        cfg.KeyPrefix + userSetKeyPrefix,
+		audienceSetPrefix:    cfg.KeyPrefix + audienceSetKeyPrefix,
+		audienceUserSetPrefix: cfg.KeyPrefix + audienceUserSetKeyPrefix,
+		logger:               cfg.Logger,
+		metrics:              cfg.Metrics,
+		tracer:               cfg.Tracer,
+		backend:              "redis",
 	}, nil
 }
 
@@ -115,7 +123,7 @@ func (r *RedisRefreshStore) startSpan(ctx context.Context, operation string) (co
 //
 // A defensive copy of metadata is made so later mutations to the caller's map
 // do not affect the stored token.
-func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error {
+func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]interface{}) error {
 	ctx, span := r.startSpan(ctx, "Store")
 	defer span.End()
 	span.SetAttribute("token_id", tokenID)
@@ -204,6 +212,20 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 	}
 
 	// ===== STEP 4: Build Token Data Map =====
+	var audienceJSON string
+	if len(audience) > 0 {
+		ab, err := json.Marshal(audience)
+		if err != nil {
+			r.logger.Error("store failed: audience marshal error", ctx,
+				"tokenID", tokenID, "error", err)
+			wrapped := fmt.Errorf("failed to marshal audience: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return wrapped
+		}
+		audienceJSON = string(ab)
+	}
+
 	now := time.Now()
 	tokenData := map[string]interface{}{
 		"userID":    userID,
@@ -211,6 +233,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 		"createdAt": now.UnixMilli(),
 		"revoked":   "false",
 		"metadata":  metadataJSON,
+		"audience":  audienceJSON,
 	}
 
 	// ===== STEP 5: Execute Atomic Write via Pipeline =====
@@ -221,6 +244,10 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, e
 	pipe := r.client.Pipeline()
 	pipe.HSet(ctx, tokenKey, tokenData)
 	pipe.SAdd(ctx, userSetKey, tokenID)
+	for _, aud := range audience {
+		pipe.SAdd(ctx, r.audienceSetPrefix+aud, tokenID)
+		pipe.SAdd(ctx, r.audienceUserSetPrefix+aud+":"+userID, tokenID)
+	}
 	pipe.Expire(ctx, tokenKey, duration)
 
 	r.logger.Debug("executing redis pipeline for token store", ctx,
@@ -387,6 +414,19 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		ExpiresAt: expiresAt,
 		CreatedAt: createdAt,
 		Revoked:   revoked,
+	}
+
+	if audJSON, exists := hash["audience"]; exists && audJSON != "" {
+		var aud []string
+		if err := json.Unmarshal([]byte(audJSON), &aud); err != nil {
+			r.logger.Error("retrieve failed: audience unmarshal error", ctx,
+				"tokenID", tokenID, "error", err)
+			wrapped := fmt.Errorf("failed to unmarshal audience: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return nil, wrapped
+		}
+		safeToken.Audience = aud
 	}
 
 	if metadataJSON, exists := hash["metadata"]; exists && metadataJSON != "" {
@@ -686,6 +726,15 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 			userSetKey := r.userSetPrefix + userID
 
 			_ = r.client.SRem(ctx, userSetKey, tokenID).Err()
+
+			var tokenAudiences []string
+			if audJSON := hash["audience"]; audJSON != "" {
+				_ = json.Unmarshal([]byte(audJSON), &tokenAudiences)
+			}
+			for _, aud := range tokenAudiences {
+				_ = r.client.SRem(ctx, r.audienceSetPrefix+aud, tokenID).Err()
+				_ = r.client.SRem(ctx, r.audienceUserSetPrefix+aud+":"+userID, tokenID).Err()
+			}
 		}
 	}
 
@@ -977,6 +1026,15 @@ func (r *RedisRefreshStore) fetchTokensByIDs(ctx context.Context, tokenIDs []str
 			CreatedAt: time.UnixMilli(createdAtMillis),
 			Revoked:   hash["revoked"] == "true",
 		}
+		if audJSON, ok := hash["audience"]; ok && audJSON != "" {
+			var aud []string
+			if err := json.Unmarshal([]byte(audJSON), &aud); err != nil {
+				r.logger.Warn("fetchTokensByIDs: skipping audience for token", ctx,
+					"tokenID", tokenIDs[i], "error", err)
+			} else {
+				t.Audience = aud
+			}
+		}
 		if metadataJSON, ok := hash["metadata"]; ok && metadataJSON != "" {
 			var meta map[string]interface{}
 			if err := json.Unmarshal([]byte(metadataJSON), &meta); err != nil {
@@ -992,6 +1050,334 @@ func (r *RedisRefreshStore) fetchTokensByIDs(ctx context.Context, tokenIDs []str
 	return tokens, nil
 }
 
+// RevokeAllForAudience revokes every refresh token that was issued with the
+// given audience value. Returns the count of tokens marked revoked. A token
+// with multiple audiences is revoked globally — not per-audience — so every
+// service the token could reach is invalidated when any one of its audiences
+// is targeted. It is idempotent — already-revoked tokens are counted but
+// cause no error. Returns ErrInvalidAudience if audience is empty. Returns
+// the context error if the context is cancelled.
+func (r *RedisRefreshStore) RevokeAllForAudience(ctx context.Context, audience string) (int, error) {
+	ctx, span := r.startSpan(ctx, "RevokeAllForAudience")
+	defer span.End()
+	span.SetAttribute("audience", audience)
+
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	count := 0
+	defer func() {
+		r.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+			"operation":       "revoke_all_audience",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+		})
+		r.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
+			"operation":       "revoke_all_audience",
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
+		r.logger.Warn("revokeAllForAudience aborted: context cancelled", ctx,
+			"audience", audience,
+			"reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return 0, err
+	}
+
+	// ===== STEP 2: Validate Inputs =====
+	if len(strings.TrimSpace(audience)) == 0 {
+		status = "validation_error"
+		errorType = "validation_error"
+		r.logger.Warn("revokeAllForAudience rejected: audience is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidAudience)
+		span.SetStatus(tracing.StatusError, ErrInvalidAudience.Error())
+		return 0, ErrInvalidAudience
+	}
+
+	// ===== STEP 3: SSCAN Audience Set for All Token IDs =====
+	audienceSetKey := r.audienceSetPrefix + audience
+	var allTokenIDs []string
+	var cursor uint64
+	for {
+		tokenIDs, nextCursor, err := r.client.SScan(ctx, audienceSetKey, cursor, "*", 100).Result()
+		if err != nil {
+			r.logger.Error("revokeAllForAudience failed: redis sscan error", ctx,
+				"audience", audience,
+				"error", err)
+			wrapped := fmt.Errorf("failed to scan audience tokens: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return 0, wrapped
+		}
+		allTokenIDs = append(allTokenIDs, tokenIDs...)
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	r.logger.Debug("found tokens to revoke for audience", ctx,
+		"audience", audience,
+		"count", len(allTokenIDs))
+
+	// ===== STEP 4: Revoke All Tokens via Pipeline =====
+	if len(allTokenIDs) > 0 {
+		pipe := r.client.Pipeline()
+		for _, tokenID := range allTokenIDs {
+			pipe.HSet(ctx, r.tokenPrefix+tokenID, "revoked", "true")
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			r.logger.Error("revokeAllForAudience failed: redis pipeline error", ctx,
+				"audience", audience,
+				"error", err)
+			wrapped := fmt.Errorf("failed to revoke tokens: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return 0, wrapped
+		}
+		count = len(allTokenIDs)
+	}
+
+	// ===== STEP 5: Log Success =====
+	status = "success"
+	errorType = ""
+	r.logger.Info("revokeAllForAudience: all tokens revoked", ctx,
+		"audience", audience,
+		"count", count)
+	span.SetStatus(tracing.StatusOK, "")
+
+	return count, nil
+}
+
+// RevokeAllForUserAndAudience revokes every refresh token belonging to
+// userID that was issued with the given audience value. Returns the count of
+// tokens marked revoked. Revocation is global — see RevokeAllForAudience.
+// Returns ErrInvalidUserID if userID is empty, ErrInvalidAudience if
+// audience is empty. Returns the context error if the context is cancelled.
+func (r *RedisRefreshStore) RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) (int, error) {
+	ctx, span := r.startSpan(ctx, "RevokeAllForUserAndAudience")
+	defer span.End()
+	span.SetAttribute("user_id", userID)
+	span.SetAttribute("audience", audience)
+
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	count := 0
+	defer func() {
+		r.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+			"operation":       "revoke_all_user_audience",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+		})
+		r.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
+			"operation":       "revoke_all_user_audience",
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		status = "cancelled"
+		errorType = "cancelled"
+		r.logger.Warn("revokeAllForUserAndAudience aborted: context cancelled", ctx,
+			"userID", userID,
+			"audience", audience,
+			"reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return 0, err
+	}
+
+	// ===== STEP 2: Validate Inputs =====
+	if len(strings.TrimSpace(userID)) == 0 {
+		status = "validation_error"
+		errorType = "validation_error"
+		r.logger.Warn("revokeAllForUserAndAudience rejected: userID is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidUserID)
+		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
+		return 0, ErrInvalidUserID
+	}
+	if len(strings.TrimSpace(audience)) == 0 {
+		status = "validation_error"
+		errorType = "validation_error"
+		r.logger.Warn("revokeAllForUserAndAudience rejected: audience is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidAudience)
+		span.SetStatus(tracing.StatusError, ErrInvalidAudience.Error())
+		return 0, ErrInvalidAudience
+	}
+
+	// ===== STEP 3: Get All Token IDs for User+Audience =====
+	audienceUserSetKey := r.audienceUserSetPrefix + audience + ":" + userID
+	tokenIDs, err := r.client.SMembers(ctx, audienceUserSetKey).Result()
+	if err != nil {
+		r.logger.Error("revokeAllForUserAndAudience failed: redis smembers error", ctx,
+			"userID", userID,
+			"audience", audience,
+			"error", err)
+		wrapped := fmt.Errorf("failed to get user audience tokens: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return 0, wrapped
+	}
+
+	r.logger.Debug("found tokens to revoke for user and audience", ctx,
+		"userID", userID,
+		"audience", audience,
+		"count", len(tokenIDs))
+
+	// ===== STEP 4: Revoke All Tokens via Pipeline =====
+	if len(tokenIDs) > 0 {
+		pipe := r.client.Pipeline()
+		for _, tokenID := range tokenIDs {
+			pipe.HSet(ctx, r.tokenPrefix+tokenID, "revoked", "true")
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			r.logger.Error("revokeAllForUserAndAudience failed: redis pipeline error", ctx,
+				"userID", userID,
+				"audience", audience,
+				"error", err)
+			wrapped := fmt.Errorf("failed to revoke tokens: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return 0, wrapped
+		}
+		count = len(tokenIDs)
+	}
+
+	// ===== STEP 5: Log Success =====
+	status = "success"
+	errorType = ""
+	r.logger.Info("revokeAllForUserAndAudience: all tokens revoked", ctx,
+		"userID", userID,
+		"audience", audience,
+		"count", count)
+	span.SetStatus(tracing.StatusOK, "")
+
+	return count, nil
+}
+
+// ListTokensForAudience returns a page of refresh tokens that were issued
+// with the given audience value, starting from cursor. Pass an empty string
+// for cursor to begin from the start. Returns the next cursor and a nil
+// error on success. Returns an empty next cursor when iteration is exhausted.
+//
+// All tokens are returned regardless of revocation or expiry status — the
+// caller is responsible for filtering. A token issued with multiple audiences
+// appears in the listing for each of its audience values — callers
+// enumerating across multiple audiences should de-duplicate. Cursor semantics
+// mirror Redis SSCAN: tokens inserted or deleted between pages may appear, be
+// skipped, or duplicated. Returns ErrInvalidAudience if audience is empty.
+// Returns the context error if the context is cancelled.
+func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*RefreshToken, string, error) {
+	ctx, span := r.startSpan(ctx, "ListTokensForAudience")
+	defer span.End()
+	span.SetAttribute("storage.audience", audience)
+	span.SetAttribute("storage.cursor", cursor)
+	span.SetAttribute("storage.count", count)
+
+	start := time.Now()
+	errorType := "error"
+	resultCount := 0
+	defer func() {
+		r.metrics.IncrementCounter(metricListTokensForAudienceTotal, map[string]string{
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+			"error_type":      errorType,
+		})
+		r.metrics.RecordDuration(metricListTokensForAudienceDuration, time.Since(start), map[string]string{
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		errorType = "cancelled"
+		r.logger.Warn("listTokensForAudience aborted: context cancelled", ctx, "reason", err)
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 2: Validate Inputs =====
+	if len(strings.TrimSpace(audience)) == 0 {
+		errorType = "validation_error"
+		r.logger.Warn("listTokensForAudience rejected: audience is empty or whitespace", ctx)
+		span.RecordError(ErrInvalidAudience)
+		span.SetStatus(tracing.StatusError, ErrInvalidAudience.Error())
+		return nil, "", ErrInvalidAudience
+	}
+
+	// ===== STEP 3: Parse Cursor =====
+	var redisCursor uint64
+	if cursor != "" {
+		parsed, err := strconv.ParseUint(cursor, 10, 64)
+		if err != nil {
+			errorType = "invalid_cursor"
+			r.logger.Warn("listTokensForAudience: invalid cursor — starting from 0", ctx, "cursor", cursor)
+		} else {
+			redisCursor = parsed
+		}
+	}
+
+	// ===== STEP 4: SSCAN the Audience's Token Set =====
+	scanCount := int64(count)
+	if scanCount <= 0 {
+		scanCount = 10
+	}
+	audienceSetKey := r.audienceSetPrefix + audience
+	tokenIDs, nextRedisCursor, err := r.client.SScan(ctx, audienceSetKey, redisCursor, "*", scanCount).Result()
+	if err != nil {
+		errorType = "redis_error"
+		r.logger.Error("listTokensForAudience failed: redis sscan error", ctx,
+			"audience", audience, "error", err)
+		wrapped := fmt.Errorf("failed to scan audience tokens: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return nil, "", wrapped
+	}
+
+	// ===== STEP 5: Hydrate Token IDs =====
+	tokens, err := r.fetchTokensByIDs(ctx, tokenIDs)
+	if err != nil {
+		errorType = "redis_error"
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		return nil, "", err
+	}
+
+	// ===== STEP 6: Compute Next Cursor =====
+	nextCursor := ""
+	if nextRedisCursor != 0 {
+		nextCursor = strconv.FormatUint(nextRedisCursor, 10)
+	}
+
+	// ===== STEP 7: Log and Return =====
+	errorType = ""
+	resultCount = len(tokens)
+	span.SetAttribute("storage.result_count", resultCount)
+	span.SetStatus(tracing.StatusOK, "")
+	r.logger.Info("listTokensForAudience: page returned", ctx,
+		"audience", audience,
+		"result_count", resultCount,
+		"next_cursor", nextCursor)
+
+	return tokens, nextCursor, nil
+}
+
 var _ RefreshStore = (*RedisRefreshStore)(nil)
 
 // Sentinel errors for RedisRefreshStore operations.
@@ -1001,6 +1387,8 @@ var (
 
 // Redis key prefixes
 const (
-	tokenKeyPrefix   = "tokens:"
-	userSetKeyPrefix = "user_tokens:"
+	tokenKeyPrefix          = "tokens:"
+	userSetKeyPrefix        = "user_tokens:"
+	audienceSetKeyPrefix    = "audience_tokens:"
+	audienceUserSetKeyPrefix = "audience_user_tokens:"
 )

@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package tokens
 
 // Metric names for TokenManager operations. All implementations record the
@@ -18,4 +22,7 @@ const (
 
 	metricTokensListForUserTotal    = "jwtauth_tokens_list_for_user_total"
 	metricTokensListForUserDuration = "jwtauth_tokens_list_for_user_duration_seconds"
+
+	metricTokensListForAudienceTotal    = "jwtauth_tokens_list_for_audience_total"
+	metricTokensListForAudienceDuration = "jwtauth_tokens_list_for_audience_duration_seconds"
 )

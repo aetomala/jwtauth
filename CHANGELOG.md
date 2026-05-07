@@ -10,6 +10,68 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased — v0.5.0]
+
+### Breaking
+
+- **`storage.RefreshStore.Store()` gains `audience []string` parameter** — all custom `RefreshStore` implementations must update their `Store()` method signature. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. Add a compile-time assertion to catch the gap early: `var _ storage.RefreshStore = (*MyStore)(nil)`. See #124 and `UPGRADING.md`.
+
+- **`storage.RefreshStore` gains `RevokeAllForAudience` and `RevokeAllForUserAndAudience`** — all custom `RefreshStore` implementations must add both methods or they will not compile. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. See #135 and `UPGRADING.md`.
+
+- **`storage.RefreshStore` gains `ListTokensForAudience(ctx, audience, cursor, count)`** — all custom `RefreshStore` implementations must add this method or they will not compile. `MemoryRefreshStore` and `RedisRefreshStore` are already updated. Add a compile-time assertion to catch the gap early: `var _ storage.RefreshStore = (*MyStore)(nil)`. See #143 and `UPGRADING.md`.
+
+- **`jwtauth_tokens_revoked_total` label `operation` renamed to `revocation_scope`** — update any Prometheus alert rules, recording rules, or dashboards that filter or group by the old label name. Existing label values (`"single"`, `"all_user"`) are unchanged. See #124.
+
+### Added
+
+- **`IssueOption` type and `WithAudience` functional option** — all six issuance methods (`IssueAccessToken`, `IssueAccessTokenWithClaims`, `IssueRefreshToken`, `IssueRefreshTokenWithClaims`, `IssueTokenPair`, `IssueTokenPairWithClaims`) now accept a variadic `...tokens.IssueOption` parameter. All existing call sites compile unchanged — the parameter is optional and defaults to the manager's configured audience. Use `tokens.WithAudience("svc-payments")` to target a specific audience for a single call. See #124.
+
+- **`RefreshToken.Audience []string`** — the stored refresh token record now carries the audience slice resolved at issuance time. `RefreshAccessToken` and `RefreshAccessTokenWithClaims` propagate this stored audience into the new access token so the refreshed token targets the same audience as the original. See #124.
+
+- **`TokenMetadata.Audience []string`** — `IntrospectToken` now populates the `Audience` field on active, revoked, and expired paths. The not-found path leaves the field nil. See #124.
+
+- **`tokens.Manager.RevokeAllForAudience(ctx, audience) error`** — revokes all non-expired refresh tokens targeting the given audience across all users. Multi-audience tokens are revoked globally — a token carrying the targeted audience is fully revoked regardless of its other audiences. Emits `revocation_scope="audience"` on `jwtauth_tokens_revoked_total`. See #135.
+
+- **`tokens.Manager.RevokeAllForUserAndAudience(ctx, userID, audience) error`** — revokes all non-expired refresh tokens for a specific user and audience. Tokens for other users in the same audience are not affected. Emits `revocation_scope="user_audience"`. See #135.
+
+- **`storage.ErrInvalidAudience`** — sentinel returned when an empty string is passed as the audience argument to the new revocation or enumeration methods. See #135 and #143.
+
+- **`ListTokensForAudience(ctx, audience, cursor, count)` added to `RefreshStore` interface and both implementations** — audience-scoped cursor-based token iteration for the audit-before-revoke workflow. `MemoryRefreshStore` uses an integer offset cursor; `RedisRefreshStore` uses Redis SSCAN cursor passthrough on the `audience_tokens:<aud>` set, hydrating tokens via the existing `fetchTokensByIDs` pipeline helper. Returns `ErrInvalidAudience` if `audience` is empty. Tokens issued with multiple audiences appear in the listing for each of their audiences. All other cursor and filtering semantics are identical to `ListTokensForUser`. `MockRefreshStore` regenerated. See #143.
+
+- **`tokens.Manager.ListTokensForAudience(ctx, audience, cursor, count)`** — thin delegation to `RefreshStore.ListTokensForAudience`. Emits a `token.list_tokens_for_audience` span (attrs: `token.namespace`, `token.audience`, `token.cursor`, `token.count`, `token.result_count`), logs success and failure, and records `jwtauth_tokens_list_for_audience_total` counter and `jwtauth_tokens_list_for_audience_duration_seconds` histogram with `namespace` and `error_type` labels. See #143.
+
+- **4 additional Prometheus metrics registered in `PrometheusMetrics`** — storage-layer metrics (`jwtauth_storage_list_tokens_for_audience_total`, `jwtauth_storage_list_tokens_for_audience_duration_seconds`) and token-manager-layer metrics (`jwtauth_tokens_list_for_audience_total`, `jwtauth_tokens_list_for_audience_duration_seconds`); all carry `namespace` and `error_type` labels. See #143.
+
+- **Microbenchmark suite** — `testing.B` benchmarks in `pkg/storage/bench_test.go`, `pkg/keys/bench_test.go`, and `pkg/tokens/bench_test.go` covering all storage operations (MemoryRefreshStore + RedisRefreshStore via miniredis), key manager cache and rotation paths, token issuance and validation (serial and parallel), rotation-under-load concurrency, observability tax (NoOp vs PrometheusMetrics vs OtelTracer), and a baseline comparison against raw `golang-jwt/jwt`. Results and reproduction instructions in `doc/PERFORMANCE.md`. See #141.
+
+### Fixed
+
+- **`tokens.ErrTokenMissingKid` exported sentinel** — `ValidateAccessToken` previously returned an inline `errors.New(...)` when the JWT header lacked a `kid` field, making the missing-kid case indistinguishable from generic `ErrInvalidToken` via `errors.Is`. The sentinel is now exported and surfaced directly so middleware can return a precise 401 payload. `ValidateAccessTokenWithClaims` inherits the fix by delegation. See #178.
+
+- **`cleanupExpiredKeys` current-key guard covered by spec** — the guard that prevents the active signing key from being deleted during a cleanup sweep was already implemented (`if keyID == m.currentKeyID { continue }`) but had no test coverage. A new Phase 12 spec in the KeyManager suite verifies the guard using a `CleanupExpiredKeysForTest` test export that triggers the sweep synchronously. See #179.
+
+- **`jti` claim switched to UUID v4** — `generateTokenID()` previously used `crypto/rand` + `base64.RawURLEncoding` to produce a 22-character base64url string. It now returns `uuid.New().String()` (36-character UUID v4), aligning `jti` with the `kid` format and making the implementation match what ADR-005 already documents. No interface changes; no new module dependencies. See #196.
+
+### Chore
+
+- **Apache 2.0 SPDX license headers added to all Go source files** — every `.go` file under `pkg/`, `internal/`, and `examples/` now carries a 3-line header (`Copyright 2026 Angel Tomala-Reyes` + `SPDX-License-Identifier: Apache-2.0`). `goheader` added to `.golangci.yml` to enforce headers on new files going forward. See #144.
+
+### Documentation
+
+- **`SECURITY.md` created** — vulnerability disclosure policy at the repo root: supported versions table, private advisory reporting flow via GitHub Security Advisories, coordinated disclosure policy, in-scope / out-of-scope matrix (rate limiting and middleware explicitly out of scope), and an ADR reference table for all security-relevant design decisions. See #133.
+
+- **Redis Security Hardening guide** added to `doc/DEPLOYMENT.md` — TLS configuration via `tls.Config`, AUTH/ACL credentials via environment variables, minimum ACL command sets for `RedisKeyStore` and `RedisRefreshStore`, and network isolation guidance for Kubernetes, bare-metal, and managed Redis deployments. See #131.
+
+- **Custom Claims Validation section** added to `doc/DEPLOYMENT.md` — documents that jwtauth validates token structure and standard claims but does not validate custom claim values; includes a type-assert and range-check example plus a common-pitfalls table. A corresponding callout added to `README.md`. See #132.
+
+- **Rate Limiting section extended** in `doc/DEPLOYMENT.md` — adds a recommended starting-values table (token issuance 10 req/min, refresh 30 req/min, revocation 20 req/min, internal validation 1 000 req/min) and gateway configuration references for Kong, NGINX Ingress, and AWS API Gateway. See #134.
+
+### Performance
+
+- **`ValidateAccessToken` and `ValidateAccessTokenWithClaims` hot-path alloc reduction** — three-phase structural optimization reduces `ValidateAccessToken` from 109 → 102 allocs/op (−7, −6%) and `ValidateAccessTokenWithClaims` from 194 → 159 allocs/op (−35, −18%). Changes are internal to `pkg/tokens/manager.go`: package-level `reservedJWTClaims` map (Phase 1, PR #169); direct base64+JSON payload extraction replacing a second `jwt.ParseUnverified` call (Phase 2, PR #170); pre-built metric label maps reused on the success path (Phase 3, PR #171). No interface changes. Stdlib only. See `doc/PERFORMANCE.md` and #142.
+
+---
+
 ## [v0.4.0] — 2026-04-30
 
 ### Breaking

@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Package keys provides zero-downtime RSA key rotation for JWT signing.
 //
 // KeyManager generates RSA key pairs, rotates them on a configurable schedule, and
@@ -250,6 +254,13 @@ func (m *Manager) Mu() *sync.RWMutex {
 // the in-memory key cache. Do not use in production code.
 func (m *Manager) Keys() map[string]*KeyPair {
 	return m.keys
+}
+
+// CleanupExpiredKeysForTest invokes cleanupExpiredKeys for testing purposes only.
+// This is exported solely to allow tests to trigger the cleanup sweep synchronously
+// without waiting for the rotation scheduler ticker.
+func (m *Manager) CleanupExpiredKeysForTest(ctx context.Context) {
+	m.cleanupExpiredKeys(ctx)
 }
 
 // NewManager creates and returns a new Manager with the given configuration.
@@ -673,6 +684,15 @@ func (m *Manager) GetJWKS(ctx context.Context) (*JWKS, error) {
 	return &JWKS{Keys: keys}, nil
 }
 
+// keyPairKeySize returns the RSA key size in bits.
+// PublicKey.N and PrivateKey.N share the same modulus — use whichever is present.
+func keyPairKeySize(kp *KeyPair) int {
+	if kp.PrivateKey != nil {
+		return kp.PrivateKey.N.BitLen()
+	}
+	return kp.PublicKey.N.BitLen()
+}
+
 // GetKeyInfo returns public metadata for a specific key by ID.
 // If keyID is empty, returns metadata for the current signing key.
 // Returns ErrManagerNotRunning if the manager is not running.
@@ -738,7 +758,7 @@ func (m *Manager) GetKeyInfo(ctx context.Context, keyID string) (*KeyInfo, error
 		CreatedAt:   keyPair.CreatedAt,
 		RotateAt:    rotateAt,
 		ExpiresAt:   keyPair.ExpiresAt,
-		KeySizeBits: keyPair.PrivateKey.N.BitLen(),
+		KeySizeBits: keyPairKeySize(keyPair),
 		Algorithm:   "RS256",
 		IsCurrent:   isCurrent,
 		IsValid:     isValid,

@@ -28,7 +28,7 @@ JWT tokens can be stateless (no server-side storage) or stateful (server tracks 
 
 **We will use stateful refresh tokens with server-side storage.**
 
-Refresh tokens are opaque identifiers (UUIDs) stored in a RefreshStore backend. Access tokens remain stateless JWTs (no storage required for validation).
+Refresh tokens are opaque, 256-bit cryptographically random identifiers stored in a RefreshStore backend — not JWTs, so clients cannot decode or inspect them. Access tokens remain stateless JWTs (no storage required for validation).
 
 **Storage backends:**
 - `MemoryRefreshStore`: In-memory (single-instance, testing)
@@ -38,7 +38,7 @@ Refresh tokens are opaque identifiers (UUIDs) stored in a RefreshStore backend. 
 ## Consequences
 
 **Positive:**
-- Instant revocation (RevokeRefreshToken, RevokeAllUserTokens)
+- Instant revocation (RevokeRefreshToken, RevokeAllUserTokens, RevokeAllForAudience, RevokeAllForUserAndAudience)
 - Session management (know which devices are logged in)
 - Security event response (compromise → revoke immediately)
 - Compliance (GDPR "right to be forgotten" — revoke all tokens)

@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package storage
 
 // Metric names for storage operations. Both MemoryRefreshStore and
@@ -14,4 +18,7 @@ const (
 
 	metricListTokensForUserTotal    = "jwtauth_storage_list_tokens_for_user_total"
 	metricListTokensForUserDuration = "jwtauth_storage_list_tokens_for_user_duration_seconds"
+
+	metricListTokensForAudienceTotal    = "jwtauth_storage_list_tokens_for_audience_total"
+	metricListTokensForAudienceDuration = "jwtauth_storage_list_tokens_for_audience_duration_seconds"
 )

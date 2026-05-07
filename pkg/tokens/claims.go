@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package tokens
 
 import (
@@ -185,4 +189,8 @@ var (
 
 	// ErrInvalidIssuer indicates the token issuer doesn't match
 	ErrInvalidIssuer = errors.New("invalid token issuer")
+
+	// ErrTokenMissingKid indicates the JWT is missing the required kid header field.
+	// Callers may use errors.Is to distinguish this case from other validation failures.
+	ErrTokenMissingKid = errors.New("token missing kid header")
 )

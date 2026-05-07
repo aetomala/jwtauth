@@ -1,3 +1,7 @@
+// Copyright 2026 Angel Tomala-Reyes
+//
+// SPDX-License-Identifier: Apache-2.0
+
 package storage
 
 import (
@@ -27,18 +31,20 @@ type RefreshStore interface {
 	// The token should be stored with:
 	//   - Expiration time (for TTL/cleanup)
 	//   - User ID (for revocation by user)
+	//   - Audience (for audience-scoped revocation; nil inherits the manager default)
 	//   - Metadata (optional, for audit/tracking)
 	//
 	// Args:
 	//   - ctx: Request context for cancellation and deadline propagation
 	//   - tokenID: Unique identifier for the token
 	//   - userID: User who owns the token
+	//   - audience: Audience for this token; nil means caller inherits manager default
 	//   - expiresAt: When the token expires
 	//   - metadata: Optional metadata (IP, user agent, etc.)
 	//
 	// Returns:
 	//   - error: If storage fails
-	Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error
+	Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]interface{}) error
 
 	// Retrieve fetches a refresh token by ID.
 	//
@@ -85,6 +91,22 @@ type RefreshStore interface {
 	//   - error: If revocation fails
 	RevokeAllForUser(ctx context.Context, userID string) error
 
+	// RevokeAllForAudience revokes every refresh token that was issued with the
+	// given audience value. Returns the count of tokens marked revoked. A token
+	// with multiple audiences is revoked globally — not per-audience — so every
+	// service the token could reach is invalidated when any one of its audiences
+	// is targeted. It is idempotent — already-revoked tokens are counted but
+	// cause no error. Returns ErrInvalidAudience if audience is empty. Returns
+	// the context error if the context is cancelled.
+	RevokeAllForAudience(ctx context.Context, audience string) (int, error)
+
+	// RevokeAllForUserAndAudience revokes every refresh token belonging to
+	// userID that was issued with the given audience value. Returns the count of
+	// tokens marked revoked. Revocation is global — see RevokeAllForAudience.
+	// Returns ErrInvalidUserID if userID is empty, ErrInvalidAudience if
+	// audience is empty. Returns the context error if the context is cancelled.
+	RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) (int, error)
+
 	// Cleanup removes expired tokens.
 	//
 	// This should be called periodically to:
@@ -126,6 +148,22 @@ type RefreshStore interface {
 	// userID is empty. Returns the context error if the context is cancelled.
 	ListTokensForUser(ctx context.Context, userID string, cursor string, count int) ([]*RefreshToken, string, error)
 
+	// ListTokensForAudience returns a page of refresh tokens that were issued
+	// with the given audience value, starting from cursor. Pass an empty string
+	// for cursor to begin from the start. Returns the next cursor and a nil
+	// error on success. Returns an empty next cursor when iteration is
+	// exhausted. Count is a hint — actual page size may vary.
+	//
+	// All tokens are returned regardless of revocation or expiry status — the
+	// caller is responsible for filtering. A token issued with multiple
+	// audiences appears in the listing for each of its audience values —
+	// callers enumerating across multiple audiences should de-duplicate.
+	//
+	// Cursor semantics are best-effort and share the same guarantees as
+	// ListTokens. Returns ErrInvalidAudience if audience is empty. Returns the
+	// context error if the context is cancelled.
+	ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*RefreshToken, string, error)
+
 	// Namespace returns the namespace this store is operating in. For Redis-backed
 	// stores this matches the configured KeyPrefix. Implementations that do not
 	// support namespacing return empty string.
@@ -139,5 +177,6 @@ type RefreshToken struct {
 	ExpiresAt time.Time
 	CreatedAt time.Time
 	Revoked   bool
+	Audience  []string
 	Metadata  map[string]interface{}
 }
