@@ -1645,8 +1645,11 @@ func (m *Manager) ValidateAccessTokenWithClaims(ctx context.Context, tokenString
 }
 
 // RefreshAccessToken exchanges a valid refresh token for a new access token.
-// It retrieves the refresh token from storage, checks expiration and revocation
-// status, then calls IssueAccessToken for the token's owner.
+// It retrieves the refresh token from storage, checks expiration, issues a new
+// access token, then revokes the old refresh token to prevent replay attacks.
+// If revocation of the old token fails, the error is logged and a metric is
+// recorded but the new access token is still returned — the old token will
+// expire naturally.
 //
 // Returns ErrManagerNotRunning, ErrInvalidRefreshToken, ErrRefreshTokenExpired,
 // ErrTokenRevoked, or the context error.
@@ -1745,17 +1748,6 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		return "", ErrRefreshTokenExpired
 	}
 
-	// ===== STEP 6: Check If Revoked =====
-	if token.Revoked {
-		status = "revoked"
-		errorType = "revoked"
-		m.logger.Warn("refresh token has been revoked", ctx,
-			"tokenID", refreshToken)
-		span.RecordError(ErrTokenRevoked)
-		span.SetStatus(tracing.StatusError, ErrTokenRevoked.Error())
-		return "", ErrTokenRevoked
-	}
-
 	// ===== STEP 7: Issue New Access Token =====
 	newAccessToken, err := m.IssueAccessToken(ctx, token.UserID, WithAudience(token.Audience...))
 	if err != nil {
@@ -1766,6 +1758,18 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		span.RecordError(wrapped)
 		span.SetStatus(tracing.StatusError, wrapped.Error())
 		return "", wrapped
+	}
+
+	// ===== STEP 8: Revoke Old Refresh Token =====
+	if rErr := m.refreshStore.Revoke(ctx, refreshToken); rErr != nil {
+		m.logger.Warn("failed to revoke old refresh token after successful refresh", ctx,
+			"tokenID", refreshToken,
+			"error", rErr)
+		m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
+			"revocation_scope": "rotation",
+			"status":           "error",
+			"namespace":        m.namespace,
+		})
 	}
 
 	// ===== STEP 9: Record Success and Log =====
@@ -1780,13 +1784,16 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 
 // RefreshAccessTokenWithClaims exchanges a valid refresh token for a new access
 // token, embedding caller-supplied custom claims into the issued token. It
-// retrieves the refresh token from storage, checks expiration and revocation
-// status, then calls IssueAccessTokenWithClaims for the token's owner. Reserved
-// JWT field names (sub, iss, aud, exp, nbf, iat, jti) in claims are silently
-// dropped to prevent caller-controlled claim injection.
+// retrieves the refresh token from storage, checks expiration, issues a new
+// access token, then revokes the old refresh token to prevent replay attacks.
+// If revocation of the old token fails, the error is logged and a metric is
+// recorded but the new access token is still returned — the old token will
+// expire naturally. Reserved JWT field names (sub, iss, aud, exp, nbf, iat,
+// jti) in claims are silently dropped to prevent caller-controlled claim
+// injection.
 //
 // Returns ErrManagerNotRunning, ErrInvalidRefreshToken, ErrRefreshTokenExpired,
-// ErrTokenRevoked, or the context error.
+// or the context error.
 func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken string, claims CustomClaims) (string, error) {
 	ctx, span := m.startSpan(ctx, "RefreshAccessTokenWithClaims")
 	defer span.End()
@@ -1882,17 +1889,6 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 		return "", ErrRefreshTokenExpired
 	}
 
-	// ===== STEP 6: Check If Revoked =====
-	if token.Revoked {
-		status = "revoked"
-		errorType = "revoked"
-		m.logger.Warn("refresh token has been revoked", ctx,
-			"tokenID", refreshToken)
-		span.RecordError(ErrTokenRevoked)
-		span.SetStatus(tracing.StatusError, ErrTokenRevoked.Error())
-		return "", ErrTokenRevoked
-	}
-
 	// ===== STEP 7: Issue New Access Token With Claims =====
 	newAccessToken, err := m.IssueAccessTokenWithClaims(ctx, token.UserID, claims, WithAudience(token.Audience...))
 	if err != nil {
@@ -1903,6 +1899,18 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 		span.RecordError(wrapped)
 		span.SetStatus(tracing.StatusError, wrapped.Error())
 		return "", wrapped
+	}
+
+	// ===== STEP 8: Revoke Old Refresh Token =====
+	if rErr := m.refreshStore.Revoke(ctx, refreshToken); rErr != nil {
+		m.logger.Warn("failed to revoke old refresh token after successful refresh", ctx,
+			"tokenID", refreshToken,
+			"error", rErr)
+		m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
+			"revocation_scope": "rotation",
+			"status":           "error",
+			"namespace":        m.namespace,
+		})
 	}
 
 	// ===== STEP 9: Record Success and Log =====
