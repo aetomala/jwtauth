@@ -1100,15 +1100,26 @@ var _ = Describe("TokenManager", func() {
 		})
 
 		Context("with missing kid header", func() {
-			It("should return ErrInvalidToken", func() {
-				token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
+			var noKidToken string
+			BeforeEach(func() {
+				unsignedToken := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
 					Subject:   "user-123",
 					ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
 				})
 				// kid deliberately NOT set
-				signed, _ := token.SignedString(testKey)
-				_, err := service.ValidateAccessToken(ctx, signed)
-				Expect(err).To(Equal(tokens.ErrInvalidToken))
+				var err error
+				noKidToken, err = unsignedToken.SignedString(testKey)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should return ErrTokenMissingKid", func() {
+				_, err := service.ValidateAccessToken(ctx, noKidToken)
+				Expect(err).To(Equal(tokens.ErrTokenMissingKid))
+			})
+
+			It("should satisfy errors.Is(err, ErrTokenMissingKid)", func() {
+				_, err := service.ValidateAccessToken(ctx, noKidToken)
+				Expect(errors.Is(err, tokens.ErrTokenMissingKid)).To(BeTrue())
 			})
 		})
 

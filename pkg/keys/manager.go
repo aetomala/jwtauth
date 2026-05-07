@@ -256,6 +256,13 @@ func (m *Manager) Keys() map[string]*KeyPair {
 	return m.keys
 }
 
+// CleanupExpiredKeysForTest invokes cleanupExpiredKeys for testing purposes only.
+// This is exported solely to allow tests to trigger the cleanup sweep synchronously
+// without waiting for the rotation scheduler ticker.
+func (m *Manager) CleanupExpiredKeysForTest(ctx context.Context) {
+	m.cleanupExpiredKeys(ctx)
+}
+
 // NewManager creates and returns a new Manager with the given configuration.
 // Returns ErrInvalidKeyStore if KeyStore is nil, ErrInvalidKeySize if KeySize is
 // less than 2048 bits, ErrInvalidKeyRotationInterval if KeyRotationInterval is

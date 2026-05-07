@@ -1361,4 +1361,48 @@ var _ = Describe("Manager", func() {
 			})
 		})
 	})
+
+	Describe("Phase 12: cleanupExpiredKeys — current key guard", func() {
+		var m *keys.Manager
+
+		BeforeEach(func() {
+			var err error
+			m, err = keys.NewManager(newTestConfig(mockKS))
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterEach(func() {
+			if m.IsRunning() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				m.Shutdown(shutdownCtx)
+			}
+		})
+
+		It("should not delete the current signing key even when its ExpiresAt has passed", func() {
+			key := newTestKey()
+			keyID := "current-key-past-expiry"
+			storedKeys := []*keys.StoredKey{
+				{
+					KeyID:      keyID,
+					PrivateKey: key,
+					Metadata: keys.KeyMetadata{
+						ID:        keyID,
+						CreatedAt: time.Now().Add(-48 * time.Hour),
+						// ExpiresAt deliberately in the past — mimics a rotation miss.
+						ExpiresAt: time.Now().Add(-1 * time.Hour),
+					},
+				},
+			}
+			mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
+			Expect(m.Start(ctx)).To(Succeed())
+
+			// Force a cleanup sweep — the current key must survive.
+			m.CleanupExpiredKeysForTest(ctx)
+
+			_, gotKeyID, err := m.GetCurrentSigningKey(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gotKeyID).To(Equal(keyID))
+		})
+	})
 })
