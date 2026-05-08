@@ -1058,7 +1058,7 @@ All spans set `StatusOK` on success and `RecordError` + `StatusError` on failure
 
 ## Performance
 
-Measured on Apple M4 Max, Go 1.26.2, `GOMAXPROCS=16`. Redis numbers use in-process miniredis — add your Redis network RTT for real deployments.
+Measured on Apple M4 Max, Go 1.26.3, `GOMAXPROCS=16`. Redis numbers use in-process miniredis — add your Redis network RTT for real deployments.
 
 | Operation | ns/op | B/op | allocs/op |
 |---|---|---|---|
