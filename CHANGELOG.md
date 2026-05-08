@@ -52,6 +52,8 @@ All notable changes to this project will be documented in this file.
 
 - **`jti` claim switched to UUID v4** — `generateTokenID()` previously used `crypto/rand` + `base64.RawURLEncoding` to produce a 22-character base64url string. It now returns `uuid.New().String()` (36-character UUID v4), aligning `jti` with the `kid` format and making the implementation match what ADR-005 already documents. No interface changes; no new module dependencies. See #196.
 
+- **`RedisRefreshStore.Cleanup` gauge accuracy** — `metricStorageTokensCount` was computed as `totalScanned - removed`, inflating the gauge when token keys fail to deserialize during the SCAN sweep (HGetAll error or invalid `expiresAt` timestamp). The fix introduces an explicit `nonExpired` counter incremented only for keys that successfully parse and are not expired. The `(int, error)` return value was already correct in both implementations. See #180.
+
 ### Chore
 
 - **Go toolchain bumped to 1.26.3** — addresses `GO-2026-4971` (panic in `net.Dial`/`LookupPort` when a hostname contains a NUL byte; Windows only; reachable in this repo only through the example binary). Unblocks `govulncheck` in CI. See #208.
