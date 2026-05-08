@@ -167,7 +167,7 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 		return ErrInvalidUserID
 	}
 
-	if expiresAt.Before(time.Now()) {
+	if !expiresAt.After(time.Now()) {
 		status = "validation_error"
 		errorType = "validation_error"
 		m.logger.Warn("store rejected: token is already expired", ctx,
@@ -314,7 +314,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	}
 
 	// ===== STEP 6: Check Expiration =====
-	if token.ExpiresAt.Before(time.Now()) {
+	if !token.ExpiresAt.After(time.Now()) {
 		status = "expired"
 		errorType = "expired"
 		m.logger.Warn("retrieve: token has expired", ctx,
@@ -561,7 +561,7 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 
 	// ===== STEP 3: Sweep and Remove Expired Tokens =====
 	for tokenID, token := range m.tokens {
-		if token.ExpiresAt.Before(now) || token.ExpiresAt.Equal(now) {
+		if !token.ExpiresAt.After(now) {
 			m.logger.Debug("removing expired token", ctx,
 				"tokenID", token.TokenID,
 				"expiredAt", token.ExpiresAt)

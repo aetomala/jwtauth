@@ -178,7 +178,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, a
 		return ErrInvalidUserID
 	}
 
-	if expiresAt.Before(time.Now()) || expiresAt.Equal(time.Now()) {
+	if !expiresAt.After(time.Now()) {
 		status = "validation_error"
 		errorType = "validation_error"
 		r.logger.Warn("store rejected: token is already expired", ctx,
@@ -383,7 +383,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	}
 
 	expiresAt := time.UnixMilli(expiresAtMillis)
-	if expiresAt.Before(time.Now()) {
+	if !expiresAt.After(time.Now()) {
 		status = "expired"
 		errorType = "expired"
 		r.logger.Warn("retrieve: token has expired", ctx,
@@ -718,7 +718,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		}
 
 		expiresAt := time.UnixMilli(expiresAtMillis)
-		if expiresAt.Before(now) || expiresAt.Equal(now) {
+		if !expiresAt.After(now) {
 			expiredKeys = append(expiredKeys, key)
 
 			userID := hash["userID"]
