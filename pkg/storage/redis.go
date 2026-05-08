@@ -693,6 +693,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	count := 0
 	now := time.Now()
 	totalScanned := 0
+	nonExpired := 0
 
 	iter := r.client.Scan(ctx, 0, r.tokenPrefix+"*", 0).Iterator()
 
@@ -735,6 +736,8 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 				_ = r.client.SRem(ctx, r.audienceSetPrefix+aud, tokenID).Err()
 				_ = r.client.SRem(ctx, r.audienceUserSetPrefix+aud+":"+userID, tokenID).Err()
 			}
+		} else {
+			nonExpired++
 		}
 	}
 
@@ -764,7 +767,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		count = len(expiredKeys)
 	}
 	removed = count
-	remaining = totalScanned - removed
+	remaining = nonExpired
 
 	// ===== STEP 4: Log Success =====
 	status = "success"
