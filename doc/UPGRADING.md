@@ -82,8 +82,9 @@ methods return `error` only; the storage-layer count is used internally for logg
 
 **Multi-audience revocation is global.** A token issued with `WithAudience("svc-payments",
 "svc-reports")` is revoked completely when either audience is targeted — not partially. See
-[Audience-Scoped Revocation](../doc/DEPLOYMENT.md#audience-scoped-revocation) in
-`DEPLOYMENT.md` for the full semantic and use cases.
+[ADR-009](adr/009-multi-audience-token-revocation.md) for the decision rationale and
+[Audience-Scoped Revocation](DEPLOYMENT.md#audience-scoped-revocation) in `DEPLOYMENT.md`
+for operational patterns and use cases.
 
 ### 5. `storage.RefreshStore` — one new enumeration method (#143)
 

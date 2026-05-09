@@ -70,6 +70,8 @@ All notable changes to this project will be documented in this file.
 
 - **Rate Limiting section extended** in `doc/DEPLOYMENT.md` — adds a recommended starting-values table (token issuance 10 req/min, refresh 30 req/min, revocation 20 req/min, internal validation 1 000 req/min) and gateway configuration references for Kong, NGINX Ingress, and AWS API Gateway. See #134.
 
+- **ADR-009** — Documents multi-audience token revocation semantics: a refresh token is a single session grant; revoking for any one of its audiences revokes the token globally. Covers decision rationale, alternatives considered (per-audience flags — rejected), and operator guidance on audience scheme design. `UPGRADING.md` updated to reference the ADR directly. See #182.
+
 ### Performance
 
 - **`ValidateAccessToken` and `ValidateAccessTokenWithClaims` hot-path alloc reduction** — three-phase structural optimization reduces `ValidateAccessToken` from 109 → 102 allocs/op (−7, −6%) and `ValidateAccessTokenWithClaims` from 194 → 159 allocs/op (−35, −18%). Changes are internal to `pkg/tokens/manager.go`: package-level `reservedJWTClaims` map (Phase 1, PR #169); direct base64+JSON payload extraction replacing a second `jwt.ParseUnverified` call (Phase 2, PR #170); pre-built metric label maps reused on the success path (Phase 3, PR #171). No interface changes. Stdlib only. See `doc/PERFORMANCE.md` and #142.
