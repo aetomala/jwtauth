@@ -56,6 +56,10 @@ All notable changes to this project will be documented in this file.
 
 ### Chore
 
+- **`govulncheck` CI scope narrowed to `./pkg/...`** — example binaries in the root module
+  no longer gate library work. A non-blocking second step runs `govulncheck ./...` for
+  full-module visibility. Mirrored in `run-ci-locally.sh`. See #210.
+
 - **Go toolchain bumped to 1.26.3** — addresses `GO-2026-4971` (panic in `net.Dial`/`LookupPort` when a hostname contains a NUL byte; Windows only; reachable in this repo only through the example binary). Unblocks `govulncheck` in CI. See #208.
 
 - **Apache 2.0 SPDX license headers added to all Go source files** — every `.go` file under `pkg/`, `internal/`, and `examples/` now carries a 3-line header (`Copyright 2026 Angel Tomala-Reyes` + `SPDX-License-Identifier: Apache-2.0`). `goheader` added to `.golangci.yml` to enforce headers on new files going forward. See #144.
