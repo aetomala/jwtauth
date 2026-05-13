@@ -56,6 +56,13 @@ All notable changes to this project will be documented in this file.
 
 ### Chore
 
+- **`correlation-example` moved to its own `go.mod`; root module `go` directive lowered to
+  1.25.0** — the example was the only one without a separate module, causing its toolchain
+  requirements (specifically the GO-2026-4971 fix, PR #209) to inflate the library's
+  declared minimum Go version. A full dependency scan confirms no package in `./pkg/...`
+  requires Go above 1.25.0 (`go.opentelemetry.io/otel v1.43.0` sets the floor). The `go`
+  directive in `go.mod` is a public contract; `1.25.0` is the accurate value. See #215.
+
 - **`govulncheck` CI scope narrowed to `./pkg/...`** — example binaries in the root module
   no longer gate library work. A non-blocking second step runs `govulncheck ./...` for
   full-module visibility. Mirrored in `run-ci-locally.sh`. See #210.

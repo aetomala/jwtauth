@@ -1352,7 +1352,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for requirements, 
 
 ## Requirements
 
-- **Go 1.26+**
+- **Go 1.25+**
 - No external dependencies for core functionality
 - Optional: Ginkgo/Gomega for running tests
 
