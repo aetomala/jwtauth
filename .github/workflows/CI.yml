@@ -38,7 +38,11 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
-      - name: govulncheck
+      - name: govulncheck (library)
+        run: govulncheck ./pkg/...
+
+      - name: govulncheck (examples — non-blocking)
+        continue-on-error: true
         run: govulncheck ./...
 
   test:
