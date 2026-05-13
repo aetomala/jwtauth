@@ -107,7 +107,9 @@ type RefreshStore interface {
 	// audience is empty. Returns the context error if the context is cancelled.
 	RevokeAllForUserAndAudience(ctx context.Context, userID, audience string) (int, error)
 
-	// Cleanup removes expired tokens.
+	// Cleanup removes expired tokens from the store and returns the count of
+	// tokens actually deleted. Implementations must return only the count of
+	// tokens removed — not keys scanned, keys skipped, or remaining tokens.
 	//
 	// This should be called periodically to:
 	//   - Free storage space

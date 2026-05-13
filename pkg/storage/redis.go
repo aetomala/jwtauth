@@ -178,7 +178,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, a
 		return ErrInvalidUserID
 	}
 
-	if expiresAt.Before(time.Now()) || expiresAt.Equal(time.Now()) {
+	if !expiresAt.After(time.Now()) {
 		status = "validation_error"
 		errorType = "validation_error"
 		r.logger.Warn("store rejected: token is already expired", ctx,
@@ -383,7 +383,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	}
 
 	expiresAt := time.UnixMilli(expiresAtMillis)
-	if expiresAt.Before(time.Now()) {
+	if !expiresAt.After(time.Now()) {
 		status = "expired"
 		errorType = "expired"
 		r.logger.Warn("retrieve: token has expired", ctx,
@@ -693,6 +693,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	count := 0
 	now := time.Now()
 	totalScanned := 0
+	nonExpired := 0
 
 	iter := r.client.Scan(ctx, 0, r.tokenPrefix+"*", 0).Iterator()
 
@@ -718,7 +719,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		}
 
 		expiresAt := time.UnixMilli(expiresAtMillis)
-		if expiresAt.Before(now) || expiresAt.Equal(now) {
+		if !expiresAt.After(now) {
 			expiredKeys = append(expiredKeys, key)
 
 			userID := hash["userID"]
@@ -735,6 +736,8 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 				_ = r.client.SRem(ctx, r.audienceSetPrefix+aud, tokenID).Err()
 				_ = r.client.SRem(ctx, r.audienceUserSetPrefix+aud+":"+userID, tokenID).Err()
 			}
+		} else {
+			nonExpired++
 		}
 	}
 
@@ -764,7 +767,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		count = len(expiredKeys)
 	}
 	removed = count
-	remaining = totalScanned - removed
+	remaining = nonExpired
 
 	// ===== STEP 4: Log Success =====
 	status = "success"

@@ -10,7 +10,42 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [Unreleased — v0.5.0]
+## [Unreleased]
+
+### Fixed
+
+- **`RefreshAccessToken` and `RefreshAccessTokenWithClaims` revoke old refresh token on rotation** — the old refresh token was not revoked after a successful refresh, leaving it valid until its natural TTL expiry and creating a replay window where the same refresh token could be used more than once. The old token is now revoked after the new access token is issued. See #195.
+
+- **Expiry boundary standardized to `!expiresAt.After(now)` across both storage implementations** — `MemoryRefreshStore` and `RedisRefreshStore` disagreed on whether a token expiring at exactly `time.Now()` was valid: some sites used `.Before()` (strictly expired), others used `.Before() || .Equal()`. All six expiry-check sites in both implementations now use `!expiresAt.After(now)` (expired = at or before now), closing a semantic boundary inconsistency. See #176.
+
+- **`RedisRefreshStore.Cleanup` gauge accuracy** — `metricStorageTokensCount` was computed as `totalScanned - removed`, inflating the gauge when token keys fail to deserialize during the SCAN sweep (HGetAll error or invalid `expiresAt` timestamp). The fix introduces an explicit `nonExpired` counter incremented only for keys that successfully parse and are not expired. The `(int, error)` return value was already correct in both implementations. See #180.
+
+- **nil guard in `GetKeyInfo` for public-only cached key pair** — `GetKeyInfo` panicked when called with the ID of a key present in the in-memory cache with no private key material. This occurs naturally after rotation when the old key's private component is cleared from the cache while the public component is retained for JWT verification. A nil guard before the private key field access prevents the panic. See #177.
+
+### Chore
+
+- **`correlation-example` moved to its own `go.mod`; root module `go` directive lowered to
+  1.25.0** — the example was the only one without a separate module, causing its toolchain
+  requirements (specifically the GO-2026-4971 fix, PR #209) to inflate the library's
+  declared minimum Go version. A full dependency scan confirms no package in `./pkg/...`
+  requires Go above 1.25.0 (`go.opentelemetry.io/otel v1.43.0` sets the floor). The `go`
+  directive in `go.mod` is a public contract; `1.25.0` is the accurate value. See #215.
+
+- **`govulncheck` CI scope narrowed to `./pkg/...`** — example binaries in the root module
+  no longer gate library work. A non-blocking second step runs `govulncheck ./...` for
+  full-module visibility. Mirrored in `run-ci-locally.sh`. See #210.
+
+- **Go toolchain bumped to 1.26.3** — addresses `GO-2026-4971` (panic in `net.Dial`/`LookupPort` when a hostname contains a NUL byte; Windows only; reachable in this repo only through the example binary). Unblocks `govulncheck` in CI. See #208.
+
+### Documentation
+
+- **`ARCHITECTURE.md` updated to v0.5.0 accuracy** — corrected mermaid component diagram, updated interface method signatures, aligned component descriptions with the shipped v0.5.0 API, and fixed stale code examples. See #204.
+
+- **ADR-009** — Documents multi-audience token revocation semantics: a refresh token is a single session grant; revoking for any one of its audiences revokes the token globally. Covers decision rationale, alternatives considered (per-audience flags — rejected), and operator guidance on audience scheme design. `UPGRADING.md` updated to reference the ADR directly. See #182.
+
+---
+
+## [v0.5.0] — 2026-05-07
 
 ### Breaking
 

@@ -24,3 +24,4 @@ Each ADR includes:
 - [ADR-006: KeyPrefix — Namespace Isolation in Redis Backends](006-keyprefix-namespace-isolation.md)
 - [ADR-007: Namespace Field on Manager Configs for Observability Consistency](007-namespace-consistency-contract.md)
 - [ADR-008: Reserved Claims Protection at Token Issuance](008-reserved-claims-at-issuance.md)
+- [ADR-009: Multi-Audience Token Revocation Semantics](009-multi-audience-token-revocation.md)

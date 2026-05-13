@@ -4,6 +4,46 @@ This document describes breaking changes and the mechanical steps required to up
 
 ---
 
+## v0.5.x → v0.6.0
+
+v0.6.0 contains no breaking changes. All existing call sites compile and behave
+correctly without modification. Two behavioral changes affect callers that relied
+on specific edge-case semantics — review both items below before upgrading.
+
+### 1. `RefreshAccessToken` and `RefreshAccessTokenWithClaims` now revoke the old refresh token
+
+**Previous behavior:** The old refresh token remained valid (non-revoked) after a
+successful refresh until its natural TTL expiry. A caller could reuse the same
+refresh token to obtain multiple access tokens during the overlap window.
+
+**New behavior:** The old refresh token is revoked immediately after the new
+access token is issued. Any subsequent attempt to use the old token returns
+`storage.ErrTokenRevoked`.
+
+**Action required:** If your integration tests assert that the original refresh
+token remains usable after a successful refresh call, update those tests to
+expect `storage.ErrTokenRevoked` instead. Production code that follows the
+standard rotate-on-use pattern requires no changes.
+
+See ADR-002 for refresh token lifecycle semantics and #195 for the fix rationale.
+
+### 2. `tokens.ErrTokenMissingKid` is now a distinct exported sentinel
+
+**Previous behavior:** `ValidateAccessToken` returned an anonymous `errors.New`
+value when the JWT header lacked a `kid` field. The error was only detectable as
+a generic `ErrInvalidToken` via `errors.Is`.
+
+**New behavior:** The same condition now returns `tokens.ErrTokenMissingKid`, a
+named exported sentinel. `errors.Is(err, tokens.ErrInvalidToken)` continues to
+return `true` — the sentinel wraps the generic error — so existing error-handling
+code is unaffected.
+
+**Action required:** None for existing code. Middleware that wants to distinguish
+the missing-kid case specifically (e.g., to return a more targeted 401 payload)
+can now use `errors.Is(err, tokens.ErrTokenMissingKid)`. See #178.
+
+---
+
 ## v0.4.x → v0.5.0
 
 v0.5.0 introduces breaking changes to `storage.RefreshStore` and the Prometheus metric
@@ -82,8 +122,9 @@ methods return `error` only; the storage-layer count is used internally for logg
 
 **Multi-audience revocation is global.** A token issued with `WithAudience("svc-payments",
 "svc-reports")` is revoked completely when either audience is targeted — not partially. See
-[Audience-Scoped Revocation](../doc/DEPLOYMENT.md#audience-scoped-revocation) in
-`DEPLOYMENT.md` for the full semantic and use cases.
+[ADR-009](adr/009-multi-audience-token-revocation.md) for the decision rationale and
+[Audience-Scoped Revocation](DEPLOYMENT.md#audience-scoped-revocation) in `DEPLOYMENT.md`
+for operational patterns and use cases.
 
 ### 5. `storage.RefreshStore` — one new enumeration method (#143)
 

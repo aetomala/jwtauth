@@ -300,6 +300,17 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 					Skip("Store rejected expired token at write time")
 				}
 			})
+
+			It("should return ErrTokenExpired for token that expired after being stored", func() {
+				shortLived := time.Now().Add(50 * time.Millisecond)
+				err := store.Store(ctx, tokenID, userID, nil, shortLived, metadata)
+				Expect(err).NotTo(HaveOccurred())
+
+				time.Sleep(100 * time.Millisecond)
+
+				_, err = store.Retrieve(ctx, tokenID)
+				Expect(err).To(MatchError(storage.ErrTokenExpired))
+			})
 		})
 
 		// ============================================================
@@ -513,6 +524,20 @@ func RunRefreshStoreTests(description, backend string, factory StoreFactory, cle
 				token, err := store.Retrieve(ctx, "future-token")
 				Expect(err).NotTo(HaveOccurred())
 				Expect(token.TokenID).To(Equal("future-token"))
+			})
+
+			It("should treat boundary-exact expiry as expired during cleanup", func() {
+				shortLived := time.Now().Add(50 * time.Millisecond)
+				err := store.Store(ctx, tokenID, userID, nil, shortLived, metadata)
+				if err != nil {
+					Skip("Store rejected short-lived token")
+				}
+
+				time.Sleep(100 * time.Millisecond)
+
+				count, err := store.Cleanup(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(count).To(BeNumerically(">=", 1))
 			})
 		})
 

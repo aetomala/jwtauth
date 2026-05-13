@@ -1,6 +1,6 @@
 module github.com/aetomala/jwtauth/examples/token-audit
 
-go 1.26.2
+go 1.26.3
 
 require github.com/aetomala/jwtauth v0.2.0-beta
 
