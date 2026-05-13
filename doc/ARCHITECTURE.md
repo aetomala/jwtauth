@@ -1109,6 +1109,7 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 | [006](adr/006-keyprefix-namespace-isolation.md) | `KeyPrefix` — Namespace Isolation in Redis Backends | 2026-04-27 |
 | [007](adr/007-namespace-consistency-contract.md) | Namespace Field on Manager Configs for Observability Consistency | 2026-04-27 |
 | [008](adr/008-reserved-claims-at-issuance.md) | Reserved Claims Protection at Token Issuance | 2026-04-29 |
+| [009](adr/009-multi-audience-token-revocation.md) | Multi-Audience Token Revocation Semantics | 2026-05-09 |
 
 ---
 
@@ -1122,6 +1123,6 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 
 ---
 
-**Last Updated**: May 7, 2026
-**Version**: v0.5.0
+**Last Updated**: May 13, 2026
+**Version**: v0.6.0
 **Status**: Stable — all components fully instrumented (KeyManager, DiskKeyStore, RedisKeyStore, MemoryRefreshStore, RedisRefreshStore, Metrics [Prometheus, 34 metrics], Logging [Correlation ID], Distributed Tracing, TokenManager)

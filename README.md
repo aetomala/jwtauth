@@ -1087,7 +1087,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 
 ### Test Coverage
 
-**Current**: 956 comprehensive specs (896 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
+**Current**: 959 comprehensive specs (899 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
 
 **KeyManager** (3 test suites — 170 total specs):
 - **9-phase Manager tests** (MockKeyStore — no I/O):
@@ -1107,7 +1107,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
   - Concurrency, metrics recording (storage_backend: "redis")
 
-**TokenManager** (7 test suites, 258 total specs):
+**TokenManager** (7 test suites, 259 total specs):
 - **Lifecycle Management Tests**:
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency, restart after clean shutdown
@@ -1128,7 +1128,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 - **Enumeration Tests**: ListTokens, ListTokensForUser, ListTokensForAudience — cursor-based pagination, audience isolation
 - **Concurrent Operations**: parallel token issuance and service state safety
 
-**RefreshStore** (218 total specs: 109 per implementation × 2):
+**RefreshStore** (222 total specs: 111 per implementation × 2):
 - **Shared Test Suite** (109 specs, runs against both Memory and Redis):
   - **Phase 1**: Constructor initialization
   - **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
@@ -1154,7 +1154,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 - `NoOpLogger` — no-op implementation
 
 **Metrics** (66 specs):
-- `PrometheusMetrics` — 27 pre-registered metrics covering all six components
+- `PrometheusMetrics` — 34 pre-registered metrics covering all six components
 - `IncrementCounter`, `AddCounter`, `SetGauge`, `RecordHistogram`, `RecordDuration` implementations
 - Label correctness: `error_type` label on all counters, `namespace` label propagation
 - `NoOpMetrics` — no-op implementation
