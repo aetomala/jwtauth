@@ -313,18 +313,18 @@ var _ = Describe("Prometheus", func() {
 		Context("SetGauge - basic usage", func() {
 			It("should set gauge to specific value", func() {
 				labels := map[string]string{"storage_backend": "memory", "namespace": ""}
-				pm.SetGauge("jwtauth_active_tokens", 100, labels)
+				pm.SetGauge("jwtauth_storage_tokens_count", 100, labels)
 
-				Expect(gaugeValue(registry, "jwtauth_active_tokens", labels)).To(Equal(100.0))
+				Expect(gaugeValue(registry, "jwtauth_storage_tokens_count", labels)).To(Equal(100.0))
 			})
 
 			It("should overwrite previous gauge value", func() {
 				labels := map[string]string{"storage_backend": "redis", "namespace": ""}
 
-				pm.SetGauge("jwtauth_active_tokens", 50, labels)
-				pm.SetGauge("jwtauth_active_tokens", 75, labels)
+				pm.SetGauge("jwtauth_storage_tokens_count", 50, labels)
+				pm.SetGauge("jwtauth_storage_tokens_count", 75, labels)
 
-				Expect(gaugeValue(registry, "jwtauth_active_tokens", labels)).To(Equal(75.0))
+				Expect(gaugeValue(registry, "jwtauth_storage_tokens_count", labels)).To(Equal(75.0))
 			})
 		})
 
@@ -332,28 +332,28 @@ var _ = Describe("Prometheus", func() {
 			It("should allow gauge to increase", func() {
 				labels := map[string]string{"storage_backend": "memory", "namespace": ""}
 
-				pm.SetGauge("jwtauth_active_tokens", 50, labels)
-				pm.SetGauge("jwtauth_active_tokens", 100, labels)
+				pm.SetGauge("jwtauth_storage_tokens_count", 50, labels)
+				pm.SetGauge("jwtauth_storage_tokens_count", 100, labels)
 
-				Expect(gaugeValue(registry, "jwtauth_active_tokens", labels)).To(Equal(100.0))
+				Expect(gaugeValue(registry, "jwtauth_storage_tokens_count", labels)).To(Equal(100.0))
 			})
 
 			It("should allow gauge to decrease", func() {
 				labels := map[string]string{"storage_backend": "memory", "namespace": ""}
 
-				pm.SetGauge("jwtauth_active_tokens", 100, labels)
-				pm.SetGauge("jwtauth_active_tokens", 50, labels)
+				pm.SetGauge("jwtauth_storage_tokens_count", 100, labels)
+				pm.SetGauge("jwtauth_storage_tokens_count", 50, labels)
 
-				Expect(gaugeValue(registry, "jwtauth_active_tokens", labels)).To(Equal(50.0))
+				Expect(gaugeValue(registry, "jwtauth_storage_tokens_count", labels)).To(Equal(50.0))
 			})
 
 			It("should handle zero values", func() {
-				labels := map[string]string{}
+				labels := map[string]string{"namespace": ""}
 
-				pm.SetGauge("jwtauth_service_running", 1, labels)
-				pm.SetGauge("jwtauth_service_running", 0, labels)
+				pm.SetGauge("jwtauth_key_active_versions_count", 1, labels)
+				pm.SetGauge("jwtauth_key_active_versions_count", 0, labels)
 
-				Expect(gaugeValue(registry, "jwtauth_service_running", labels)).To(Equal(0.0))
+				Expect(gaugeValue(registry, "jwtauth_key_active_versions_count", labels)).To(Equal(0.0))
 			})
 
 			It("should handle negative values", func() {
@@ -478,7 +478,7 @@ var _ = Describe("Prometheus", func() {
 
 			It("should not panic with invalid labels on SetGauge", func() {
 				Expect(func() {
-					pm.SetGauge("jwtauth_active_tokens", 100, map[string]string{
+					pm.SetGauge("jwtauth_storage_tokens_count", 100, map[string]string{
 						"storage_backend": "memory",
 						"extra_key":       "value",
 					})
@@ -558,7 +558,7 @@ var _ = Describe("Prometheus", func() {
 				for i := 0; i < 10; i++ {
 					go func(value float64) {
 						defer GinkgoRecover()
-						pm.SetGauge("jwtauth_active_tokens", value, map[string]string{
+						pm.SetGauge("jwtauth_storage_tokens_count", value, map[string]string{
 							"storage_backend": "concurrent",
 							"namespace":       "",
 						})
@@ -572,8 +572,8 @@ var _ = Describe("Prometheus", func() {
 
 				// Last write wins — value must be one of the 10 values written
 				labels := map[string]string{"storage_backend": "concurrent", "namespace": ""}
-				Expect(gaugeValue(registry, "jwtauth_active_tokens", labels)).To(BeNumerically(">=", 0))
-				Expect(gaugeValue(registry, "jwtauth_active_tokens", labels)).To(BeNumerically("<", 10))
+				Expect(gaugeValue(registry, "jwtauth_storage_tokens_count", labels)).To(BeNumerically(">=", 0))
+				Expect(gaugeValue(registry, "jwtauth_storage_tokens_count", labels)).To(BeNumerically("<", 10))
 			})
 		})
 
@@ -618,7 +618,7 @@ var _ = Describe("Prometheus", func() {
 					"status":    "success",
 					"namespace": "",
 				})
-				pm.SetGauge("jwtauth_active_tokens", 42, map[string]string{
+				pm.SetGauge("jwtauth_storage_tokens_count", 42, map[string]string{
 					"storage_backend": "memory",
 					"namespace":       "",
 				})
@@ -633,7 +633,7 @@ var _ = Describe("Prometheus", func() {
 				Expect(resp.StatusCode).To(Equal(http.StatusOK))
 				Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("text/plain"))
 				Expect(strings.Contains(string(body), "jwtauth_operations_total")).To(BeTrue())
-				Expect(strings.Contains(string(body), "jwtauth_active_tokens")).To(BeTrue())
+				Expect(strings.Contains(string(body), "jwtauth_storage_tokens_count")).To(BeTrue())
 			})
 		})
 
@@ -695,8 +695,8 @@ var _ = Describe("Prometheus", func() {
 					"namespace": "",
 				})
 
-				// Update active tokens
-				pm.SetGauge("jwtauth_active_tokens", 150, map[string]string{
+				// Update storage token count
+				pm.SetGauge("jwtauth_storage_tokens_count", 150, map[string]string{
 					"storage_backend": "redis",
 					"namespace":       "",
 				})
@@ -707,7 +707,7 @@ var _ = Describe("Prometheus", func() {
 				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", map[string]string{"operation": "issue", "namespace": ""})).To(Equal(uint64(1)))
 				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", map[string]string{"operation": "validate", "namespace": ""})).To(Equal(uint64(1)))
 				Expect(histogramSampleCount(registry, "jwtauth_operation_duration_seconds", map[string]string{"operation": "refresh", "namespace": ""})).To(Equal(uint64(1)))
-				Expect(gaugeValue(registry, "jwtauth_active_tokens", map[string]string{"storage_backend": "redis", "namespace": ""})).To(Equal(150.0))
+				Expect(gaugeValue(registry, "jwtauth_storage_tokens_count", map[string]string{"storage_backend": "redis", "namespace": ""})).To(Equal(150.0))
 			})
 		})
 
@@ -923,7 +923,7 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should log warning for invalid labels on SetGauge", func() {
-				pmWithLogger.SetGauge("jwtauth_active_tokens", 100, map[string]string{
+				pmWithLogger.SetGauge("jwtauth_storage_tokens_count", 100, map[string]string{
 					"storage_backend": "memory",
 					"extra_key":       "value",
 				})

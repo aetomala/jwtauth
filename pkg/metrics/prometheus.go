@@ -95,10 +95,6 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 		"Total number of tokens revoked",
 		[]string{"revocation_scope", "status", "namespace"})
 
-	pm.registerCounter(namespace, "tokens_introspected_total",
-		"Total number of token introspections",
-		[]string{"status", "namespace"})
-
 	pm.registerCounter(namespace, "operations_total",
 		"Total number of operations",
 		[]string{"operation", "status", "namespace"})
@@ -134,14 +130,6 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 		"Duration of list-tokens-for-audience operations on the token manager in seconds",
 		[]string{"namespace"},
 		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
-
-	pm.registerGauge(namespace, "active_tokens",
-		"Number of active tokens",
-		[]string{"storage_backend", "namespace"})
-
-	pm.registerGauge(namespace, "service_running",
-		"Whether the service is running (1) or stopped (0)",
-		[]string{})
 
 	// ===== RefreshStore Metrics =====
 
