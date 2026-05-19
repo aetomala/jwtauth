@@ -150,33 +150,6 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 		"Number of tokens in storage",
 		[]string{"storage_backend", "namespace"})
 
-	pm.registerCounter(namespace, "storage_list_tokens_total",
-		"Total number of list-tokens operations",
-		[]string{"storage_backend", "namespace", "error_type"})
-
-	pm.registerHistogram(namespace, "storage_list_tokens_duration_seconds",
-		"Duration of list-tokens operations in seconds",
-		[]string{"storage_backend", "namespace"},
-		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
-
-	pm.registerCounter(namespace, "storage_list_tokens_for_user_total",
-		"Total number of list-tokens-for-user operations",
-		[]string{"storage_backend", "namespace", "error_type"})
-
-	pm.registerHistogram(namespace, "storage_list_tokens_for_user_duration_seconds",
-		"Duration of list-tokens-for-user operations in seconds",
-		[]string{"storage_backend", "namespace"},
-		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
-
-	pm.registerCounter(namespace, "storage_list_tokens_for_audience_total",
-		"Total number of list-tokens-for-audience operations",
-		[]string{"storage_backend", "namespace", "error_type"})
-
-	pm.registerHistogram(namespace, "storage_list_tokens_for_audience_duration_seconds",
-		"Duration of list-tokens-for-audience operations in seconds",
-		[]string{"storage_backend", "namespace"},
-		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
-
 	// ===== KeyStore Metrics =====
 
 	pm.registerCounter(namespace, "keystore_operations_total",
@@ -198,22 +171,10 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 		"Total number of key rotations",
 		[]string{"status", "error_type", "namespace"})
 
-	pm.registerCounter(namespace, "key_signing_operations_total",
-		"Total number of key signing operations",
-		[]string{"status", "error_type", "namespace"})
-
-	pm.registerCounter(namespace, "key_validation_operations_total",
-		"Total number of key validation operations",
-		[]string{"status", "error_type", "namespace"})
-
 	pm.registerHistogram(namespace, "key_operation_duration_seconds",
 		"Duration of key operations in seconds",
 		[]string{"operation", "namespace"},
 		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05})
-
-	pm.registerGauge(namespace, "key_current_version",
-		"Current active key version",
-		[]string{})
 
 	pm.registerGauge(namespace, "key_active_versions_count",
 		"Number of active key versions",
