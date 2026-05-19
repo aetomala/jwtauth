@@ -326,8 +326,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.wg.Add(1)
 	go m.cleanupLoop(ctx)
 
-	// ===== STEP 5: Record Metric and Log Success =====
-	m.metrics.SetGauge(metricServiceRunning, 1.0, map[string]string{})
+	// ===== STEP 5: Log Success =====
 	m.logger.Info("token service started", ctx)
 	span.SetStatus(tracing.StatusOK, "")
 	return nil
@@ -429,8 +428,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		return wrapped
 	}
 
-	// ===== STEP 6: Record Metric and Log Success =====
-	m.metrics.SetGauge(metricServiceRunning, 0.0, map[string]string{})
+	// ===== STEP 6: Log Success =====
 	m.logger.Info("token service stopped", ctx)
 	span.SetStatus(tracing.StatusOK, "")
 	return nil
@@ -2262,21 +2260,15 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	defer span.End()
 
 	start := time.Now()
-	status := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricTokensIntrospectedTotal, map[string]string{
-			"status": status,
-			"namespace": m.namespace,
-		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "introspect_token",
-			"namespace":  m.namespace,
+			"namespace": m.namespace,
 		})
 	}()
 
 	// ===== STEP 1: Service State Check =====
 	if !m.isRunning.Load() {
-		status = "not_running"
 		m.logger.Warn("attempted to introspect token while service is stopped", ctx)
 		span.RecordError(ErrManagerNotRunning)
 		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
@@ -2285,7 +2277,6 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
-		status = "cancelled"
 		m.logger.Warn("context cancelled during token introspection", ctx)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -2296,7 +2287,6 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// ===== STEP 3: Input Validation =====
 	if token == "" {
-		status = "invalid_input"
 		m.logger.Warn("empty token provided for introspection", ctx)
 		span.RecordError(ErrInvalidRefreshToken)
 		span.SetStatus(tracing.StatusError, ErrInvalidRefreshToken.Error())
@@ -2309,7 +2299,6 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	refreshToken, err := m.refreshStore.Retrieve(ctx, token)
 	if err != nil {
 		// Return inactive metadata instead of error — introspect never errors on unknown tokens
-		status = "success"
 		m.logger.Info("token not found during introspection", ctx,
 			"error", err)
 		span.SetAttribute("active", false)
@@ -2329,7 +2318,6 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// Check if expired
 	if refreshToken.ExpiresAt.Before(now) {
-		status = "success"
 		m.logger.Info("introspect token is expired", ctx,
 			"token", token,
 			"expiredAt", refreshToken.ExpiresAt)
@@ -2348,7 +2336,6 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// Check if revoked
 	if refreshToken.Revoked {
-		status = "success"
 		m.logger.Info("introspected token is revoked", ctx,
 			"tokenID", token)
 		span.SetAttribute("active", false)
@@ -2364,8 +2351,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 		}, nil
 	}
 
-	// ===== STEP 6: Record Success and Return Active Token Metadata =====
-	status = "success"
+	// ===== STEP 6: Return Active Token Metadata =====
 	m.logger.Info("token introspected", ctx,
 		"tokenID", token,
 		"userID", refreshToken.UserID,

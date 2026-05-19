@@ -4,6 +4,29 @@ This document describes breaking changes and the mechanical steps required to up
 
 ---
 
+## v0.6.x → v0.7.0
+
+v0.7.0 reduces the PrometheusMetrics registered metric set from 34 to 18 high-signal
+metrics. The `Metrics` interface is unchanged — all five methods (`IncrementCounter`,
+`AddCounter`, `SetGauge`, `RecordHistogram`, `RecordDuration`) are unaffected. Prometheus
+dashboards and alert rules that query removed metrics must be updated.
+
+### Removed metrics
+
+#### Phase 1 — lifecycle and admin metrics
+
+| Metric | Type | Reason |
+|---|---|---|
+| `jwtauth_service_running` | Gauge | Derivable from scrape health — use `up{job="jwtauth"}` instead |
+| `jwtauth_tokens_introspected_total` | Counter | Admin/debug use-case; low operational signal |
+| `jwtauth_active_tokens` | Gauge | Zero production call sites; never populated |
+
+**Action required:** Remove alert rules, recording rules, or dashboards referencing
+these metrics. Replace `jwtauth_service_running` with `up{job="jwtauth"}` for
+scrape-health alerting.
+
+---
+
 ## v0.5.x → v0.6.0
 
 v0.6.0 contains no breaking changes. All existing call sites compile and behave
