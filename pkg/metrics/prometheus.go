@@ -95,9 +95,9 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 		"Total number of tokens revoked",
 		[]string{"revocation_scope", "status", "namespace"})
 
-	pm.registerCounter(namespace, "operations_total",
-		"Total number of operations",
-		[]string{"operation", "status", "namespace"})
+	pm.registerCounter(namespace, "tokens_cleanup_total",
+		"Total number of cleanup operations",
+		[]string{"status", "namespace"})
 
 	pm.registerHistogram(namespace, "operation_duration_seconds",
 		"Duration of operations in seconds",

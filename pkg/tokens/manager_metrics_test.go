@@ -368,8 +368,7 @@ var _ = Describe("TokenManager Metrics", func() {
 		It("records success counter and duration on successful cleanup", func() {
 			startService()
 			mockStore.EXPECT().Cleanup(gomock.Any()).Return(3, nil)
-			mockM.EXPECT().IncrementCounter("jwtauth_operations_total", map[string]string{
-				"operation": "cleanup",
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_cleanup_total", map[string]string{
 				"status":    "success",
 				"namespace": "",
 			})
