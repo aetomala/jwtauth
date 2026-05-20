@@ -180,6 +180,27 @@ Redis backend wiring for production multi-instance deployments. Best for:
 REDIS_ADDR=localhost:6379 go run .
 ```
 
+### [Custom Store Example](custom-store/)
+
+A minimal in-memory `RefreshStore` implementation serving as the reference guide for
+third-party backends (PostgreSQL, DynamoDB, etc.). Best for:
+- Understanding every `RefreshStore` interface method and its invariants
+- Learning the defensive-copy, cursor, and cleanup-count contracts before building a custom backend
+- Verifying a new implementation compiles and behaves correctly
+
+**Features**:
+- Full `RefreshStore` implementation with compile-time assertion
+- Mutex-guarded in-memory map — intentionally simple; correctness over performance
+- Comments on non-obvious invariants: metadata defensive copy, cursor semantics, Cleanup return value
+- Wires into `TokenManager` and runs issuance + revocation + introspection + cleanup smoke test
+- No HTTP server — runs as a standalone command-line demo and exits
+
+**Run**:
+```bash
+cd custom-store
+go run .
+```
+
 ## Common Pattern Across Examples
 
 All framework examples (Gin, Chi, Echo) follow the same token lifecycle pattern — login, validate, refresh, revoke. The `correlation-example` extends this pattern with per-request log tracing.
@@ -191,6 +212,8 @@ The `token-audit` example focuses on the **Token Enumeration API** (`ListTokens`
 The `audience-revocation` example focuses on the **Audience-Scoped Revocation API** (`RevokeAllForAudience`, `RevokeAllForUserAndAudience`, `ListTokensForAudience`) — it demonstrates multi-audience token issuance, bulk revocation, and the atomicity property of refresh token revocation.
 
 The `redis-production` example focuses on the **Redis Backend API** (`RedisKeyStore`, `RedisRefreshStore`) — it demonstrates production connection wiring, `KeyPrefix` (ADR-006), `Namespace` (ADR-007), and graceful shutdown without an HTTP server.
+
+The `custom-store` example focuses on the **RefreshStore interface contract** — it demonstrates all 11 interface methods, non-obvious invariants (defensive copies, cursor semantics, Cleanup return value), and serves as the reference guide for building PostgreSQL or other third-party backends.
 
 ### 1. Setup Service Dependencies
 
@@ -433,15 +456,16 @@ and Redis backend wiring. None require a framework; most run as standalone progr
 
 ### Token Operations
 
-These examples demonstrate specialized token lifecycle operations — enumeration and
-audience-scoped revocation. Both run as CLI tools without an HTTP server.
+These examples demonstrate specialized token lifecycle operations — enumeration,
+audience-scoped revocation, and custom backend implementation. All run as CLI tools
+without an HTTP server.
 
-| Feature | [Token Audit](token-audit/) | [Audience Revocation](audience-revocation/) |
-|---------|------------------------------|---------------------------------------------|
-| **Focus** | Cursor-based token enumeration | Audience-scoped bulk revocation |
-| **Key APIs** | `ListTokens`, `ListTokensForUser` | `RevokeAllForAudience`, `RevokeAllForUserAndAudience`, `ListTokensForAudience` |
-| **Storage backend** | MemoryRefreshStore | MemoryRefreshStore |
-| **Best for** | Audit / reconciliation pipelines | Multi-audience revocation |
+| Feature | [Token Audit](token-audit/) | [Audience Revocation](audience-revocation/) | [Custom Store](custom-store/) |
+|---------|------------------------------|---------------------------------------------|-------------------------------|
+| **Focus** | Cursor-based token enumeration | Audience-scoped bulk revocation | RefreshStore interface implementation |
+| **Key APIs** | `ListTokens`, `ListTokensForUser` | `RevokeAllForAudience`, `RevokeAllForUserAndAudience`, `ListTokensForAudience` | Full `RefreshStore` contract |
+| **Storage backend** | MemoryRefreshStore | MemoryRefreshStore | Custom in-memory implementation |
+| **Best for** | Audit / reconciliation pipelines | Multi-audience revocation | Third-party backend reference |
 
 ## Next Steps
 
