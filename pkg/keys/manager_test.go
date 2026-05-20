@@ -1308,4 +1308,124 @@ var _ = Describe("Manager", func() {
 			Expect(gotKeyID).To(Equal(keyID))
 		})
 	})
+
+	// ===== PHASE 13: GetAllKeyInfo =====
+	Describe("Phase 13: GetAllKeyInfo", func() {
+		var m *keys.Manager
+
+		startWithKeys := func(storedKeys []*keys.StoredKey) {
+			mockKS.EXPECT().LoadAll(gomock.Any()).Return(storedKeys, nil)
+			var err error
+			m, err = keys.NewManager(newTestConfig(mockKS))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(m.Start(ctx)).To(Succeed())
+		}
+
+		shutdownManager := func() {
+			if m != nil && m.IsRunning() {
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				m.Shutdown(shutdownCtx)
+			}
+		}
+
+		Context("when the manager is not running", func() {
+			BeforeEach(func() {
+				var err error
+				m, err = keys.NewManager(newTestConfig(mockKS))
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should return ErrManagerNotRunning", func() {
+				result, err := m.GetAllKeyInfo(ctx)
+				Expect(err).To(MatchError(keys.ErrManagerNotRunning))
+				Expect(result).To(BeNil())
+			})
+		})
+
+		Context("when context is already cancelled", func() {
+			BeforeEach(func() {
+				startWithKeys([]*keys.StoredKey{
+					{
+						KeyID:      "key-ctx-cancel",
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: "key-ctx-cancel", CreatedAt: time.Now().Add(-1 * time.Hour)},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return context.Canceled", func() {
+				cancelCtx, cancel := context.WithCancel(ctx)
+				cancel()
+				result, err := m.GetAllKeyInfo(cancelCtx)
+				Expect(err).To(MatchError(context.Canceled))
+				Expect(result).To(BeNil())
+			})
+		})
+
+		Context("with a single key loaded", func() {
+			var keyID string
+
+			BeforeEach(func() {
+				keyID = "key-single"
+				startWithKeys([]*keys.StoredKey{
+					{
+						KeyID:      keyID,
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: keyID, CreatedAt: time.Now().Add(-1 * time.Hour)},
+					},
+				})
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return a slice of length 1 with correct fields", func() {
+				result, err := m.GetAllKeyInfo(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(HaveLen(1))
+				Expect(result[0].KeyID).To(Equal(keyID))
+				Expect(result[0].IsCurrent).To(BeTrue())
+				Expect(result[0].IsValid).To(BeTrue())
+				Expect(result[0].Algorithm).To(Equal("RS256"))
+				Expect(result[0].KeySizeBits).To(Equal(2048))
+				Expect(result[0].RotateAt.IsZero()).To(BeFalse())
+			})
+		})
+
+		Context("with current and overlap key after rotation", func() {
+			BeforeEach(func() {
+				startWithKeys([]*keys.StoredKey{
+					{
+						KeyID:      "original-key",
+						PrivateKey: newTestKey(),
+						Metadata:   keys.KeyMetadata{ID: "original-key", CreatedAt: time.Now().Add(-24 * time.Hour)},
+					},
+				})
+				mockKS.EXPECT().Save(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+				mockKS.EXPECT().UpdateMetadata(gomock.Any(), "original-key", gomock.Any()).Return(nil)
+				Expect(m.RotateKeys(ctx)).To(Succeed())
+			})
+
+			AfterEach(shutdownManager)
+
+			It("should return a slice of length 2 with correct IsCurrent flags", func() {
+				result, err := m.GetAllKeyInfo(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(HaveLen(2))
+
+				var currentCount int
+				for _, info := range result {
+					if info.IsCurrent {
+						currentCount++
+						Expect(info.RotateAt.IsZero()).To(BeFalse())
+					} else {
+						Expect(info.ExpiresAt.IsZero()).To(BeFalse())
+					}
+				}
+				Expect(currentCount).To(Equal(1))
+			})
+		})
+	})
 })

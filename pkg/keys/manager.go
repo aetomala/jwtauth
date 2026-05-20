@@ -752,6 +752,69 @@ func (m *Manager) GetCurrentKeyInfo(ctx context.Context) (*KeyInfo, error) {
 	return m.GetKeyInfo(ctx, "")
 }
 
+// GetAllKeyInfo returns metadata for all keys currently held in the manager's
+// in-memory cache — the active signing key plus any keys still in their overlap
+// window. Order is unspecified. Returns an empty slice (not an error) when no keys
+// are loaded. Returns ErrManagerNotRunning if the manager is not running. Returns
+// the context error if the context is cancelled. No private key material is included.
+func (m *Manager) GetAllKeyInfo(ctx context.Context) ([]KeyInfo, error) {
+	start := time.Now()
+	ctx, span := m.startSpan(ctx, "GetAllKeyInfo")
+	defer span.End()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		m.config.Logger.Error("GetAllKeyInfo aborted: context error", ctx, "error", err)
+		return nil, err
+	}
+
+	// ===== STEP 2: Check Manager is Running =====
+	if !m.IsRunning() {
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
+		m.config.Logger.Error("GetAllKeyInfo called on stopped manager", ctx, "error", ErrManagerNotRunning)
+		return nil, ErrManagerNotRunning
+	}
+
+	// ===== STEP 3: Acquire Read Lock =====
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// ===== STEP 4: Build KeyInfo Slice =====
+	now := time.Now()
+	result := make([]KeyInfo, 0, len(m.keys))
+	for _, keyPair := range m.keys {
+		isCurrent := keyPair.ID == m.currentKeyID
+		isValid := keyPair.ExpiresAt.IsZero() || now.Before(keyPair.ExpiresAt)
+
+		var rotateAt time.Time
+		if isCurrent {
+			rotateAt = keyPair.CreatedAt.Add(m.config.KeyRotationInterval)
+		}
+
+		result = append(result, KeyInfo{
+			KeyID:       keyPair.ID,
+			CreatedAt:   keyPair.CreatedAt,
+			RotateAt:    rotateAt,
+			ExpiresAt:   keyPair.ExpiresAt,
+			KeySizeBits: keyPairKeySize(keyPair),
+			Algorithm:   "RS256",
+			IsCurrent:   isCurrent,
+			IsValid:     isValid,
+		})
+	}
+
+	span.SetAttribute("key.count", len(result))
+	span.SetStatus(tracing.StatusOK, "")
+	m.config.Logger.Info("retrieved all key info", ctx, "count", len(result), "namespace", m.namespace)
+	m.metrics.RecordDuration(metricKeyOpDuration, time.Since(start),
+		map[string]string{"operation": "get_all_key_info", "namespace": m.namespace})
+
+	return result, nil
+}
+
 // RotateKeys rotates the current signing key to a newly generated one, and marks
 // the old key to expire after KeyOverlapDuration. This allows old tokens to be
 // validated during the transition period. Returns ErrManagerNotRunning if the

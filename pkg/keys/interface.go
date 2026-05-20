@@ -42,6 +42,14 @@ type KeyManager interface {
 	// Returns the context error if the context is cancelled.
 	GetCurrentKeyInfo(ctx context.Context) (*KeyInfo, error)
 
+	// GetAllKeyInfo returns metadata for all keys currently held in the manager's
+	// in-memory cache — the active signing key plus any keys still in their overlap
+	// window. Order is unspecified. Returns an empty slice (not an error) when no
+	// keys are loaded. Returns ErrManagerNotRunning if the manager is not running.
+	// Returns the context error if the context is cancelled. No private key material
+	// is included in the result.
+	GetAllKeyInfo(ctx context.Context) ([]KeyInfo, error)
+
 	// GetJWKS returns the JSON Web Key Set.
 	// Contains all currently valid public keys for token verification.
 	//
