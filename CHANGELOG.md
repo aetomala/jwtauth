@@ -60,6 +60,12 @@ All notable changes to this project will be documented in this file.
   (Correlation, Health Check, Prometheus Metrics, Redis Production), and Token Operations
   (Token Audit, Audience Revocation). See #188.
 
+- **`examples/custom-store`** — new runnable example with a full in-memory `RefreshStore`
+  implementation: compile-time assertion, all 11 interface methods, non-obvious invariants
+  documented (defensive copy, cursor semantics, Cleanup return value), wired into
+  `TokenManager` for an issuance + revocation + introspection + cleanup smoke test.
+  Reference guide for PostgreSQL and other third-party backends. See #189.
+
 ### Fixed
 
 - **DiskKeyStore metrics silently dropped when using `PrometheusMetrics`** — the three keystore metrics (`jwtauth_keystore_operations_total`, `jwtauth_keystore_operation_duration_seconds`, `jwtauth_keystore_keys_count`) are registered with a required `namespace` label, but `DiskKeyStore` omitted that label from every call. This caused `GetMetricWith` to return an error and silently discard every observation — all DiskKeyStore metrics were effectively dead. Adding `Namespace string` to `DiskKeyStoreConfig` resolves this. See #184.
