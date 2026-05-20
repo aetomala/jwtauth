@@ -92,6 +92,7 @@ func main() {
 	r.POST("/login", issueTokensHandler(mgr))
 	r.POST("/refresh", refreshHandler(mgr))
 	r.POST("/introspect", introspectHandler(mgr))
+	r.GET("/.well-known/jwks.json", jwksHandler(km))
 
 	// Protected endpoints
 	protected := r.Group("/api")
@@ -210,6 +211,27 @@ func introspectHandler(mgr *tokens.Manager) gin.HandlerFunc {
 		}
 
 		c.JSON(http.StatusOK, meta)
+	}
+}
+
+// jwksHandler serves the JSON Web Key Set at the standard well-known endpoint.
+// Keys change only on rotation (default every 30 days). Cache-Control max-age=300
+// lets consumers cache aggressively without holding stale keys after rotation.
+// Consumers should also implement the "rotate on unknown kid" pattern — retry the
+// JWKS fetch on a 401 with an unrecognized kid before rejecting the token.
+func jwksHandler(km *keys.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		jwks, err := km.GetJWKS(ctx)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve JWKS"})
+			return
+		}
+
+		c.Header("Cache-Control", "public, max-age=300")
+		c.JSON(http.StatusOK, jwks)
 	}
 }
 

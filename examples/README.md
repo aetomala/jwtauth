@@ -22,6 +22,7 @@ A simple and fast HTTP framework. Best for:
 - Simple middleware using `gin.HandlerFunc`
 - Built-in request binding and validation
 - `POST /introspect` — RFC 7662-style introspection showing `Active`, `TokenID`, `Audience`
+- `GET /.well-known/jwks.json` — JWKS endpoint with `Cache-Control` headers for external token validators
 
 **Run**:
 ```bash
