@@ -2381,10 +2381,9 @@ func (m *Manager) CleanupExpiredTokens(ctx context.Context) (int, error) {
 	start := time.Now()
 	status := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricOperationsTotal, map[string]string{
-			"operation": "cleanup",
+		m.metrics.IncrementCounter(metricTokensCleanupTotal, map[string]string{
 			"status":    status,
-			"namespace":  m.namespace,
+			"namespace": m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "cleanup",

@@ -12,7 +12,7 @@ const (
 	metricTokensValidatedTotal    = "jwtauth_tokens_validated_total"
 	metricTokensRefreshedTotal    = "jwtauth_tokens_refreshed_total"
 	metricTokensRevokedTotal      = "jwtauth_tokens_revoked_total"
-	metricOperationsTotal   = "jwtauth_operations_total"
+	metricTokensCleanupTotal = "jwtauth_tokens_cleanup_total"
 	metricOperationDuration = "jwtauth_operation_duration_seconds"
 
 	metricTokensListTotal    = "jwtauth_tokens_list_total"

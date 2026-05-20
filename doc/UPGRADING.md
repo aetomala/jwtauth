@@ -43,6 +43,20 @@ scrape-health alerting.
 Storage-layer list operations remain observable via the token-layer `jwtauth_tokens_list_*`
 metrics and the `jwtauth_storage_operations_total` counter.
 
+### Renamed metrics
+
+#### Phase 3 — `operations_total` → `tokens_cleanup_total`
+
+`jwtauth_operations_total` is renamed to `jwtauth_tokens_cleanup_total`. The `operation`
+label is dropped — the metric name now encodes the operation. The `status` and `namespace`
+labels are unchanged.
+
+**Before:** `jwtauth_operations_total{operation="cleanup", status="success", namespace="..."}`
+**After:** `jwtauth_tokens_cleanup_total{status="success", namespace="..."}`
+
+**Action required:** Update alert rules and dashboards. The `operation="cleanup"` label
+carried no additional cardinality — no information is lost.
+
 ---
 
 ## v0.5.x → v0.6.0

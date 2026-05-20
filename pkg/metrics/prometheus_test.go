@@ -192,7 +192,7 @@ var _ = Describe("Prometheus", func() {
 
 				Expect(names).To(ContainElement(ContainSubstring("jwtauth_tokens_issued_total")))
 				Expect(names).To(ContainElement(ContainSubstring("jwtauth_tokens_validated_total")))
-				Expect(names).To(ContainElement(ContainSubstring("jwtauth_operations_total")))
+				Expect(names).To(ContainElement(ContainSubstring("jwtauth_tokens_cleanup_total")))
 			})
 
 			It("should register RefreshStore metrics", func() {
@@ -225,51 +225,50 @@ var _ = Describe("Prometheus", func() {
 
 			It("should support multiple increments", func() {
 				labels := map[string]string{
-					"operation": "validate",
 					"status":    "success",
 					"namespace": "",
 				}
 
-				pm.IncrementCounter("jwtauth_operations_total", labels)
-				pm.IncrementCounter("jwtauth_operations_total", labels)
-				pm.IncrementCounter("jwtauth_operations_total", labels)
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", labels)
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", labels)
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", labels)
 
-				Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(3.0))
+				Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", labels)).To(Equal(3.0))
 			})
 
 			It("should handle different label combinations independently", func() {
-				successLabels := map[string]string{"operation": "issue", "status": "success", "namespace": ""}
-				failureLabels := map[string]string{"operation": "issue", "status": "failure", "namespace": ""}
+				successLabels := map[string]string{"status": "success", "namespace": ""}
+				failureLabels := map[string]string{"status": "failure", "namespace": ""}
 
-				pm.IncrementCounter("jwtauth_operations_total", successLabels)
-				pm.IncrementCounter("jwtauth_operations_total", failureLabels)
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", successLabels)
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", failureLabels)
 
-				Expect(counterValue(registry, "jwtauth_operations_total", successLabels)).To(Equal(1.0))
-				Expect(counterValue(registry, "jwtauth_operations_total", failureLabels)).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", successLabels)).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", failureLabels)).To(Equal(1.0))
 			})
 
 			Context("AddCounter", func() {
 				It("should add specific value to counter", func() {
-					labels := map[string]string{"operation": "batch", "status": "success", "namespace": ""}
-					pm.AddCounter("jwtauth_operations_total", 5.0, labels)
+					labels := map[string]string{"status": "success", "namespace": ""}
+					pm.AddCounter("jwtauth_tokens_cleanup_total", 5.0, labels)
 
-					Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(5.0))
+					Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", labels)).To(Equal(5.0))
 				})
 
 				It("should accumulate values across multiple calls", func() {
-					labels := map[string]string{"operation": "batch", "status": "success", "namespace": ""}
+					labels := map[string]string{"status": "success", "namespace": ""}
 
-					pm.AddCounter("jwtauth_operations_total", 5.0, labels)
-					pm.AddCounter("jwtauth_operations_total", 3.0, labels)
+					pm.AddCounter("jwtauth_tokens_cleanup_total", 5.0, labels)
+					pm.AddCounter("jwtauth_tokens_cleanup_total", 3.0, labels)
 
-					Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(8.0))
+					Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", labels)).To(Equal(8.0))
 				})
 
 				It("should handle fractional values", func() {
-					labels := map[string]string{"operation": "partial", "status": "success", "namespace": ""}
-					pm.AddCounter("jwtauth_operations_total", 0.5, labels)
+					labels := map[string]string{"status": "partial", "namespace": ""}
+					pm.AddCounter("jwtauth_tokens_cleanup_total", 0.5, labels)
 
-					Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(0.5))
+					Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", labels)).To(Equal(0.5))
 				})
 			})
 		})
@@ -279,31 +278,31 @@ var _ = Describe("Prometheus", func() {
 	Describe("Phase 2: Counter Operations - Happy Path", func() {
 		Context("IncrementCounter", func() {
 			It("should increment counter by 1", func() {
-				labels := map[string]string{"operation": "issue", "status": "success", "namespace": ""}
-				pm.IncrementCounter("jwtauth_operations_total", labels)
+				labels := map[string]string{"status": "success", "namespace": ""}
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", labels)
 
-				Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", labels)).To(Equal(1.0))
 			})
 
 			It("should support multiple increments", func() {
-				labels := map[string]string{"operation": "validate", "status": "success", "namespace": ""}
+				labels := map[string]string{"status": "success", "namespace": ""}
 
-				pm.IncrementCounter("jwtauth_operations_total", labels)
-				pm.IncrementCounter("jwtauth_operations_total", labels)
-				pm.IncrementCounter("jwtauth_operations_total", labels)
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", labels)
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", labels)
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", labels)
 
-				Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(3.0))
+				Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", labels)).To(Equal(3.0))
 			})
 
 			It("should handle different label combinations independently", func() {
-				successLabels := map[string]string{"operation": "issue", "status": "success", "namespace": ""}
-				failureLabels := map[string]string{"operation": "issue", "status": "failure", "namespace": ""}
+				successLabels := map[string]string{"status": "success", "namespace": ""}
+				failureLabels := map[string]string{"status": "failure", "namespace": ""}
 
-				pm.IncrementCounter("jwtauth_operations_total", successLabels)
-				pm.IncrementCounter("jwtauth_operations_total", failureLabels)
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", successLabels)
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", failureLabels)
 
-				Expect(counterValue(registry, "jwtauth_operations_total", successLabels)).To(Equal(1.0))
-				Expect(counterValue(registry, "jwtauth_operations_total", failureLabels)).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", successLabels)).To(Equal(1.0))
+				Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", failureLabels)).To(Equal(1.0))
 			})
 		})
 	})
@@ -431,13 +430,13 @@ var _ = Describe("Prometheus", func() {
 		Context("invalid input handling", func() {
 			It("should not panic with nil labels", func() {
 				Expect(func() {
-					pm.IncrementCounter("jwtauth_operations_total", nil)
+					pm.IncrementCounter("jwtauth_tokens_cleanup_total", nil)
 				}).NotTo(Panic())
 			})
 
 			It("should not panic with empty labels", func() {
 				Expect(func() {
-					pm.IncrementCounter("jwtauth_operations_total", map[string]string{})
+					pm.IncrementCounter("jwtauth_tokens_cleanup_total", map[string]string{})
 				}).NotTo(Panic())
 			})
 
@@ -457,10 +456,10 @@ var _ = Describe("Prometheus", func() {
 
 		Context("label mismatch handling", func() {
 			It("should handle missing required labels", func() {
-				// Metric expects "operation" and "status" labels
+				// Metric expects "status" and "namespace" labels
 				Expect(func() {
-					pm.IncrementCounter("jwtauth_operations_total", map[string]string{
-						"operation": "issue",
+					pm.IncrementCounter("jwtauth_tokens_cleanup_total", map[string]string{
+						"namespace": "",
 						// Missing "status" label
 					})
 				}).NotTo(Panic())
@@ -468,9 +467,9 @@ var _ = Describe("Prometheus", func() {
 
 			It("should handle extra labels", func() {
 				Expect(func() {
-					pm.IncrementCounter("jwtauth_operations_total", map[string]string{
-						"operation": "issue",
+					pm.IncrementCounter("jwtauth_tokens_cleanup_total", map[string]string{
 						"status":    "success",
+						"namespace": "",
 						"extra_key": "extra_value",
 						"another":   "label",
 					})
@@ -509,8 +508,7 @@ var _ = Describe("Prometheus", func() {
 					go func() {
 						defer GinkgoRecover()
 						for j := 0; j < incrementsPerGoroutine; j++ {
-							pm.IncrementCounter("jwtauth_operations_total", map[string]string{
-								"operation": "concurrent",
+							pm.IncrementCounter("jwtauth_tokens_cleanup_total", map[string]string{
 								"status":    "success",
 								"namespace": "",
 							})
@@ -524,8 +522,8 @@ var _ = Describe("Prometheus", func() {
 					<-done
 				}
 
-				labels := map[string]string{"operation": "concurrent", "status": "success", "namespace": ""}
-				Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(float64(goroutines * incrementsPerGoroutine)))
+				labels := map[string]string{"status": "success", "namespace": ""}
+				Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", labels)).To(Equal(float64(goroutines * incrementsPerGoroutine)))
 			})
 
 			It("should handle concurrent AddCounter calls", func() {
@@ -534,8 +532,7 @@ var _ = Describe("Prometheus", func() {
 				for i := 0; i < 5; i++ {
 					go func() {
 						defer GinkgoRecover()
-						pm.AddCounter("jwtauth_operations_total", 10.0, map[string]string{
-							"operation": "concurrent_add",
+						pm.AddCounter("jwtauth_tokens_cleanup_total", 10.0, map[string]string{
 							"status":    "success",
 							"namespace": "",
 						})
@@ -547,8 +544,8 @@ var _ = Describe("Prometheus", func() {
 					<-done
 				}
 
-				labels := map[string]string{"operation": "concurrent_add", "status": "success", "namespace": ""}
-				Expect(counterValue(registry, "jwtauth_operations_total", labels)).To(Equal(50.0))
+				labels := map[string]string{"status": "success", "namespace": ""}
+				Expect(counterValue(registry, "jwtauth_tokens_cleanup_total", labels)).To(Equal(50.0))
 			})
 		})
 
@@ -614,8 +611,7 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should expose metrics in Prometheus text format", func() {
-				pm.IncrementCounter("jwtauth_operations_total", map[string]string{
-					"operation": "issue",
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", map[string]string{
 					"status":    "success",
 					"namespace": "",
 				})
@@ -633,7 +629,7 @@ var _ = Describe("Prometheus", func() {
 
 				Expect(resp.StatusCode).To(Equal(http.StatusOK))
 				Expect(resp.Header.Get("Content-Type")).To(ContainSubstring("text/plain"))
-				Expect(strings.Contains(string(body), "jwtauth_operations_total")).To(BeTrue())
+				Expect(strings.Contains(string(body), "jwtauth_tokens_cleanup_total")).To(BeTrue())
 				Expect(strings.Contains(string(body), "jwtauth_storage_tokens_count")).To(BeTrue())
 			})
 		})
@@ -646,8 +642,7 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should allow querying metrics from registry", func() {
-				pm.IncrementCounter("jwtauth_operations_total", map[string]string{
-					"operation": "test",
+				pm.IncrementCounter("jwtauth_tokens_cleanup_total", map[string]string{
 					"status":    "success",
 					"namespace": "",
 				})
@@ -885,10 +880,10 @@ var _ = Describe("Prometheus", func() {
 			})
 
 			It("should log warning for label key typos", func() {
-				// Typo in label key: "operaton" instead of "operation" — causes label mismatch
-				pmWithLogger.IncrementCounter("jwtauth_operations_total", map[string]string{
-					"operaton": "issue", // Typo: should be "operation"
-					"status":   "success",
+				// Typo in label key: "statuss" instead of "status" — causes label mismatch
+				pmWithLogger.IncrementCounter("jwtauth_tokens_cleanup_total", map[string]string{
+					"statuss":   "success", // Typo: should be "status"
+					"namespace": "",
 				})
 
 				// Our implementation logs a warning when labels don't match registered label names
