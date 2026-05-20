@@ -38,6 +38,12 @@ All notable changes to this project will be documented in this file.
   token revocation covers the refresh flow). Operator guidance for adding JTI replay
   prevention in middleware is included. See #185.
 
+- **ADR-011** — Documents the cursor semantics and pagination consistency contract for
+  `ListTokens`, `ListTokensForUser`, and `ListTokensForAudience`: cursors are opaque
+  byte sequences, pagination is best-effort (Redis SCAN semantics apply across both
+  backends), and iteration order is not guaranteed stable. Operator guidance for
+  correctness-critical audit pipelines is included. See #186.
+
 ### Fixed
 
 - **DiskKeyStore metrics silently dropped when using `PrometheusMetrics`** — the three keystore metrics (`jwtauth_keystore_operations_total`, `jwtauth_keystore_operation_duration_seconds`, `jwtauth_keystore_keys_count`) are registered with a required `namespace` label, but `DiskKeyStore` omitted that label from every call. This caused `GetMetricWith` to return an error and silently discard every observation — all DiskKeyStore metrics were effectively dead. Adding `Namespace string` to `DiskKeyStoreConfig` resolves this. See #184.
