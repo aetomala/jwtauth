@@ -30,6 +30,14 @@ All notable changes to this project will be documented in this file.
 
 - **`DiskKeyStoreConfig.Namespace string`** — optional observability namespace label. When set, the value is carried on log fields (via logger enrichment at construction), span attributes (`"storage.namespace"`), and all keystore metric labels. Consistent with the existing `RedisKeyStore` namespace pattern and ADR-007. See #184.
 
+### Documentation
+
+- **ADR-010** — Documents the JTI uniqueness and replay prevention stance: access tokens
+  carry a unique UUID v4 `jti` claim used for audit correlation; jwtauth does not perform
+  JTI-based replay prevention for access tokens (short TTL mitigates the window; refresh
+  token revocation covers the refresh flow). Operator guidance for adding JTI replay
+  prevention in middleware is included. See #185.
+
 ### Fixed
 
 - **DiskKeyStore metrics silently dropped when using `PrometheusMetrics`** — the three keystore metrics (`jwtauth_keystore_operations_total`, `jwtauth_keystore_operation_duration_seconds`, `jwtauth_keystore_keys_count`) are registered with a required `namespace` label, but `DiskKeyStore` omitted that label from every call. This caused `GetMetricWith` to return an error and silently discard every observation — all DiskKeyStore metrics were effectively dead. Adding `Namespace string` to `DiskKeyStoreConfig` resolves this. See #184.
