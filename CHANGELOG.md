@@ -22,6 +22,10 @@ All notable changes to this project will be documented in this file.
 
   **Label added:** `jwtauth_tokens_list_total` and `jwtauth_tokens_list_duration_seconds` gain a `scope` label (`"all"`, `"user"`, `"audience"`). Existing queries targeting the all-tokens case must add `{scope="all"}` or use `sum(...)` to aggregate across scopes.
 
+---
+
+## [v0.6.0] — 2026-05-13
+
 ### Fixed
 
 - **`RefreshAccessToken` and `RefreshAccessTokenWithClaims` revoke old refresh token on rotation** — the old refresh token was not revoked after a successful refresh, leaving it valid until its natural TTL expiry and creating a replay window where the same refresh token could be used more than once. The old token is now revoked after the new access token is issued. See #195.
