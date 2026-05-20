@@ -26,3 +26,4 @@ Each ADR includes:
 - [ADR-008: Reserved Claims Protection at Token Issuance](008-reserved-claims-at-issuance.md)
 - [ADR-009: Multi-Audience Token Revocation Semantics](009-multi-audience-token-revocation.md)
 - [ADR-010: JTI Uniqueness and Replay Prevention Stance](010-jti-and-replay-prevention.md)
+- [ADR-011: Cursor Semantics and Pagination Consistency Contract](011-cursor-semantics.md)
