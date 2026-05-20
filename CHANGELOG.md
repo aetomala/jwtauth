@@ -49,6 +49,17 @@ All notable changes to this project will be documented in this file.
   bulk revocation (`RevokeAllForAudience`), atomicity verification, and user+audience
   revocation (`RevokeAllForUserAndAudience`). References ADR-009 and ADR-010. See #187.
 
+- **`examples/redis-production`** — new runnable example demonstrating production Redis
+  backend wiring: `RedisKeyStore` + `RedisRefreshStore` with `KeyPrefix` (ADR-006),
+  `Namespace` on both manager configs (ADR-007), env-var-driven connection config,
+  optional TLS, a token issuance + validation round-trip, and `signal.NotifyContext`
+  graceful shutdown. See #188.
+
+- **`examples/README.md`** — restructured Example Comparison from one wide table into
+  three focused tables: HTTP Framework Integration (Gin, Chi, Echo), Production Operations
+  (Correlation, Health Check, Prometheus Metrics, Redis Production), and Token Operations
+  (Token Audit, Audience Revocation). See #188.
+
 ### Fixed
 
 - **DiskKeyStore metrics silently dropped when using `PrometheusMetrics`** — the three keystore metrics (`jwtauth_keystore_operations_total`, `jwtauth_keystore_operation_duration_seconds`, `jwtauth_keystore_keys_count`) are registered with a required `namespace` label, but `DiskKeyStore` omitted that label from every call. This caused `GetMetricWith` to return an error and silently discard every observation — all DiskKeyStore metrics were effectively dead. Adding `Namespace string` to `DiskKeyStoreConfig` resolves this. See #184.
