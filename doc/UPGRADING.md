@@ -57,6 +57,35 @@ labels are unchanged.
 **Action required:** Update alert rules and dashboards. The `operation="cleanup"` label
 carried no additional cardinality — no information is lost.
 
+### Changed metrics
+
+#### Phase 4 — list metrics unified under `scope` label
+
+`jwtauth_tokens_list_for_user_total`, `jwtauth_tokens_list_for_user_duration_seconds`,
+`jwtauth_tokens_list_for_audience_total`, and `jwtauth_tokens_list_for_audience_duration_seconds`
+are removed. `jwtauth_tokens_list_total` and `jwtauth_tokens_list_duration_seconds` gain a
+`scope` label: `"all"`, `"user"`, or `"audience"`.
+
+**Before:**
+```
+jwtauth_tokens_list_total                            # scope="all" only
+jwtauth_tokens_list_for_user_total
+jwtauth_tokens_list_for_audience_total
+```
+
+**After:**
+```
+jwtauth_tokens_list_total{scope="all"}
+jwtauth_tokens_list_total{scope="user"}
+jwtauth_tokens_list_total{scope="audience"}
+```
+
+To aggregate across all scopes: `sum(jwtauth_tokens_list_total)`
+
+**Action required:** Add `{scope="all"}` to existing `jwtauth_tokens_list_total` queries
+to preserve prior semantics, or use `sum(...)` to aggregate all scopes. Remove dashboards
+referencing the four removed per-scope metrics.
+
 ---
 
 ## v0.5.x → v0.6.0
