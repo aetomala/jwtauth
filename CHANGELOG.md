@@ -44,6 +44,11 @@ All notable changes to this project will be documented in this file.
   backends), and iteration order is not guaranteed stable. Operator guidance for
   correctness-critical audit pipelines is included. See #186.
 
+- **`examples/audience-revocation`** — new runnable example demonstrating multi-audience
+  token issuance (`WithAudience`), audience-scoped listing (`ListTokensForAudience`),
+  bulk revocation (`RevokeAllForAudience`), atomicity verification, and user+audience
+  revocation (`RevokeAllForUserAndAudience`). References ADR-009 and ADR-010. See #187.
+
 ### Fixed
 
 - **DiskKeyStore metrics silently dropped when using `PrometheusMetrics`** — the three keystore metrics (`jwtauth_keystore_operations_total`, `jwtauth_keystore_operation_duration_seconds`, `jwtauth_keystore_keys_count`) are registered with a required `namespace` label, but `DiskKeyStore` omitted that label from every call. This caused `GetMetricWith` to return an error and silently discard every observation — all DiskKeyStore metrics were effectively dead. Adding `Namespace string` to `DiskKeyStoreConfig` resolves this. See #184.

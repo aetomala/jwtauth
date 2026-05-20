@@ -139,6 +139,26 @@ cd token-audit
 go run main.go
 ```
 
+### [Audience Revocation Example](audience-revocation/)
+
+Multi-audience token issuance and audience-scoped revocation. Best for:
+- Understanding `RevokeAllForAudience` and `RevokeAllForUserAndAudience`
+- Learning the atomicity property: a refresh token is revoked as a unit regardless of how many audiences it covers
+- Building service isolation patterns where different services share tokens
+
+**Features**:
+- Issues tokens with multiple audiences using `WithAudience("svc-payments", "svc-reports")`
+- Lists tokens scoped to a specific audience via `ListTokensForAudience`
+- Demonstrates `RevokeAllForAudience` and verifies that alice's token is revoked for both audiences
+- Demonstrates `RevokeAllForUserAndAudience` for targeted user+audience revocation
+- No HTTP server — runs as a standalone command-line demo and exits
+
+**Run**:
+```bash
+cd audience-revocation
+go run main.go
+```
+
 ## Common Pattern Across Examples
 
 All framework examples (Gin, Chi, Echo) follow the same token lifecycle pattern — login, validate, refresh, revoke. The `correlation-example` extends this pattern with per-request log tracing.
@@ -146,6 +166,8 @@ All framework examples (Gin, Chi, Echo) follow the same token lifecycle pattern 
 The `health-check` and `prometheus-metrics` examples focus exclusively on the **Key Inspection API** (`GetCurrentKeyInfo`) and do not require a full `TokenManager` or refresh-token flow — they are useful as standalone observability integrations or as a reference for adding key-state monitoring to an existing service.
 
 The `token-audit` example focuses on the **Token Enumeration API** (`ListTokens`, `ListTokensForUser`) — it demonstrates cursor-based pagination without an HTTP server and is useful as a reference for reconciliation jobs or session management tooling.
+
+The `audience-revocation` example focuses on the **Audience-Scoped Revocation API** (`RevokeAllForAudience`, `RevokeAllForUserAndAudience`, `ListTokensForAudience`) — it demonstrates multi-audience token issuance, bulk revocation, and the atomicity property of refresh token revocation.
 
 ### 1. Setup Service Dependencies
 
@@ -361,19 +383,20 @@ The examples show how simple it is to write middleware for any framework that ca
 
 ## Example Comparison
 
-| Feature | Gin | Chi | Echo | Correlation | Health Check | Prometheus Metrics | Token Audit |
-|---------|-----|-----|------|-------------|--------------|-------------------|-------------|
-| **Framework** | Gin | Chi | Echo | stdlib | stdlib | stdlib | stdlib |
-| **Middleware** | `gin.HandlerFunc` | `func(Handler)Handler` | `MiddlewareFunc` | `func(HandlerFunc)HandlerFunc` | — | — | — |
-| **Complexity** | Simple | Minimal | Rich features | Minimal | Minimal | Minimal | Minimal |
-| **Learning curve** | Easy | Very easy | Medium | Very easy | Very easy | Very easy | Very easy |
-| **Ecosystem** | Large | Small | Large | None (stdlib only) | None (stdlib only) | Prometheus | None (stdlib only) |
-| **Best for** | Microservices | Simplicity | Feature-rich apps | Log tracing demo | Health probes | Alerting & dashboards | Audit / reconciliation |
-| **Correlation ID** | Not shown | Not shown | Not shown | Full demo | Not shown | Not shown | Not shown |
-| **Key Inspection** | `/admin/key-status` | `/admin/key-status` | Not shown | Not shown | Full demo | Full demo | Not shown |
-| **Token Enumeration** | Not shown | Not shown | Not shown | Not shown | Not shown | Not shown | Full demo |
+| Feature | Gin | Chi | Echo | Correlation | Health Check | Prometheus Metrics | Token Audit | Audience Revocation |
+|---------|-----|-----|------|-------------|--------------|-------------------|-------------|---------------------|
+| **Framework** | Gin | Chi | Echo | stdlib | stdlib | stdlib | stdlib | stdlib |
+| **Middleware** | `gin.HandlerFunc` | `func(Handler)Handler` | `MiddlewareFunc` | `func(HandlerFunc)HandlerFunc` | — | — | — | — |
+| **Complexity** | Simple | Minimal | Rich features | Minimal | Minimal | Minimal | Minimal | Minimal |
+| **Learning curve** | Easy | Very easy | Medium | Very easy | Very easy | Very easy | Very easy | Very easy |
+| **Ecosystem** | Large | Small | Large | None (stdlib only) | None (stdlib only) | Prometheus | None (stdlib only) | None (stdlib only) |
+| **Best for** | Microservices | Simplicity | Feature-rich apps | Log tracing demo | Health probes | Alerting & dashboards | Audit / reconciliation | Multi-audience revocation |
+| **Correlation ID** | Not shown | Not shown | Not shown | Full demo | Not shown | Not shown | Not shown | Not shown |
+| **Key Inspection** | `/admin/key-status` | `/admin/key-status` | Not shown | Not shown | Full demo | Full demo | Not shown | Not shown |
+| **Token Enumeration** | Not shown | Not shown | Not shown | Not shown | Not shown | Not shown | Full demo | Audience-scoped |
+| **Audience Revocation** | Not shown | Not shown | Not shown | Not shown | Not shown | Not shown | Not shown | Full demo |
 
-The framework examples (Gin, Chi, Echo) focus on the full token lifecycle. The `health-check` and `prometheus-metrics` examples focus on the Key Inspection API — they are key-inspection-only and do not demonstrate login or refresh flows. The `token-audit` example focuses on the Token Enumeration API and runs as a CLI tool rather than an HTTP server.
+The framework examples (Gin, Chi, Echo) focus on the full token lifecycle. The `health-check` and `prometheus-metrics` examples focus on the Key Inspection API — they are key-inspection-only and do not demonstrate login or refresh flows. The `token-audit` example focuses on the Token Enumeration API and runs as a CLI tool rather than an HTTP server. The `audience-revocation` example focuses on the Audience-Scoped Revocation API and demonstrates the atomicity property of refresh token revocation.
 
 ## Next Steps
 
