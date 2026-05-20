@@ -605,10 +605,12 @@ var _ = Describe("DiskKeyStore", func() {
 				"status":          status,
 				"error_type":      errorType,
 				"storage_backend": "disk",
+				"namespace":       "",
 			})
 			mockM.EXPECT().RecordDuration("jwtauth_keystore_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation":       operation,
 				"storage_backend": "disk",
+				"namespace":       "",
 			})
 		}
 
@@ -628,6 +630,7 @@ var _ = Describe("DiskKeyStore", func() {
 				expectOpsMetrics("load_all", "success")
 				mockM.EXPECT().SetGauge("jwtauth_keystore_keys_count", gomock.Any(), map[string]string{
 					"storage_backend": "disk",
+					"namespace":       "",
 				})
 				ds := newMetricStore()
 				_, err := ds.LoadAll(ctx)
