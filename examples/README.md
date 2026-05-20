@@ -21,6 +21,7 @@ A simple and fast HTTP framework. Best for:
 - Framework-agnostic token validation
 - Simple middleware using `gin.HandlerFunc`
 - Built-in request binding and validation
+- `POST /introspect` — RFC 7662-style introspection showing `Active`, `TokenID`, `Audience`
 
 **Run**:
 ```bash

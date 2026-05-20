@@ -60,6 +60,10 @@ All notable changes to this project will be documented in this file.
   (Correlation, Health Check, Prometheus Metrics, Redis Production), and Token Operations
   (Token Audit, Audience Revocation). See #188.
 
+- **`examples/gin-example`** — added `POST /introspect` handler demonstrating `IntrospectToken`:
+  RFC 7662-style token metadata, `Active` / `TokenID` / `Audience` fields, and the pattern
+  for using `TokenID` to feed into `RevokeRefreshToken` for admin revocation flows. See #190.
+
 - **`examples/custom-store`** — new runnable example with a full in-memory `RefreshStore`
   implementation: compile-time assertion, all 11 interface methods, non-obvious invariants
   documented (defensive copy, cursor semantics, Cleanup return value), wired into

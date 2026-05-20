@@ -91,6 +91,7 @@ func main() {
 	// Public endpoints
 	r.POST("/login", issueTokensHandler(mgr))
 	r.POST("/refresh", refreshHandler(mgr))
+	r.POST("/introspect", introspectHandler(mgr))
 
 	// Protected endpoints
 	protected := r.Group("/api")
@@ -179,6 +180,36 @@ func refreshHandler(mgr *tokens.Manager) gin.HandlerFunc {
 			AccessToken: accessToken,
 			ExpiresIn:   900, // 15 minutes
 		})
+	}
+}
+
+// IntrospectRequest is the request body for token introspection.
+type IntrospectRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+// introspectHandler returns RFC 7662-style token metadata for a refresh token.
+// Active is false for revoked or expired tokens — the spec treats inactive tokens
+// as a valid response, not a failure. TokenID bridges the raw token to
+// RevokeRefreshToken for admin revocation flows.
+func introspectHandler(mgr *tokens.Manager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req IntrospectRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+		defer cancel()
+
+		meta, err := mgr.IntrospectToken(ctx, req.Token)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "introspection failed"})
+			return
+		}
+
+		c.JSON(http.StatusOK, meta)
 	}
 }
 
