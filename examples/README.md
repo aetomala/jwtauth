@@ -159,6 +159,27 @@ cd audience-revocation
 go run main.go
 ```
 
+### [Redis Production Example](redis-production/)
+
+Redis backend wiring for production multi-instance deployments. Best for:
+- Understanding `RedisKeyStore` and `RedisRefreshStore` construction and wiring
+- Learning how `KeyPrefix` (ADR-006) isolates storage keys across services
+- Learning how `Namespace` (ADR-007) scopes observability labels
+- Setting up graceful shutdown with `signal.NotifyContext`
+
+**Features**:
+- Builds a Redis client from environment variables — no hard-coded connection strings
+- Wires `RedisKeyStore` and `RedisRefreshStore` with a shared `KeyPrefix`
+- Sets `Namespace` on both `KeyManagerConfig` and `TokenManagerConfig`
+- Issues and validates one token pair as a live wiring check
+- Demonstrates graceful shutdown via `signal.NotifyContext`
+- Optional TLS — enabled with `REDIS_TLS` env var
+
+**Run**:
+```bash
+REDIS_ADDR=localhost:6379 go run .
+```
+
 ## Common Pattern Across Examples
 
 All framework examples (Gin, Chi, Echo) follow the same token lifecycle pattern — login, validate, refresh, revoke. The `correlation-example` extends this pattern with per-request log tracing.
@@ -168,6 +189,8 @@ The `health-check` and `prometheus-metrics` examples focus exclusively on the **
 The `token-audit` example focuses on the **Token Enumeration API** (`ListTokens`, `ListTokensForUser`) — it demonstrates cursor-based pagination without an HTTP server and is useful as a reference for reconciliation jobs or session management tooling.
 
 The `audience-revocation` example focuses on the **Audience-Scoped Revocation API** (`RevokeAllForAudience`, `RevokeAllForUserAndAudience`, `ListTokensForAudience`) — it demonstrates multi-audience token issuance, bulk revocation, and the atomicity property of refresh token revocation.
+
+The `redis-production` example focuses on the **Redis Backend API** (`RedisKeyStore`, `RedisRefreshStore`) — it demonstrates production connection wiring, `KeyPrefix` (ADR-006), `Namespace` (ADR-007), and graceful shutdown without an HTTP server.
 
 ### 1. Setup Service Dependencies
 
@@ -383,20 +406,42 @@ The examples show how simple it is to write middleware for any framework that ca
 
 ## Example Comparison
 
-| Feature | Gin | Chi | Echo | Correlation | Health Check | Prometheus Metrics | Token Audit | Audience Revocation |
-|---------|-----|-----|------|-------------|--------------|-------------------|-------------|---------------------|
-| **Framework** | Gin | Chi | Echo | stdlib | stdlib | stdlib | stdlib | stdlib |
-| **Middleware** | `gin.HandlerFunc` | `func(Handler)Handler` | `MiddlewareFunc` | `func(HandlerFunc)HandlerFunc` | — | — | — | — |
-| **Complexity** | Simple | Minimal | Rich features | Minimal | Minimal | Minimal | Minimal | Minimal |
-| **Learning curve** | Easy | Very easy | Medium | Very easy | Very easy | Very easy | Very easy | Very easy |
-| **Ecosystem** | Large | Small | Large | None (stdlib only) | None (stdlib only) | Prometheus | None (stdlib only) | None (stdlib only) |
-| **Best for** | Microservices | Simplicity | Feature-rich apps | Log tracing demo | Health probes | Alerting & dashboards | Audit / reconciliation | Multi-audience revocation |
-| **Correlation ID** | Not shown | Not shown | Not shown | Full demo | Not shown | Not shown | Not shown | Not shown |
-| **Key Inspection** | `/admin/key-status` | `/admin/key-status` | Not shown | Not shown | Full demo | Full demo | Not shown | Not shown |
-| **Token Enumeration** | Not shown | Not shown | Not shown | Not shown | Not shown | Not shown | Full demo | Audience-scoped |
-| **Audience Revocation** | Not shown | Not shown | Not shown | Not shown | Not shown | Not shown | Not shown | Full demo |
+### HTTP Framework Integration
 
-The framework examples (Gin, Chi, Echo) focus on the full token lifecycle. The `health-check` and `prometheus-metrics` examples focus on the Key Inspection API — they are key-inspection-only and do not demonstrate login or refresh flows. The `token-audit` example focuses on the Token Enumeration API and runs as a CLI tool rather than an HTTP server. The `audience-revocation` example focuses on the Audience-Scoped Revocation API and demonstrates the atomicity property of refresh token revocation.
+These examples show the full token lifecycle (login, validate, refresh, logout) with
+framework-specific middleware. Start here if you are integrating jwtauth into a web API.
+
+| Feature | [Gin](gin-example/) | [Chi](chi-example/) | [Echo](echo-example/) |
+|---------|---------------------|---------------------|----------------------|
+| **Framework** | Gin | Chi | Echo |
+| **Middleware** | `gin.HandlerFunc` | `func(Handler)Handler` | `MiddlewareFunc` |
+| **Complexity** | Simple | Minimal | Rich features |
+| **Ecosystem** | Large | Small | Large |
+| **Best for** | Microservices | Simplicity | Feature-rich apps |
+
+### Production Operations
+
+These examples focus on running jwtauth in production — log tracing, key-state monitoring,
+and Redis backend wiring. None require a framework; most run as standalone programs.
+
+| Feature | [Correlation](correlation-example/) | [Health Check](health-check/) | [Prometheus Metrics](prometheus-metrics/) | [Redis Production](redis-production/) |
+|---------|--------------------------------------|-------------------------------|-------------------------------------------|---------------------------------------|
+| **Focus** | Per-request log tracing | Key inspection endpoint | Key state metrics | Redis backend wiring |
+| **External deps** | None (stdlib) | None (stdlib) | Prometheus | Redis |
+| **HTTP server** | Yes | Yes | Yes (`/metrics`) | No |
+| **Best for** | Log tracing demo | Health / readiness probes | Alerting & dashboards | Multi-instance deployments |
+
+### Token Operations
+
+These examples demonstrate specialized token lifecycle operations — enumeration and
+audience-scoped revocation. Both run as CLI tools without an HTTP server.
+
+| Feature | [Token Audit](token-audit/) | [Audience Revocation](audience-revocation/) |
+|---------|------------------------------|---------------------------------------------|
+| **Focus** | Cursor-based token enumeration | Audience-scoped bulk revocation |
+| **Key APIs** | `ListTokens`, `ListTokensForUser` | `RevokeAllForAudience`, `RevokeAllForUserAndAudience`, `ListTokensForAudience` |
+| **Storage backend** | MemoryRefreshStore | MemoryRefreshStore |
+| **Best for** | Audit / reconciliation pipelines | Multi-audience revocation |
 
 ## Next Steps
 
