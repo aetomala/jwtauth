@@ -2444,10 +2444,12 @@ func (m *Manager) ListTokens(ctx context.Context, cursor string, count int) ([]*
 	errorType := "error"
 	defer func() {
 		m.metrics.IncrementCounter(metricTokensListTotal, map[string]string{
+			"scope":      "all",
 			"namespace":  m.namespace,
 			"error_type": errorType,
 		})
 		m.metrics.RecordDuration(metricTokensListDuration, time.Since(start), map[string]string{
+			"scope":     "all",
 			"namespace": m.namespace,
 		})
 	}()
@@ -2505,11 +2507,13 @@ func (m *Manager) ListTokensForUser(ctx context.Context, userID string, cursor s
 	start := time.Now()
 	errorType := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricTokensListForUserTotal, map[string]string{
+		m.metrics.IncrementCounter(metricTokensListTotal, map[string]string{
+			"scope":      "user",
 			"namespace":  m.namespace,
 			"error_type": errorType,
 		})
-		m.metrics.RecordDuration(metricTokensListForUserDuration, time.Since(start), map[string]string{
+		m.metrics.RecordDuration(metricTokensListDuration, time.Since(start), map[string]string{
+			"scope":     "user",
 			"namespace": m.namespace,
 		})
 	}()
@@ -2569,11 +2573,13 @@ func (m *Manager) ListTokensForAudience(ctx context.Context, audience string, cu
 	start := time.Now()
 	errorType := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricTokensListForAudienceTotal, map[string]string{
+		m.metrics.IncrementCounter(metricTokensListTotal, map[string]string{
+			"scope":      "audience",
 			"namespace":  m.namespace,
 			"error_type": errorType,
 		})
-		m.metrics.RecordDuration(metricTokensListForAudienceDuration, time.Since(start), map[string]string{
+		m.metrics.RecordDuration(metricTokensListDuration, time.Since(start), map[string]string{
+			"scope":     "audience",
 			"namespace": m.namespace,
 		})
 	}()

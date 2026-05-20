@@ -106,29 +106,11 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "tokens_list_total",
 		"Total number of list-tokens operations on the token manager",
-		[]string{"namespace", "error_type"})
+		[]string{"scope", "namespace", "error_type"})
 
 	pm.registerHistogram(namespace, "tokens_list_duration_seconds",
 		"Duration of list-tokens operations on the token manager in seconds",
-		[]string{"namespace"},
-		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
-
-	pm.registerCounter(namespace, "tokens_list_for_user_total",
-		"Total number of list-tokens-for-user operations on the token manager",
-		[]string{"namespace", "error_type"})
-
-	pm.registerHistogram(namespace, "tokens_list_for_user_duration_seconds",
-		"Duration of list-tokens-for-user operations on the token manager in seconds",
-		[]string{"namespace"},
-		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
-
-	pm.registerCounter(namespace, "tokens_list_for_audience_total",
-		"Total number of list-tokens-for-audience operations on the token manager",
-		[]string{"namespace", "error_type"})
-
-	pm.registerHistogram(namespace, "tokens_list_for_audience_duration_seconds",
-		"Duration of list-tokens-for-audience operations on the token manager in seconds",
-		[]string{"namespace"},
+		[]string{"scope", "namespace"},
 		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
 
 	// ===== RefreshStore Metrics =====
