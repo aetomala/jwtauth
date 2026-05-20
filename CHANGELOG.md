@@ -60,6 +60,10 @@ All notable changes to this project will be documented in this file.
   (Correlation, Health Check, Prometheus Metrics, Redis Production), and Token Operations
   (Token Audit, Audience Revocation). See #188.
 
+- **`examples/gin-example`** — added `GET /.well-known/jwks.json` handler demonstrating
+  `GetJWKS`: JSON Web Key Set serialisation, `Cache-Control: public, max-age=300` header,
+  and the "rotate on unknown kid" consumption pattern in a comment. See #191.
+
 - **`examples/gin-example`** — added `POST /introspect` handler demonstrating `IntrospectToken`:
   RFC 7662-style token metadata, `Active` / `TokenID` / `Audience` fields, and the pattern
   for using `TokenID` to feed into `RevokeRefreshToken` for admin revocation flows. See #190.
