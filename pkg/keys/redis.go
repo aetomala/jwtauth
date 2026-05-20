@@ -106,12 +106,12 @@ func (r *RedisKeyStore) Namespace() string { return r.namespace }
 // startSpan starts a new span for the given operation name, pre-seeded with
 // the storage.backend and storage.namespace attributes.
 func (r *RedisKeyStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
-	return r.tracer.Start(ctx, "RedisKeyStore."+operation,
-		tracing.WithAttributes(map[string]any{
-			"storage.backend":   r.backend,
-			"storage.namespace": r.namespace,
-		}),
-	)
+	ctx, span := r.tracer.Start(ctx, "RedisKeyStore."+operation)
+	span.SetAttributes(map[string]any{
+		"storage.backend":   r.backend,
+		"storage.namespace": r.namespace,
+	})
+	return ctx, span
 }
 
 // LoadAll returns every valid (non-expired) key in Redis. Keys with missing or

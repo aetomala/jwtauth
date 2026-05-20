@@ -112,12 +112,12 @@ func (d *DiskKeyStore) Namespace() string { return d.namespace }
 
 // startSpan begins a new tracing span with storage.backend and storage.namespace pre-set.
 func (d *DiskKeyStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
-	return d.tracer.Start(ctx, "DiskKeyStore."+operation,
-		tracing.WithAttributes(map[string]any{
-			"storage.backend":   d.backend,
-			"storage.namespace": d.namespace,
-		}),
-	)
+	ctx, span := d.tracer.Start(ctx, "DiskKeyStore."+operation)
+	span.SetAttributes(map[string]any{
+		"storage.backend":   d.backend,
+		"storage.namespace": d.namespace,
+	})
+	return ctx, span
 }
 
 // LoadAll returns every valid (non-expired) key in the directory. Corrupted PEM
