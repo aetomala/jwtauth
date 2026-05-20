@@ -455,7 +455,6 @@ func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, st
 
 	// ===== STEP 1: Check Manager is Running =====
 	if !m.IsRunning() {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error", "namespace": m.namespace})
 		span.RecordError(ErrManagerNotRunning)
 		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
 		return nil, "", ErrManagerNotRunning
@@ -463,7 +462,6 @@ func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, st
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "cancelled", "error_type": "cancelled", "namespace": m.namespace})
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, "", err
@@ -477,14 +475,12 @@ func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, st
 	keyPair, found := m.keys[m.currentKeyID]
 
 	if !found {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error", "namespace": m.namespace})
 		span.RecordError(ErrKeyNotFound)
 		span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
 		return nil, "", ErrKeyNotFound
 	}
 
 	// ===== STEP 4: Return Key and ID =====
-	m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "success", "error_type": "", "namespace": m.namespace})
 	span.SetAttribute("key_id", m.currentKeyID)
 	span.SetStatus(tracing.StatusOK, "")
 	return keyPair.PrivateKey, m.currentKeyID, nil
@@ -558,12 +554,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	ctx, span := m.startSpan(ctx, "GetPublicKey")
 	defer span.End()
 
-	status := "error"
-	errorType := "error"
-	defer func() {
-		m.metrics.IncrementCounter(metricKeyValidationOpsTotal, map[string]string{"status": status, "error_type": errorType, "namespace": m.namespace})
-	}()
-
 	// ===== STEP 1: Validate Key ID =====
 	keyID = strings.TrimSpace(keyID)
 	if len(keyID) == 0 {
@@ -574,8 +564,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
-		status = "cancelled"
-		errorType = "cancelled"
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, err
@@ -588,8 +576,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	if keyPair, exists := m.keys[keyID]; exists {
 		m.mu.RUnlock()
 		m.config.Logger.Debug("public key cache hit", ctx, "keyID", keyID)
-		status = "success"
-		errorType = ""
 		span.SetStatus(tracing.StatusOK, "")
 		return keyPair.PublicKey, nil
 	}
@@ -600,8 +586,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	privateKey, meta, err := m.config.KeyStore.LoadKey(ctx, keyID)
 	if err != nil {
 		if errors.Is(err, ErrKeyStoreKeyNotFound) {
-			status = "not_found"
-			errorType = "not_found"
 			span.RecordError(ErrKeyNotFound)
 			span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
 			return nil, ErrKeyNotFound
@@ -613,8 +597,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 
 	// ===== STEP 5: Check Expiration =====
 	if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
-		status = "not_found"
-		errorType = "not_found"
 		span.RecordError(ErrKeyNotFound)
 		span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
 		return nil, ErrKeyNotFound
@@ -625,8 +607,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	defer m.mu.Unlock()
 
 	if keyPair, exists := m.keys[keyID]; exists {
-		status = "success"
-		errorType = ""
 		span.SetStatus(tracing.StatusOK, "")
 		return keyPair.PublicKey, nil
 	}
@@ -638,8 +618,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 		ExpiresAt: meta.ExpiresAt,
 	}
 
-	status = "success"
-	errorType = ""
 	span.SetStatus(tracing.StatusOK, "")
 	return &privateKey.PublicKey, nil
 }

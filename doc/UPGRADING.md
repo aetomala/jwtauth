@@ -25,6 +25,24 @@ dashboards and alert rules that query removed metrics must be updated.
 these metrics. Replace `jwtauth_service_running` with `up{job="jwtauth"}` for
 scrape-health alerting.
 
+#### Phase 2 — redundant cross-layer metrics
+
+| Metric | Type | Reason |
+|---|---|---|
+| `jwtauth_key_signing_operations_total` | Counter | Redundant — `jwtauth_tokens_issued_total` covers signing at the token layer |
+| `jwtauth_key_validation_operations_total` | Counter | Redundant — `jwtauth_tokens_validated_total` covers validation at the token layer |
+| `jwtauth_key_current_version` | Gauge | Zero production call sites; never populated |
+| `jwtauth_storage_list_tokens_total` | Counter | Redundant with token-layer `jwtauth_tokens_list_total` |
+| `jwtauth_storage_list_tokens_duration_seconds` | Histogram | Redundant with token-layer `jwtauth_tokens_list_duration_seconds` |
+| `jwtauth_storage_list_tokens_for_user_total` | Counter | Redundant |
+| `jwtauth_storage_list_tokens_for_user_duration_seconds` | Histogram | Redundant |
+| `jwtauth_storage_list_tokens_for_audience_total` | Counter | Redundant |
+| `jwtauth_storage_list_tokens_for_audience_duration_seconds` | Histogram | Redundant |
+
+**Action required:** Remove dashboards and alert rules referencing these metrics.
+Storage-layer list operations remain observable via the token-layer `jwtauth_tokens_list_*`
+metrics and the `jwtauth_storage_operations_total` counter.
+
 ---
 
 ## v0.5.x → v0.6.0

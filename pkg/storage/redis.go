@@ -795,24 +795,8 @@ func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count
 	span.SetAttribute("storage.cursor", cursor)
 	span.SetAttribute("storage.count", count)
 
-	start := time.Now()
-	errorType := "error"
-	resultCount := 0
-	defer func() {
-		r.metrics.IncrementCounter(metricListTokensTotal, map[string]string{
-			"storage_backend": r.backend,
-			"namespace":       r.namespace,
-			"error_type":      errorType,
-		})
-		r.metrics.RecordDuration(metricListTokensDuration, time.Since(start), map[string]string{
-			"storage_backend": r.backend,
-			"namespace":       r.namespace,
-		})
-	}()
-
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
-		errorType = "cancelled"
 		r.logger.Warn("listTokens aborted: context cancelled", ctx, "reason", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -824,7 +808,6 @@ func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count
 	if cursor != "" {
 		parsed, err := strconv.ParseUint(cursor, 10, 64)
 		if err != nil {
-			errorType = "invalid_cursor"
 			r.logger.Warn("listTokens: invalid cursor — starting from 0", ctx, "cursor", cursor)
 		} else {
 			redisCursor = parsed
@@ -838,7 +821,6 @@ func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count
 	}
 	keys, nextRedisCursor, err := r.client.Scan(ctx, redisCursor, r.tokenPrefix+"*", scanCount).Result()
 	if err != nil {
-		errorType = "redis_error"
 		r.logger.Error("listTokens failed: redis scan error", ctx, "error", err)
 		wrapped := fmt.Errorf("failed to scan tokens: %w", err)
 		span.RecordError(wrapped)
@@ -855,7 +837,6 @@ func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count
 	// ===== STEP 5: Hydrate Token IDs =====
 	tokens, err := r.fetchTokensByIDs(ctx, tokenIDs)
 	if err != nil {
-		errorType = "redis_error"
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, "", err
@@ -868,8 +849,7 @@ func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count
 	}
 
 	// ===== STEP 7: Log and Return =====
-	errorType = ""
-	resultCount = len(tokens)
+	resultCount := len(tokens)
 	span.SetAttribute("storage.result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	r.logger.Info("listTokens: page returned", ctx,
@@ -896,24 +876,8 @@ func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string
 	span.SetAttribute("storage.cursor", cursor)
 	span.SetAttribute("storage.count", count)
 
-	start := time.Now()
-	errorType := "error"
-	resultCount := 0
-	defer func() {
-		r.metrics.IncrementCounter(metricListTokensForUserTotal, map[string]string{
-			"storage_backend": r.backend,
-			"namespace":       r.namespace,
-			"error_type":      errorType,
-		})
-		r.metrics.RecordDuration(metricListTokensForUserDuration, time.Since(start), map[string]string{
-			"storage_backend": r.backend,
-			"namespace":       r.namespace,
-		})
-	}()
-
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
-		errorType = "cancelled"
 		r.logger.Warn("listTokensForUser aborted: context cancelled", ctx, "reason", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -922,7 +886,6 @@ func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string
 
 	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(userID)) == 0 {
-		errorType = "validation_error"
 		r.logger.Warn("listTokensForUser rejected: userID is empty or whitespace", ctx)
 		span.RecordError(ErrInvalidUserID)
 		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
@@ -934,7 +897,6 @@ func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string
 	if cursor != "" {
 		parsed, err := strconv.ParseUint(cursor, 10, 64)
 		if err != nil {
-			errorType = "invalid_cursor"
 			r.logger.Warn("listTokensForUser: invalid cursor — starting from 0", ctx, "cursor", cursor)
 		} else {
 			redisCursor = parsed
@@ -949,7 +911,6 @@ func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string
 	userSetKey := r.userSetPrefix + userID
 	tokenIDs, nextRedisCursor, err := r.client.SScan(ctx, userSetKey, redisCursor, "*", scanCount).Result()
 	if err != nil {
-		errorType = "redis_error"
 		r.logger.Error("listTokensForUser failed: redis sscan error", ctx,
 			"user_id", userID, "error", err)
 		wrapped := fmt.Errorf("failed to scan user tokens: %w", err)
@@ -961,7 +922,6 @@ func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string
 	// ===== STEP 5: Hydrate Token IDs =====
 	tokens, err := r.fetchTokensByIDs(ctx, tokenIDs)
 	if err != nil {
-		errorType = "redis_error"
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, "", err
@@ -974,8 +934,7 @@ func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string
 	}
 
 	// ===== STEP 7: Log and Return =====
-	errorType = ""
-	resultCount = len(tokens)
+	resultCount := len(tokens)
 	span.SetAttribute("storage.result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	r.logger.Info("listTokensForUser: page returned", ctx,
@@ -1291,24 +1250,8 @@ func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience 
 	span.SetAttribute("storage.cursor", cursor)
 	span.SetAttribute("storage.count", count)
 
-	start := time.Now()
-	errorType := "error"
-	resultCount := 0
-	defer func() {
-		r.metrics.IncrementCounter(metricListTokensForAudienceTotal, map[string]string{
-			"storage_backend": r.backend,
-			"namespace":       r.namespace,
-			"error_type":      errorType,
-		})
-		r.metrics.RecordDuration(metricListTokensForAudienceDuration, time.Since(start), map[string]string{
-			"storage_backend": r.backend,
-			"namespace":       r.namespace,
-		})
-	}()
-
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
-		errorType = "cancelled"
 		r.logger.Warn("listTokensForAudience aborted: context cancelled", ctx, "reason", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -1317,7 +1260,6 @@ func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience 
 
 	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(audience)) == 0 {
-		errorType = "validation_error"
 		r.logger.Warn("listTokensForAudience rejected: audience is empty or whitespace", ctx)
 		span.RecordError(ErrInvalidAudience)
 		span.SetStatus(tracing.StatusError, ErrInvalidAudience.Error())
@@ -1329,7 +1271,6 @@ func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience 
 	if cursor != "" {
 		parsed, err := strconv.ParseUint(cursor, 10, 64)
 		if err != nil {
-			errorType = "invalid_cursor"
 			r.logger.Warn("listTokensForAudience: invalid cursor — starting from 0", ctx, "cursor", cursor)
 		} else {
 			redisCursor = parsed
@@ -1344,7 +1285,6 @@ func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience 
 	audienceSetKey := r.audienceSetPrefix + audience
 	tokenIDs, nextRedisCursor, err := r.client.SScan(ctx, audienceSetKey, redisCursor, "*", scanCount).Result()
 	if err != nil {
-		errorType = "redis_error"
 		r.logger.Error("listTokensForAudience failed: redis sscan error", ctx,
 			"audience", audience, "error", err)
 		wrapped := fmt.Errorf("failed to scan audience tokens: %w", err)
@@ -1356,7 +1296,6 @@ func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience 
 	// ===== STEP 5: Hydrate Token IDs =====
 	tokens, err := r.fetchTokensByIDs(ctx, tokenIDs)
 	if err != nil {
-		errorType = "redis_error"
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, "", err
@@ -1369,8 +1308,7 @@ func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience 
 	}
 
 	// ===== STEP 7: Log and Return =====
-	errorType = ""
-	resultCount = len(tokens)
+	resultCount := len(tokens)
 	span.SetAttribute("storage.result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	r.logger.Info("listTokensForAudience: page returned", ctx,
