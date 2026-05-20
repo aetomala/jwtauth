@@ -257,9 +257,9 @@ type Metrics interface {
 | `jwtauth_storage_list_tokens_for_user_duration_seconds` | Histogram | storage_backend, namespace |
 | `jwtauth_storage_list_tokens_for_audience_total` | Counter | storage_backend, namespace, error_type |
 | `jwtauth_storage_list_tokens_for_audience_duration_seconds` | Histogram | storage_backend, namespace |
-| `jwtauth_keystore_operations_total` | Counter | operation, status, error_type, storage_backend |
-| `jwtauth_keystore_operation_duration_seconds` | Histogram | operation, storage_backend |
-| `jwtauth_keystore_keys_count` | Gauge | storage_backend |
+| `jwtauth_keystore_operations_total` | Counter | operation, status, error_type, storage_backend, namespace |
+| `jwtauth_keystore_operation_duration_seconds` | Histogram | operation, storage_backend, namespace |
+| `jwtauth_keystore_keys_count` | Gauge | storage_backend, namespace |
 | `jwtauth_key_rotations_total` | Counter | status, error_type |
 | `jwtauth_key_signing_operations_total` | Counter | status, error_type |
 | `jwtauth_key_validation_operations_total` | Counter | status, error_type |
@@ -516,9 +516,9 @@ Keys are optionally prefixed by `RedisKeyStoreConfig.KeyPrefix` (defaults to emp
 
 | Metric | Type | Labels |
 |--------|------|--------|
-| `jwtauth_keystore_operations_total` | Counter | `operation`, `status`, `storage_backend` |
-| `jwtauth_keystore_operation_duration_seconds` | Histogram | `operation`, `storage_backend` |
-| `jwtauth_keystore_keys_count` | Gauge | `storage_backend` |
+| `jwtauth_keystore_operations_total` | Counter | `operation`, `status`, `error_type`, `storage_backend`, `namespace` |
+| `jwtauth_keystore_operation_duration_seconds` | Histogram | `operation`, `storage_backend`, `namespace` |
+| `jwtauth_keystore_keys_count` | Gauge | `storage_backend`, `namespace` |
 
 `operation` values: `"load_all"`, `"save"`, `"update_metadata"`, `"load_key"`, `"delete"`
 
@@ -1125,4 +1125,4 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 
 **Last Updated**: May 13, 2026
 **Version**: v0.6.0
-**Status**: Stable — all components fully instrumented (KeyManager, DiskKeyStore, RedisKeyStore, MemoryRefreshStore, RedisRefreshStore, Metrics [Prometheus, 34 metrics], Logging [Correlation ID], Distributed Tracing, TokenManager)
+**Status**: Stable — all components fully instrumented (KeyManager, DiskKeyStore, RedisKeyStore, MemoryRefreshStore, RedisRefreshStore, Metrics [Prometheus, 18 metrics], Logging [Correlation ID], Distributed Tracing, TokenManager)

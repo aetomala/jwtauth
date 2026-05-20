@@ -28,6 +28,12 @@ All notable changes to this project will be documented in this file.
 
 - **`keys.Manager.GetAllKeyInfo(ctx context.Context) ([]KeyInfo, error)`** — returns one `KeyInfo` per key currently in the manager's in-memory cache — the active signing key plus any keys still in their overlap window. Order is unspecified. Returns an empty slice (not an error) when no keys are loaded. Suitable for admin surfaces, JWKS-parity health checks, and rotation monitoring dashboards — no private key material is included. See #183.
 
+- **`DiskKeyStoreConfig.Namespace string`** — optional observability namespace label. When set, the value is carried on log fields (via logger enrichment at construction), span attributes (`"storage.namespace"`), and all keystore metric labels. Consistent with the existing `RedisKeyStore` namespace pattern and ADR-007. See #184.
+
+### Fixed
+
+- **DiskKeyStore metrics silently dropped when using `PrometheusMetrics`** — the three keystore metrics (`jwtauth_keystore_operations_total`, `jwtauth_keystore_operation_duration_seconds`, `jwtauth_keystore_keys_count`) are registered with a required `namespace` label, but `DiskKeyStore` omitted that label from every call. This caused `GetMetricWith` to return an error and silently discard every observation — all DiskKeyStore metrics were effectively dead. Adding `Namespace string` to `DiskKeyStoreConfig` resolves this. See #184.
+
 ---
 
 ## [v0.6.0] — 2026-05-13

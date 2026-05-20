@@ -56,3 +56,18 @@ The `Namespace` field is now fully wired across all observability output in both
 
 The deferred "subsequent phase" referenced in the original Decision is complete. No interface
 changes were required — the field was already present on both config types.
+
+## Addendum — DiskKeyStore namespace wired (issue #184, 2026-05-19)
+
+`DiskKeyStore` now accepts an optional `Namespace string` field on `DiskKeyStoreConfig`.
+When non-empty:
+
+- **Log lines** — the logger is enriched with `With("namespace", namespace)` at construction;
+  all log lines carry the namespace automatically without per-call overhead.
+- **Trace spans** — the `startSpan` helper pre-seeds every span with `"storage.namespace"`.
+- **Metric labels** — all five KeyStore operation metrics (`LoadAll`, `Save`, `UpdateMetadata`,
+  `LoadKey`, `Delete`) include `"namespace"` in their label maps.
+
+An empty string preserves prior behavior exactly. With this change, all six components tracked
+in ADR-007 are fully wired: KeyManager, TokenManager, DiskKeyStore, RedisKeyStore,
+RedisRefreshStore, and MemoryRefreshStore (single-tenant; namespace="" by design).
