@@ -12,6 +12,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+
+- **`PrometheusMetrics` metric set reduced from 34 to 18** — sixteen metrics are removed or collapsed. The `Metrics` interface is unchanged — all five methods (`IncrementCounter`, `AddCounter`, `SetGauge`, `RecordHistogram`, `RecordDuration`) are unaffected. Update Prometheus dashboards and alert rules that reference removed or renamed metrics. See #206 and `UPGRADING.md` for the full migration table.
+
+  **Removed metrics (14):** `jwtauth_service_running`, `jwtauth_tokens_introspected_total`, `jwtauth_active_tokens`, `jwtauth_key_signing_operations_total`, `jwtauth_key_validation_operations_total`, `jwtauth_key_current_version`, `jwtauth_storage_list_tokens_total`, `jwtauth_storage_list_tokens_duration_seconds`, `jwtauth_storage_list_tokens_for_user_total`, `jwtauth_storage_list_tokens_for_user_duration_seconds`, `jwtauth_storage_list_tokens_for_audience_total`, `jwtauth_storage_list_tokens_for_audience_duration_seconds`, `jwtauth_tokens_list_for_user_total`, `jwtauth_tokens_list_for_user_duration_seconds`, `jwtauth_tokens_list_for_audience_total`, `jwtauth_tokens_list_for_audience_duration_seconds`.
+
+  **Renamed:** `jwtauth_operations_total{operation="cleanup"}` → `jwtauth_tokens_cleanup_total`. The `operation` label is dropped — the metric name now encodes the operation.
+
+  **Label added:** `jwtauth_tokens_list_total` and `jwtauth_tokens_list_duration_seconds` gain a `scope` label (`"all"`, `"user"`, `"audience"`). Existing queries targeting the all-tokens case must add `{scope="all"}` or use `sum(...)` to aggregate across scopes.
+
 ### Fixed
 
 - **`RefreshAccessToken` and `RefreshAccessTokenWithClaims` revoke old refresh token on rotation** — the old refresh token was not revoked after a successful refresh, leaving it valid until its natural TTL expiry and creating a replay window where the same refresh token could be used more than once. The old token is now revoked after the new access token is issued. See #195.
