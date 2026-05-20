@@ -60,6 +60,11 @@ All notable changes to this project will be documented in this file.
   (Correlation, Health Check, Prometheus Metrics, Redis Production), and Token Operations
   (Token Audit, Audience Revocation). See #188.
 
+- **`examples/prometheus-metrics`** — extended with `TokenManager` and a manual cleanup
+  loop: `CleanupExpiredTokens` on a 5-minute ticker, `jwtauth_cleaned_tokens_total`
+  Prometheus counter, structured log output, and a comment explaining manual vs background
+  cleanup trade-offs. See #192.
+
 - **`examples/gin-example`** — added `GET /.well-known/jwks.json` handler demonstrating
   `GetJWKS`: JSON Web Key Set serialisation, `Cache-Control: public, max-age=300` header,
   and the "rotate on unknown kid" consumption pattern in a comment. See #191.
