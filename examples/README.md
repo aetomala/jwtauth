@@ -112,6 +112,7 @@ Custom Prometheus gauges driven by `GetCurrentKeyInfo` on a 30-second collection
 
 **Features**:
 - Three gauges: `jwtauth_key_age_seconds`, `jwtauth_rotation_scheduled_seconds`, `jwtauth_key_valid`
+- `jwtauth_cleaned_tokens_total` counter incremented by a manual 5-minute cleanup ticker
 - Background goroutine with a 30-second tick — exits cleanly on shutdown
 - `/metrics` endpoint via `promhttp.Handler()`
 - Initial gauge population before the first scrape

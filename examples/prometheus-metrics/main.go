@@ -16,6 +16,8 @@ import (
 
 	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/logging"
+	"github.com/aetomala/jwtauth/pkg/storage"
+	"github.com/aetomala/jwtauth/pkg/tokens"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -34,10 +36,16 @@ var (
 		Name: "jwtauth_key_valid",
 		Help: "1 if the current signing key is valid, 0 if it has expired.",
 	})
+
+	// cleanedTokensTotal counts expired refresh tokens removed across all manual cleanup runs.
+	cleanedTokensTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "jwtauth_cleaned_tokens_total",
+		Help: "Total number of expired refresh tokens removed by manual cleanup.",
+	})
 )
 
 func init() {
-	prometheus.MustRegister(keyAgeSeconds, rotationScheduledSeconds, keyValid)
+	prometheus.MustRegister(keyAgeSeconds, rotationScheduledSeconds, keyValid, cleanedTokensTotal)
 }
 
 func main() {
@@ -71,10 +79,60 @@ func main() {
 		_ = km.Shutdown(shutdownCtx)
 	}()
 
-	// ===== STEP 3: Initial Gauge Collection =====
+	// ===== STEP 3: Create and Start TokenManager =====
+	store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: logger})
+	mgr, err := tokens.NewManager(tokens.TokenManagerConfig{
+		KeyManager:           km,
+		RefreshStore:         store,
+		AccessTokenDuration:  15 * time.Minute,
+		RefreshTokenDuration: 7 * 24 * time.Hour,
+		CleanupInterval:      1 * time.Hour,
+		Logger:               logger,
+		Issuer:               "prometheus-metrics-example",
+		Audience:             []string{"api"},
+	})
+	if err != nil {
+		log.Fatal("Failed to create TokenManager:", err)
+	}
+	if err := mgr.Start(ctx); err != nil {
+		log.Fatal("Failed to start TokenManager:", err)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = mgr.Shutdown(shutdownCtx)
+	}()
+
+	// ===== STEP 4: Manual Cleanup Loop =====
+	// Use manual cleanup when you want fine-grained control over when expired tokens are
+	// removed — for example, during low-traffic windows. When CleanupInterval > 0 on
+	// TokenManagerConfig, the background goroutine also runs; this ticker demonstrates
+	// driving cleanup on demand alongside it.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				count, err := mgr.CleanupExpiredTokens(cleanupCtx)
+				cancel()
+				if err != nil {
+					logger.Warn("cleanup failed", "error", err)
+					continue
+				}
+				logger.Info("cleanup complete", "deleted", count)
+				cleanedTokensTotal.Add(float64(count))
+			}
+		}
+	}()
+
+	// ===== STEP 5: Initial Gauge Collection =====
 	collectKeyMetrics(ctx, km)
 
-	// ===== STEP 4: Background Collection Loop =====
+	// ===== STEP 6: Background Collection Loop =====
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -88,7 +146,7 @@ func main() {
 		}
 	}()
 
-	// ===== STEP 5: Serve Metrics =====
+	// ===== STEP 7: Serve Metrics =====
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
