@@ -6,6 +6,27 @@ This document describes breaking changes and the mechanical steps required to up
 
 ## v0.6.x → v0.7.0
 
+### `keys.KeyManager` gains `GetAllKeyInfo`
+
+`GetAllKeyInfo(ctx context.Context) ([]KeyInfo, error)` is a new required method on the
+`KeyManager` interface. Custom implementations that do not add it will fail to compile.
+
+**Action required:** Add the method to any custom `KeyManager` implementation:
+
+```go
+func (k *MyKeyManager) GetAllKeyInfo(ctx context.Context) ([]keys.KeyInfo, error) {
+    // return metadata for all currently held keys
+}
+```
+
+Use a compile-time assertion to catch the gap immediately:
+
+```go
+var _ keys.KeyManager = (*MyKeyManager)(nil)
+```
+
+---
+
 v0.7.0 reduces the PrometheusMetrics registered metric set from 34 to 18 high-signal
 metrics. The `Metrics` interface is unchanged — all five methods (`IncrementCounter`,
 `AddCounter`, `SetGauge`, `RecordHistogram`, `RecordDuration`) are unaffected. Prometheus
