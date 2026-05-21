@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## [Unreleased]
+## [v0.7.0] — 2026-05-21
 
 ### Breaking
 
