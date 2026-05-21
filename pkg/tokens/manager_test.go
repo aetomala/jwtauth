@@ -2011,7 +2011,6 @@ var _ = Describe("TokenManager", func() {
 
 	// NOTE: These tests verify concurrent access does not cause panics or data races.
 	// Run with the race detector for full coverage: ginkgo --race ./pkg/tokens/
-	// TODO: Add concurrent lifecycle tests (Start/Shutdown races) when lifecycle work is complete.
 	Describe("Concurrent Operations", func() {
 		BeforeEach(func() {
 			service = newTestManager(mockKM, mockStore, mockLogger)
