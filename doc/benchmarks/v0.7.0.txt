@@ -1,0 +1,123 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/keys
+cpu: Apple M4 Max
+BenchmarkGetPublicKey_CacheHit-16     	 6536233	       177.5 ns/op	     440 B/op	       6 allocs/op
+BenchmarkGetPublicKey_CacheHit-16     	 6749388	       178.3 ns/op	     440 B/op	       6 allocs/op
+BenchmarkGetPublicKey_CacheHit-16     	 6781434	       176.6 ns/op	     440 B/op	       6 allocs/op
+BenchmarkGetPublicKey_CacheMiss-16    	    8109	    146161 ns/op	   16450 B/op	     115 allocs/op
+BenchmarkGetPublicKey_CacheMiss-16    	    8217	    146673 ns/op	   16258 B/op	     113 allocs/op
+BenchmarkGetPublicKey_CacheMiss-16    	    8084	    146896 ns/op	   16418 B/op	     115 allocs/op
+BenchmarkRotateKeys-16                	      32	  49408783 ns/op	  701773 B/op	    6374 allocs/op
+BenchmarkRotateKeys-16                	      30	  37681639 ns/op	  532022 B/op	    4834 allocs/op
+BenchmarkRotateKeys-16                	      57	  41091208 ns/op	  583374 B/op	    5300 allocs/op
+BenchmarkGetCurrentKeyInfo-16         	 6114802	       189.7 ns/op	     504 B/op	       5 allocs/op
+BenchmarkGetCurrentKeyInfo-16         	 6338920	       189.9 ns/op	     504 B/op	       5 allocs/op
+BenchmarkGetCurrentKeyInfo-16         	 6363519	       190.7 ns/op	     504 B/op	       5 allocs/op
+BenchmarkGetJWKS-16                   	 6017401	       199.5 ns/op	     496 B/op	       6 allocs/op
+BenchmarkGetJWKS-16                   	 5988787	       198.6 ns/op	     496 B/op	       6 allocs/op
+BenchmarkGetJWKS-16                   	 6067218	       197.8 ns/op	     496 B/op	       6 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/keys	24.385s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/tokens
+cpu: Apple M4 Max
+BenchmarkIssueAccessToken-16                        	   19627	     61646 ns/op	    6635 B/op	      70 allocs/op
+BenchmarkIssueAccessToken-16                        	   19678	     61701 ns/op	    6634 B/op	      70 allocs/op
+BenchmarkIssueAccessToken-16                        	   19669	     61232 ns/op	    6629 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_WithAudience-16           	   19347	     63982 ns/op	    6841 B/op	      73 allocs/op
+BenchmarkIssueAccessToken_WithAudience-16           	   18740	     62842 ns/op	    6823 B/op	      73 allocs/op
+BenchmarkIssueAccessToken_WithAudience-16           	   18537	     66177 ns/op	    6879 B/op	      74 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Small-16        	   16573	     70853 ns/op	    8429 B/op	      89 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Small-16        	   16894	     73107 ns/op	    8474 B/op	      90 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Small-16        	   16338	     71123 ns/op	    8441 B/op	      89 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Medium-16       	   15164	     78487 ns/op	   11584 B/op	     109 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Medium-16       	   15459	     79829 ns/op	   11600 B/op	     109 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Medium-16       	   15072	     79890 ns/op	   11592 B/op	     109 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Large-16        	   12182	     95422 ns/op	   29988 B/op	     198 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Large-16        	   12590	     93776 ns/op	   29820 B/op	     197 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Large-16        	   12393	     96094 ns/op	   29985 B/op	     198 allocs/op
+BenchmarkValidateAccessToken-16                     	  274718	      4202 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessToken-16                     	  277550	      4199 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessToken-16                     	  279829	      4190 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessTokenWithClaims-16           	  228946	      5308 ns/op	    9512 B/op	     151 allocs/op
+BenchmarkValidateAccessTokenWithClaims-16           	  226309	      5245 ns/op	    9512 B/op	     151 allocs/op
+BenchmarkValidateAccessTokenWithClaims-16           	  219204	      5309 ns/op	    9512 B/op	     151 allocs/op
+BenchmarkIssueTokenPair-16                          	   18397	     58918 ns/op	    8363 B/op	      83 allocs/op
+BenchmarkIssueTokenPair-16                          	   20584	     58103 ns/op	    8351 B/op	      83 allocs/op
+BenchmarkIssueTokenPair-16                          	   20664	     57858 ns/op	    8261 B/op	      83 allocs/op
+BenchmarkRefreshAccessToken-16                      	    1640	    721242 ns/op	   10409 B/op	     111 allocs/op
+BenchmarkRefreshAccessToken-16                      	    1666	    718277 ns/op	   10412 B/op	     111 allocs/op
+BenchmarkRefreshAccessToken-16                      	    1675	    718784 ns/op	   10409 B/op	     111 allocs/op
+BenchmarkIntrospectToken-16                         	 3164130	       382.5 ns/op	    2400 B/op	      26 allocs/op
+BenchmarkIntrospectToken-16                         	 3148544	       389.8 ns/op	    2400 B/op	      26 allocs/op
+BenchmarkIntrospectToken-16                         	 3130682	       382.7 ns/op	    2400 B/op	      26 allocs/op
+BenchmarkRevokeAllUserTokens/N=10-16                	  477963	      2278 ns/op	    3408 B/op	      50 allocs/op
+BenchmarkRevokeAllUserTokens/N=10-16                	  562988	      2264 ns/op	    3408 B/op	      50 allocs/op
+BenchmarkRevokeAllUserTokens/N=10-16                	  564847	      2317 ns/op	    3408 B/op	      50 allocs/op
+BenchmarkRevokeAllUserTokens/N=100-16               	  112333	     10622 ns/op	   13488 B/op	     320 allocs/op
+BenchmarkRevokeAllUserTokens/N=100-16               	  113384	     10595 ns/op	   13488 B/op	     320 allocs/op
+BenchmarkRevokeAllUserTokens/N=100-16               	  113196	     10631 ns/op	   13488 B/op	     320 allocs/op
+BenchmarkRevokeAllUserTokens/N=1000-16              	   13723	     90227 ns/op	  114304 B/op	    3021 allocs/op
+BenchmarkRevokeAllUserTokens/N=1000-16              	   13190	     92786 ns/op	  114304 B/op	    3021 allocs/op
+BenchmarkRevokeAllUserTokens/N=1000-16              	   13155	     91055 ns/op	  114304 B/op	    3021 allocs/op
+BenchmarkRevokeAllForAudience/N=10-16               	  499486	      2488 ns/op	    3472 B/op	      51 allocs/op
+BenchmarkRevokeAllForAudience/N=10-16               	  428647	      2563 ns/op	    3472 B/op	      51 allocs/op
+BenchmarkRevokeAllForAudience/N=10-16               	  458034	      2554 ns/op	    3472 B/op	      51 allocs/op
+BenchmarkRevokeAllForAudience/N=100-16              	  102952	     11341 ns/op	   13552 B/op	     321 allocs/op
+BenchmarkRevokeAllForAudience/N=100-16              	  107593	     11162 ns/op	   13552 B/op	     321 allocs/op
+BenchmarkRevokeAllForAudience/N=100-16              	  107314	     11362 ns/op	   13552 B/op	     321 allocs/op
+BenchmarkRevokeAllForAudience/N=1000-16             	   13016	     95877 ns/op	  114368 B/op	    3023 allocs/op
+BenchmarkRevokeAllForAudience/N=1000-16             	   12436	     95612 ns/op	  114368 B/op	    3023 allocs/op
+BenchmarkRevokeAllForAudience/N=1000-16             	   12844	     95291 ns/op	  114368 B/op	    3023 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10-16        	  441315	      2859 ns/op	    4080 B/op	      65 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10-16        	  444259	      2890 ns/op	    4080 B/op	      65 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10-16        	  417205	      2938 ns/op	    4080 B/op	      65 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100-16       	   86631	     13707 ns/op	   18480 B/op	     425 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100-16       	   86287	     13592 ns/op	   18480 B/op	     425 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100-16       	   85060	     13314 ns/op	   18480 B/op	     425 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000-16      	   10000	    113448 ns/op	  162496 B/op	    4027 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000-16      	   10000	    111901 ns/op	  162496 B/op	    4027 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000-16      	   10000	    112805 ns/op	  162496 B/op	    4027 allocs/op
+BenchmarkListTokensForAudience/N=100-16             	  243038	      4878 ns/op	   17040 B/op	     218 allocs/op
+BenchmarkListTokensForAudience/N=100-16             	  233292	      4868 ns/op	   17040 B/op	     218 allocs/op
+BenchmarkListTokensForAudience/N=100-16             	  234363	      4877 ns/op	   17040 B/op	     218 allocs/op
+BenchmarkListTokensForAudience/N=1000-16            	   21964	     54531 ns/op	  171004 B/op	    2225 allocs/op
+BenchmarkListTokensForAudience/N=1000-16            	   22046	     53557 ns/op	  171004 B/op	    2225 allocs/op
+BenchmarkListTokensForAudience/N=1000-16            	   21868	     54099 ns/op	  171004 B/op	    2225 allocs/op
+BenchmarkListTokensForAudience/N=10000-16           	    2080	    568652 ns/op	 1710726 B/op	   22295 allocs/op
+BenchmarkListTokensForAudience/N=10000-16           	    2064	    566543 ns/op	 1710726 B/op	   22295 allocs/op
+BenchmarkListTokensForAudience/N=10000-16           	    2083	    567105 ns/op	 1710726 B/op	   22295 allocs/op
+BenchmarkValidateAccessToken_DuringRotation-16      	  457688	     10335 ns/op	    6464 B/op	      97 allocs/op
+BenchmarkValidateAccessToken_DuringRotation-16      	  453964	     10295 ns/op	    6462 B/op	      96 allocs/op
+BenchmarkValidateAccessToken_DuringRotation-16      	  471957	     10788 ns/op	    6470 B/op	      97 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/NoOp-16  	   20994	     57023 ns/op	    6570 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/NoOp-16  	   21260	     56549 ns/op	    6570 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/NoOp-16  	   21207	     56563 ns/op	    6571 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/PrometheusMetrics-16         	   21199	     56656 ns/op	    6570 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/PrometheusMetrics-16         	   21250	     56748 ns/op	    6570 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/PrometheusMetrics-16         	   21260	     56637 ns/op	    6570 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/OtelTracer-16                	   21231	     56704 ns/op	    7051 B/op	      79 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/OtelTracer-16                	   21198	     56591 ns/op	    7051 B/op	      79 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/OtelTracer-16                	   21172	     56782 ns/op	    7050 B/op	      79 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/NoOp-16                   	  476830	      2574 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/NoOp-16                   	  475852	      2574 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/NoOp-16                   	  463281	      2594 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/OtelTracer-16             	  400244	      2631 ns/op	    6832 B/op	     105 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/OtelTracer-16             	  462712	      2658 ns/op	    6832 B/op	     105 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/OtelTracer-16             	  454518	      2642 ns/op	    6832 B/op	     105 allocs/op
+BenchmarkSign_GolangJWT-16                                              	   21200	     56762 ns/op	    3385 B/op	      30 allocs/op
+BenchmarkSign_GolangJWT-16                                              	   21198	     56593 ns/op	    3385 B/op	      30 allocs/op
+BenchmarkSign_GolangJWT-16                                              	   21159	     56699 ns/op	    3385 B/op	      30 allocs/op
+BenchmarkVerify_GolangJWT-16                                            	  562854	      2255 ns/op	    4288 B/op	      62 allocs/op
+BenchmarkVerify_GolangJWT-16                                            	  543411	      2245 ns/op	    4288 B/op	      62 allocs/op
+BenchmarkVerify_GolangJWT-16                                            	  550789	      2703 ns/op	    4288 B/op	      62 allocs/op
+BenchmarkIssueAccessToken_jwtauth-16                                    	   20402	     57423 ns/op	    6571 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_jwtauth-16                                    	   20847	     58202 ns/op	    6571 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_jwtauth-16                                    	   20910	     57471 ns/op	    6570 B/op	      70 allocs/op
+BenchmarkValidateAccessToken_jwtauth-16                                 	  442669	      2537 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessToken_jwtauth-16                                 	  470371	      2574 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessToken_jwtauth-16                                 	  457123	      2580 ns/op	    6352 B/op	      96 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/tokens	790.121s

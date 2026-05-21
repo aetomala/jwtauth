@@ -86,11 +86,11 @@ All operations measured on `MemoryRefreshStore` and `RedisRefreshStore` (minired
 
 | Benchmark | ns/op | B/op | allocs/op | Notes |
 |---|---|---|---|---|
-| `GetPublicKey` (cache hit) | 243 | 800 | 10 | In-memory read-lock path — overwhelmingly common |
-| `GetPublicKey` (cache miss) | 188,334 | 16,659 | 119 | DiskKeyStore load on new instance startup |
-| `RotateKeys` | 44,941,655 | 552,318 | 5,026 | RSA 2048-bit key generation + disk write (~45 ms) |
-| `GetCurrentKeyInfo` | 193 | 528 | 7 | Metadata-only read, no private material |
-| `GetJWKS` | 205 | 520 | 8 | JWKS serialization for `/.well-known/jwks.json` |
+| `GetPublicKey` (cache hit) | 177 | 440 | 6 | In-memory read-lock path — overwhelmingly common |
+| `GetPublicKey` (cache miss) | 146,577 | 16,375 | 114 | DiskKeyStore load on new instance startup |
+| `RotateKeys` | 41,091,208 | 583,374 | 5,300 | RSA 2048-bit key generation + disk write (~41 ms) |
+| `GetCurrentKeyInfo` | 190 | 504 | 5 | Metadata-only read, no private material |
+| `GetJWKS` | 198 | 496 | 6 | JWKS serialization for `/.well-known/jwks.json` |
 
 `RotateKeys` is intentionally expensive — it generates a fresh RSA 2048-bit key pair and
 writes two files to disk. In production, rotation happens at most once per
@@ -106,16 +106,16 @@ All token manager benchmarks use `MemoryRefreshStore` for deterministic crypto i
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `IssueAccessToken` | 78,775 | 6,893 | 75 |
-| `IssueAccessToken` (WithAudience) | 71,341 | 6,991 | 78 |
-| `IssueAccessTokenWithClaims` — Small (2 fields) | 68,787 | 8,660 | 94 |
-| `IssueAccessTokenWithClaims` — Medium (10 fields) | 79,835 | 11,751 | 113 |
-| `IssueAccessTokenWithClaims` — Large (50 fields) | 106,376 | 30,066 | 202 |
-| `ValidateAccessToken` | 5,067 | 6,633 | 102 |
-| `ValidateAccessTokenWithClaims` | 6,140 | 9,840 | 159 |
-| `IssueTokenPair` | 69,436 | 8,612 | 90 |
+| `IssueAccessToken` | 61,646 | 6,633 | 70 |
+| `IssueAccessToken` (WithAudience) | 63,982 | 6,847 | 73 |
+| `IssueAccessTokenWithClaims` — Small (2 fields) | 71,123 | 8,441 | 89 |
+| `IssueAccessTokenWithClaims` — Medium (10 fields) | 79,138 | 11,592 | 109 |
+| `IssueAccessTokenWithClaims` — Large (50 fields) | 95,422 | 29,985 | 198 |
+| `ValidateAccessToken` | 4,199 | 6,352 | 96 |
+| `ValidateAccessTokenWithClaims` | 5,287 | 9,512 | 151 |
+| `IssueTokenPair` | 58,103 | 8,325 | 83 |
 
-Issuance (~70–80 µs) is dominated by RSA 2048-bit signing. Validation (~5.1 µs) is PKCS#1
+Issuance (~62–95 µs) is dominated by RSA 2048-bit signing. Validation (~4.2 µs) is PKCS#1
 v1.5 verification — roughly 15× faster than signing.
 
 `WithAudience` adds no measurable overhead — the functional-option closure dispatch is
@@ -151,34 +151,34 @@ path.
 
 | Benchmark | ns/op | B/op | allocs/op | Notes |
 |---|---|---|---|---|
-| `RefreshAccessToken` | 867,641 | 9,497 | 109 | Full rotation: new access token + refresh token re-storage |
-| `RevokeRefreshToken` | 2,268 | 2,304 | 25 | Single-token revocation — in-memory store write |
-| `IntrospectToken` | 424 | 2,784 | 32 | Metadata read — no JWT re-parse |
+| `RefreshAccessToken` | 718,784 | 10,410 | 111 | Full rotation: new access token + refresh token re-storage |
+| `RevokeRefreshToken` | 1,446 | 2,256 | 21 | Single-token revocation — in-memory store write |
+| `IntrospectToken` | 382 | 2,400 | 26 | Metadata read — no JWT re-parse |
 
-`RefreshAccessToken` is expensive (~868 µs) because it generates a new RSA-signed access
+`RefreshAccessToken` is expensive (~719 µs) because it generates a new RSA-signed access
 token and a new opaque refresh token in a single call.
 
 ### Bulk Revocation (N tokens per call, MemoryRefreshStore)
 
 | Benchmark | N | ns/op | B/op | allocs/op |
 |---|---|---|---|---|
-| `RevokeAllUserTokens` | 10 | 3,501 | 3,456 | 54 |
-| `RevokeAllUserTokens` | 100 | 13,920 | 13,536 | 324 |
-| `RevokeAllUserTokens` | 1,000 | 125,162 | 114,352 | 3,025 |
-| `RevokeAllForAudience` | 10 | 3,583 | 3,520 | 55 |
-| `RevokeAllForAudience` | 100 | 13,491 | 13,600 | 325 |
-| `RevokeAllForAudience` | 1,000 | 134,578 | 114,416 | 3,027 |
-| `RevokeAllForUserAndAudience` | 10 | 3,919 | 4,128 | 69 |
-| `RevokeAllForUserAndAudience` | 100 | 16,184 | 18,528 | 429 |
-| `RevokeAllForUserAndAudience` | 1,000 | 134,852 | 162,544 | 4,031 |
+| `RevokeAllUserTokens` | 10 | 2,278 | 3,408 | 50 |
+| `RevokeAllUserTokens` | 100 | 10,622 | 13,488 | 320 |
+| `RevokeAllUserTokens` | 1,000 | 91,055 | 114,304 | 3,021 |
+| `RevokeAllForAudience` | 10 | 2,554 | 3,472 | 51 |
+| `RevokeAllForAudience` | 100 | 11,341 | 13,552 | 321 |
+| `RevokeAllForAudience` | 1,000 | 95,612 | 114,368 | 3,023 |
+| `RevokeAllForUserAndAudience` | 10 | 2,890 | 4,080 | 65 |
+| `RevokeAllForUserAndAudience` | 100 | 13,592 | 18,480 | 425 |
+| `RevokeAllForUserAndAudience` | 1,000 | 112,805 | 162,496 | 4,027 |
 
 ### Audience-Scoped Listing (full scan, page size 100, MemoryRefreshStore)
 
 | N tokens | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| 100 | 5,915 | 17,760 | 226 |
-| 1,000 | 68,193 | 178,204 | 2,305 |
-| 10,000 | 728,789 | 1,782,725 | 23,095 |
+| 100 | 4,877 | 17,040 | 218 |
+| 1,000 | 54,099 | 171,004 | 2,225 |
+| 10,000 | 567,105 | 1,710,726 | 22,295 |
 
 ---
 
@@ -186,13 +186,13 @@ token and a new opaque refresh token in a single call.
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `ValidateAccessToken` (steady state) | 5,580 | 7,384 | 109 |
-| `ValidateAccessToken` (during rotation) | 13,025 | 7,520 | 110 |
+| `ValidateAccessToken` (steady state) | 4,199 | 6,352 | 96 |
+| `ValidateAccessToken` (during rotation) | 10,335 | 6,464 | 97 |
 
 `BenchmarkValidateAccessToken_DuringRotation` runs 16 parallel validator goroutines
 against a token signed with the initial key while a background goroutine calls
 `RotateKeys` every 50 ms. The key overlap window (5 minutes) keeps the original token
-valid throughout the run. The 2.3× slowdown (5.6 µs → 13.0 µs) reflects read-write mutex
+valid throughout the run. The 2.5× slowdown (4.2 µs → 10.3 µs) reflects read-write mutex
 contention during the brief window when a rotation updates the key cache.
 
 This benchmark cannot be reproduced by single-key JWT libraries. It validates the
@@ -210,20 +210,20 @@ network calls.
 
 | Variant | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| NoOp (baseline) | 57,951 | 6,800 | 75 |
-| PrometheusMetrics | 57,979 | 6,800 | 75 |
-| OtelTracer | 59,058 | 7,632 | 87 |
+| NoOp (baseline) | 56,563 | 6,570 | 70 |
+| PrometheusMetrics | 56,656 | 6,570 | 70 |
+| OtelTracer | 56,704 | 7,050 | 79 |
 
 ### Validation (`ValidateAccessToken`)
 
 | Variant | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| NoOp (baseline) | 2,536 | 7,384 | 109 |
-| OtelTracer | 2,737 | 8,216 | 121 |
+| NoOp (baseline) | 2,574 | 6,352 | 96 |
+| OtelTracer | 2,642 | 6,832 | 105 |
 
-Observability overhead is negligible — PrometheusMetrics adds < 0.1% to issuance; the
-OtelTracer dispatch (span start/end via the no-op provider) adds ~1.9% to issuance and
-~8% to validation. Both are noise relative to real Redis RTT in production.
+Observability overhead is negligible — PrometheusMetrics adds < 0.2% to issuance; the
+OtelTracer dispatch (span start/end via the no-op provider) adds < 0.3% to issuance and
+~2.6% to validation. Both are noise relative to real Redis RTT in production.
 
 ---
 
@@ -231,20 +231,20 @@ OtelTracer dispatch (span start/end via the no-op provider) adds ~1.9% to issuan
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `Sign` — raw `golang-jwt/jwt` | 56,472 | 3,384 | 30 |
-| `IssueAccessToken` — jwtauth | 58,340 | 6,801 | 75 |
-| `Verify` — raw `golang-jwt/jwt` | 2,271 | 4,288 | 62 |
-| `ValidateAccessToken` — jwtauth | 2,642 | 7,384 | 109 |
+| `Sign` — raw `golang-jwt/jwt` | 56,699 | 3,385 | 30 |
+| `IssueAccessToken` — jwtauth | 57,471 | 6,571 | 70 |
+| `Verify` — raw `golang-jwt/jwt` | 2,255 | 4,288 | 62 |
+| `ValidateAccessToken` — jwtauth | 2,574 | 6,352 | 96 |
 
-jwtauth adds **3.3% overhead on signing** (58,340 vs 56,472 ns) and **16% on validation**
-(2,642 vs 2,271 ns) relative to raw `golang-jwt/jwt`. The extra cost covers:
+jwtauth adds **1.4% overhead on signing** (57,471 vs 56,699 ns) and **14% on validation**
+(2,574 vs 2,255 ns) relative to raw `golang-jwt/jwt`. The extra cost covers:
 
 - Key manager cache lookup (read lock on the key map)
 - Refresh token storage and correlation-ID propagation
 - Logging, metrics, and tracing dispatch (no-op in these runs)
 - Claims validation (issuer, audience, expiry enforcement)
 
-The validation overhead in absolute terms is 371 ns — well within single-digit microsecond
+The validation overhead in absolute terms is 319 ns — well within single-digit microsecond
 territory for any real-world workload.
 
 ---
@@ -292,5 +292,4 @@ benchmark showing > 10% regression with p < 0.05 warrants investigation before m
   response encoding, and transport cost sit outside this suite.
 
 Real-Redis benchmarks against a known deployment will be published as a separate document
-when a stable infrastructure baseline is available (deferred from v0.5.0 — see
-`CLAUDE.md` Cloud-Dependent Activities).
+when a stable infrastructure baseline is available.
