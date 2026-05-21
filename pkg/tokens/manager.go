@@ -1737,7 +1737,7 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		"tokenID", token.TokenID)
 
 	// ===== STEP 5: Check Expiration =====
-	if token.ExpiresAt.Before(time.Now()) {
+	if !token.ExpiresAt.After(time.Now()) {
 		status = "expired"
 		errorType = "expired"
 		m.logger.Warn("refresh token has expired", ctx,
@@ -1878,7 +1878,7 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 		"tokenID", token.TokenID)
 
 	// ===== STEP 5: Check Expiration =====
-	if token.ExpiresAt.Before(time.Now()) {
+	if !token.ExpiresAt.After(time.Now()) {
 		status = "expired"
 		errorType = "expired"
 		m.logger.Warn("refresh token has expired", ctx,
@@ -2314,7 +2314,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	now := time.Now()
 
 	// Check if expired
-	if refreshToken.ExpiresAt.Before(now) {
+	if !refreshToken.ExpiresAt.After(now) {
 		m.logger.Info("introspect token is expired", ctx,
 			"token", token,
 			"expiredAt", refreshToken.ExpiresAt)
