@@ -512,4 +512,48 @@ var _ = Describe("TokenManager", func() {
 			shutdownCancel2()
 		})
 	})
+
+	// ========================================================================
+	// CONCURRENT LIFECYCLE RACES
+	// ========================================================================
+	Describe("Concurrent Lifecycle Races", func() {
+		BeforeEach(func() {
+			service = newTestManager(mockKM, mockStore, mockLogger)
+			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
+			Expect(service.Start(ctx)).To(Succeed())
+		})
+
+		It("token operations racing with Shutdown should complete or return ErrManagerNotRunning — never panic", func() {
+			const workers = 20
+			mockKM.EXPECT().GetCurrentSigningKey(gomock.Any()).Return(testKey, testKeyID, nil).AnyTimes()
+			mockStore.EXPECT().Cleanup(gomock.Any()).Return(0, nil).AnyTimes()
+			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
+
+			results := make(chan error, workers)
+			var wg sync.WaitGroup
+
+			for i := 0; i < workers; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					defer GinkgoRecover()
+					_, err := service.IssueAccessToken(ctx, "user-race-test")
+					results <- err
+				}()
+			}
+
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			Expect(service.Shutdown(shutdownCtx)).To(Succeed())
+
+			wg.Wait()
+			close(results)
+
+			for err := range results {
+				if err != nil {
+					Expect(err).To(Equal(tokens.ErrManagerNotRunning))
+				}
+			}
+		})
+	})
 })
