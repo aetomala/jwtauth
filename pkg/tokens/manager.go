@@ -176,8 +176,8 @@ func ErrInvalidConfig(msg string) error {
 	return errors.New(msg)
 }
 
-// DefaultTokenManagerConfig returns a TokenManagerConfig populated with production-safe defaultm.
-// NewManager applies these automatically for any zero-value duration fieldm.
+// DefaultTokenManagerConfig returns a TokenManagerConfig populated with production-safe defaults.
+// NewManager applies these automatically for any zero-value duration fields.
 func DefaultTokenManagerConfig() TokenManagerConfig {
 	return TokenManagerConfig{
 		AccessTokenDuration:  15 * time.Minute,
@@ -1582,9 +1582,9 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 }
 
 // ValidateAccessTokenWithClaims validates the token and returns both the registered
-// claims and any custom claims embedded at issuance via IssueAccessTokenWithClaimm.
+// claims and any custom claims embedded at issuance via IssueAccessTokenWithClaims.
 // Reserved claim keys (sub, exp, nbf, iat, jti, iss, aud) are excluded from the
-// custom claims map so callers receive only the application-defined fieldm.
+// custom claims map so callers receive only the application-defined fields.
 // Returns an empty map when no custom claims were embedded.
 //
 // Returns ErrManagerNotRunning if the service has not been started, ErrTokenExpired
