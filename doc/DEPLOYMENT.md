@@ -527,6 +527,13 @@ workflow described in [Audience-Scoped Revocation](#audience-scoped-revocation).
 `count` is a hint — the actual page size may vary. Cursor semantics are best-effort under
 concurrent mutation: tokens created or deleted between pages may appear, disappear, or shift.
 
+**Pagination guarantees (ADR-011):** Cursors are opaque — do not decode, construct,
+compare, or persist them across library upgrades or backend changes. Pagination is
+best-effort: tokens inserted or deleted between pages may appear, be skipped, or appear
+twice. Iteration order is not guaranteed to be stable between calls or consistent across
+backends. Audit pipelines that require complete, duplicate-free enumeration should hold
+an application-level mutex, enumerate to exhaustion, then process the snapshot.
+
 See `examples/token-audit/` for a runnable reference.
 
 ---

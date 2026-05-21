@@ -63,41 +63,9 @@ func NewOtelTracer(scopeName string) *OtelTracer {
 }
 
 // Start creates a new OpenTelemetry span and returns a context containing it.
-// SpanOptions are applied in order — attributes are set on the span at creation time.
-func (t *OtelTracer) Start(ctx context.Context, name string, opts ...SpanOption) (context.Context, Span) {
-	// ===== STEP 1: Apply Options =====
-	config := &SpanConfig{}
-	for _, opt := range opts {
-		opt(config)
-	}
-
-	// ===== STEP 2: Map SpanKind =====
-	var otelKind trace.SpanKind
-	switch config.Kind {
-	case SpanKindServer:
-		otelKind = trace.SpanKindServer
-	case SpanKindClient:
-		otelKind = trace.SpanKindClient
-	case SpanKindProducer:
-		otelKind = trace.SpanKindProducer
-	case SpanKindConsumer:
-		otelKind = trace.SpanKindConsumer
-	default:
-		otelKind = trace.SpanKindInternal
-	}
-
-	// ===== STEP 3: Start Span =====
-	ctx, otelSpan := t.tracer.Start(ctx, name, trace.WithSpanKind(otelKind))
-
-	// ===== STEP 4: Set Initial Attributes =====
-	if len(config.Attributes) > 0 {
-		attrs := make([]attribute.KeyValue, 0, len(config.Attributes))
-		for k, v := range config.Attributes {
-			attrs = append(attrs, toOtelAttribute(k, v))
-		}
-		otelSpan.SetAttributes(attrs...)
-	}
-
+// All library spans use SpanKindInternal — span kind is not configurable.
+func (t *OtelTracer) Start(ctx context.Context, name string) (context.Context, Span) {
+	ctx, otelSpan := t.tracer.Start(ctx, name, trace.WithSpanKind(trace.SpanKindInternal))
 	return ctx, &OtelSpan{span: otelSpan}
 }
 

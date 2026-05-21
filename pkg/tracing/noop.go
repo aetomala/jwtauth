@@ -35,7 +35,7 @@ func NewNoOpTracer() *NoOpTracer {
 // Start returns the context unchanged and a no-op span.
 //
 // The returned span's methods are all no-ops.
-func (t *NoOpTracer) Start(ctx context.Context, name string, opts ...SpanOption) (context.Context, Span) {
+func (t *NoOpTracer) Start(ctx context.Context, name string) (context.Context, Span) {
 	return ctx, &NoOpSpan{}
 }
 

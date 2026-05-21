@@ -176,8 +176,8 @@ func ErrInvalidConfig(msg string) error {
 	return errors.New(msg)
 }
 
-// DefaultTokenManagerConfig returns a TokenManagerConfig populated with production-safe defaultm.
-// NewManager applies these automatically for any zero-value duration fieldm.
+// DefaultTokenManagerConfig returns a TokenManagerConfig populated with production-safe defaults.
+// NewManager applies these automatically for any zero-value duration fields.
 func DefaultTokenManagerConfig() TokenManagerConfig {
 	return TokenManagerConfig{
 		AccessTokenDuration:  15 * time.Minute,
@@ -278,13 +278,10 @@ func NewManager(config TokenManagerConfig) (*Manager, error) {
 }
 
 // startSpan begins a new tracing span for the given Manager operation.
-func (m *Manager) startSpan(ctx context.Context, operation string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
-	opts = append([]tracing.SpanOption{
-		tracing.WithAttributes(map[string]any{
-			"token.namespace": m.namespace,
-		}),
-	}, opts...)
-	return m.tracer.Start(ctx, "TokenManager."+operation, opts...)
+func (m *Manager) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
+	ctx, span := m.tracer.Start(ctx, "TokenManager."+operation)
+	span.SetAttributes(map[string]any{"token.namespace": m.namespace})
+	return ctx, span
 }
 
 // Start initializes the service and begins background operations. It starts
@@ -326,8 +323,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.wg.Add(1)
 	go m.cleanupLoop(ctx)
 
-	// ===== STEP 5: Record Metric and Log Success =====
-	m.metrics.SetGauge(metricServiceRunning, 1.0, map[string]string{})
+	// ===== STEP 5: Log Success =====
 	m.logger.Info("token service started", ctx)
 	span.SetStatus(tracing.StatusOK, "")
 	return nil
@@ -429,8 +425,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		return wrapped
 	}
 
-	// ===== STEP 6: Record Metric and Log Success =====
-	m.metrics.SetGauge(metricServiceRunning, 0.0, map[string]string{})
+	// ===== STEP 6: Log Success =====
 	m.logger.Info("token service stopped", ctx)
 	span.SetStatus(tracing.StatusOK, "")
 	return nil
@@ -1587,9 +1582,9 @@ func (m *Manager) ValidateAccessToken(ctx context.Context, tokenString string) (
 }
 
 // ValidateAccessTokenWithClaims validates the token and returns both the registered
-// claims and any custom claims embedded at issuance via IssueAccessTokenWithClaimm.
+// claims and any custom claims embedded at issuance via IssueAccessTokenWithClaims.
 // Reserved claim keys (sub, exp, nbf, iat, jti, iss, aud) are excluded from the
-// custom claims map so callers receive only the application-defined fieldm.
+// custom claims map so callers receive only the application-defined fields.
 // Returns an empty map when no custom claims were embedded.
 //
 // Returns ErrManagerNotRunning if the service has not been started, ErrTokenExpired
@@ -1742,7 +1737,7 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		"tokenID", token.TokenID)
 
 	// ===== STEP 5: Check Expiration =====
-	if token.ExpiresAt.Before(time.Now()) {
+	if !token.ExpiresAt.After(time.Now()) {
 		status = "expired"
 		errorType = "expired"
 		m.logger.Warn("refresh token has expired", ctx,
@@ -1883,7 +1878,7 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 		"tokenID", token.TokenID)
 
 	// ===== STEP 5: Check Expiration =====
-	if token.ExpiresAt.Before(time.Now()) {
+	if !token.ExpiresAt.After(time.Now()) {
 		status = "expired"
 		errorType = "expired"
 		m.logger.Warn("refresh token has expired", ctx,
@@ -2262,21 +2257,15 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	defer span.End()
 
 	start := time.Now()
-	status := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricTokensIntrospectedTotal, map[string]string{
-			"status": status,
-			"namespace": m.namespace,
-		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "introspect_token",
-			"namespace":  m.namespace,
+			"namespace": m.namespace,
 		})
 	}()
 
 	// ===== STEP 1: Service State Check =====
 	if !m.isRunning.Load() {
-		status = "not_running"
 		m.logger.Warn("attempted to introspect token while service is stopped", ctx)
 		span.RecordError(ErrManagerNotRunning)
 		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
@@ -2285,7 +2274,6 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
-		status = "cancelled"
 		m.logger.Warn("context cancelled during token introspection", ctx)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -2296,7 +2284,6 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// ===== STEP 3: Input Validation =====
 	if token == "" {
-		status = "invalid_input"
 		m.logger.Warn("empty token provided for introspection", ctx)
 		span.RecordError(ErrInvalidRefreshToken)
 		span.SetStatus(tracing.StatusError, ErrInvalidRefreshToken.Error())
@@ -2309,7 +2296,6 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	refreshToken, err := m.refreshStore.Retrieve(ctx, token)
 	if err != nil {
 		// Return inactive metadata instead of error — introspect never errors on unknown tokens
-		status = "success"
 		m.logger.Info("token not found during introspection", ctx,
 			"error", err)
 		span.SetAttribute("active", false)
@@ -2328,8 +2314,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	now := time.Now()
 
 	// Check if expired
-	if refreshToken.ExpiresAt.Before(now) {
-		status = "success"
+	if !refreshToken.ExpiresAt.After(now) {
 		m.logger.Info("introspect token is expired", ctx,
 			"token", token,
 			"expiredAt", refreshToken.ExpiresAt)
@@ -2348,7 +2333,6 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// Check if revoked
 	if refreshToken.Revoked {
-		status = "success"
 		m.logger.Info("introspected token is revoked", ctx,
 			"tokenID", token)
 		span.SetAttribute("active", false)
@@ -2364,8 +2348,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 		}, nil
 	}
 
-	// ===== STEP 6: Record Success and Return Active Token Metadata =====
-	status = "success"
+	// ===== STEP 6: Return Active Token Metadata =====
 	m.logger.Info("token introspected", ctx,
 		"tokenID", token,
 		"userID", refreshToken.UserID,
@@ -2395,10 +2378,9 @@ func (m *Manager) CleanupExpiredTokens(ctx context.Context) (int, error) {
 	start := time.Now()
 	status := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricOperationsTotal, map[string]string{
-			"operation": "cleanup",
+		m.metrics.IncrementCounter(metricTokensCleanupTotal, map[string]string{
 			"status":    status,
-			"namespace":  m.namespace,
+			"namespace": m.namespace,
 		})
 		m.metrics.RecordDuration(metricOperationDuration, time.Since(start), map[string]string{
 			"operation": "cleanup",
@@ -2459,10 +2441,12 @@ func (m *Manager) ListTokens(ctx context.Context, cursor string, count int) ([]*
 	errorType := "error"
 	defer func() {
 		m.metrics.IncrementCounter(metricTokensListTotal, map[string]string{
+			"scope":      "all",
 			"namespace":  m.namespace,
 			"error_type": errorType,
 		})
 		m.metrics.RecordDuration(metricTokensListDuration, time.Since(start), map[string]string{
+			"scope":     "all",
 			"namespace": m.namespace,
 		})
 	}()
@@ -2520,11 +2504,13 @@ func (m *Manager) ListTokensForUser(ctx context.Context, userID string, cursor s
 	start := time.Now()
 	errorType := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricTokensListForUserTotal, map[string]string{
+		m.metrics.IncrementCounter(metricTokensListTotal, map[string]string{
+			"scope":      "user",
 			"namespace":  m.namespace,
 			"error_type": errorType,
 		})
-		m.metrics.RecordDuration(metricTokensListForUserDuration, time.Since(start), map[string]string{
+		m.metrics.RecordDuration(metricTokensListDuration, time.Since(start), map[string]string{
+			"scope":     "user",
 			"namespace": m.namespace,
 		})
 	}()
@@ -2584,11 +2570,13 @@ func (m *Manager) ListTokensForAudience(ctx context.Context, audience string, cu
 	start := time.Now()
 	errorType := "error"
 	defer func() {
-		m.metrics.IncrementCounter(metricTokensListForAudienceTotal, map[string]string{
+		m.metrics.IncrementCounter(metricTokensListTotal, map[string]string{
+			"scope":      "audience",
 			"namespace":  m.namespace,
 			"error_type": errorType,
 		})
-		m.metrics.RecordDuration(metricTokensListForAudienceDuration, time.Since(start), map[string]string{
+		m.metrics.RecordDuration(metricTokensListDuration, time.Since(start), map[string]string{
+			"scope":     "audience",
 			"namespace": m.namespace,
 		})
 	}()

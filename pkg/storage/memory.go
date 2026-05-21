@@ -93,9 +93,9 @@ func (m *MemoryRefreshStore) Namespace() string { return "" }
 // startSpan starts a new span for the given operation name, pre-seeded with
 // the storage.backend attribute.
 func (m *MemoryRefreshStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
-	return m.tracer.Start(ctx, "MemoryRefreshStore."+operation,
-		tracing.WithAttributes(map[string]any{"storage.backend": m.backend}),
-	)
+	ctx, span := m.tracer.Start(ctx, "MemoryRefreshStore."+operation)
+	span.SetAttributes(map[string]any{"storage.backend": m.backend})
+	return ctx, span
 }
 
 // Store persists a new refresh token. Returns ErrInvalidTokenID if tokenID is
@@ -599,24 +599,8 @@ func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, coun
 	span.SetAttribute("storage.cursor", cursor)
 	span.SetAttribute("storage.count", count)
 
-	start := time.Now()
-	errorType := "error"
-	resultCount := 0
-	defer func() {
-		m.metrics.IncrementCounter(metricListTokensTotal, map[string]string{
-			"storage_backend": m.backend,
-			"namespace":       "",
-			"error_type":      errorType,
-		})
-		m.metrics.RecordDuration(metricListTokensDuration, time.Since(start), map[string]string{
-			"storage_backend": m.backend,
-			"namespace":       "",
-		})
-	}()
-
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
-		errorType = "cancelled"
 		m.logger.Warn("listTokens aborted: context cancelled", ctx, "reason", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -684,8 +668,7 @@ func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, coun
 	}
 
 	// ===== STEP 7: Log and Return =====
-	errorType = ""
-	resultCount = len(tokens)
+	resultCount := len(tokens)
 	span.SetAttribute("storage.result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("listTokens: page returned", ctx,
@@ -712,24 +695,8 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 	span.SetAttribute("storage.cursor", cursor)
 	span.SetAttribute("storage.count", count)
 
-	start := time.Now()
-	errorType := "error"
-	resultCount := 0
-	defer func() {
-		m.metrics.IncrementCounter(metricListTokensForUserTotal, map[string]string{
-			"storage_backend": m.backend,
-			"namespace":       "",
-			"error_type":      errorType,
-		})
-		m.metrics.RecordDuration(metricListTokensForUserDuration, time.Since(start), map[string]string{
-			"storage_backend": m.backend,
-			"namespace":       "",
-		})
-	}()
-
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
-		errorType = "cancelled"
 		m.logger.Warn("listTokensForUser aborted: context cancelled", ctx, "reason", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -738,7 +705,6 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 
 	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(userID)) == 0 {
-		errorType = "validation_error"
 		m.logger.Warn("listTokensForUser rejected: userID is empty or whitespace", ctx)
 		span.RecordError(ErrInvalidUserID)
 		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
@@ -760,7 +726,6 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 	// ===== STEP 5: Build Page from User's Token Slice =====
 	tokenIDs := m.userTokens[userID]
 	if offset >= len(tokenIDs) {
-		errorType = ""
 		span.SetStatus(tracing.StatusOK, "")
 		m.logger.Info("listTokensForUser: page returned", ctx,
 			"user_id", userID,
@@ -808,8 +773,7 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 	}
 
 	// ===== STEP 7: Log and Return =====
-	errorType = ""
-	resultCount = len(tokens)
+	resultCount := len(tokens)
 	span.SetAttribute("storage.result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("listTokensForUser: page returned", ctx,
@@ -839,24 +803,8 @@ func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience
 	span.SetAttribute("storage.cursor", cursor)
 	span.SetAttribute("storage.count", count)
 
-	start := time.Now()
-	errorType := "error"
-	resultCount := 0
-	defer func() {
-		m.metrics.IncrementCounter(metricListTokensForAudienceTotal, map[string]string{
-			"storage_backend": m.backend,
-			"namespace":       "",
-			"error_type":      errorType,
-		})
-		m.metrics.RecordDuration(metricListTokensForAudienceDuration, time.Since(start), map[string]string{
-			"storage_backend": m.backend,
-			"namespace":       "",
-		})
-	}()
-
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
-		errorType = "cancelled"
 		m.logger.Warn("listTokensForAudience aborted: context cancelled", ctx, "reason", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -865,7 +813,6 @@ func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience
 
 	// ===== STEP 2: Validate Inputs =====
 	if len(strings.TrimSpace(audience)) == 0 {
-		errorType = "validation_error"
 		m.logger.Warn("listTokensForAudience rejected: audience is empty or whitespace", ctx)
 		span.RecordError(ErrInvalidAudience)
 		span.SetStatus(tracing.StatusError, ErrInvalidAudience.Error())
@@ -887,7 +834,6 @@ func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience
 	// ===== STEP 5: Build Page from Audience's Token Slice =====
 	tokenIDs := m.audienceTokens[audience]
 	if offset >= len(tokenIDs) {
-		errorType = ""
 		span.SetStatus(tracing.StatusOK, "")
 		m.logger.Info("listTokensForAudience: page returned", ctx,
 			"audience", audience,
@@ -935,8 +881,7 @@ func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience
 	}
 
 	// ===== STEP 7: Log and Return =====
-	errorType = ""
-	resultCount = len(tokens)
+	resultCount := len(tokens)
 	span.SetAttribute("storage.result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("listTokensForAudience: page returned", ctx,

@@ -61,42 +61,17 @@ var _ = Describe("TokenManager Metrics", func() {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer shutdownCancel()
 			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil).AnyTimes()
-			mockM.EXPECT().SetGauge(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 			service.Shutdown(shutdownCtx) //nolint:errcheck
 		}
 		cancel()
 		ctrl.Finish()
 	})
 
-	// startService starts the service and expects the correct Start metrics.
+	// startService starts the service with correct mock expectations.
 	startService := func() {
 		mockKM.EXPECT().Start(gomock.Any()).Return(nil)
-		mockM.EXPECT().SetGauge("jwtauth_service_running", 1.0, map[string]string{})
 		Expect(service.Start(ctx)).To(Succeed())
 	}
-
-	// ====================================================================
-	// Phase 1: Lifecycle Metrics
-	// ====================================================================
-
-	Describe("Start", func() {
-		It("records service_running=1.0 on successful start", func() {
-			mockKM.EXPECT().Start(gomock.Any()).Return(nil)
-			mockM.EXPECT().SetGauge("jwtauth_service_running", 1.0, map[string]string{})
-			Expect(service.Start(ctx)).To(Succeed())
-		})
-	})
-
-	Describe("Shutdown", func() {
-		It("records service_running=0.0 on successful shutdown", func() {
-			startService()
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer shutdownCancel()
-			mockKM.EXPECT().Shutdown(gomock.Any()).Return(nil)
-			mockM.EXPECT().SetGauge("jwtauth_service_running", 0.0, map[string]string{})
-			Expect(service.Shutdown(shutdownCtx)).To(Succeed())
-		})
-	})
 
 	// ====================================================================
 	// Phase 2: IssueAccessToken Metrics
@@ -354,7 +329,7 @@ var _ = Describe("TokenManager Metrics", func() {
 	// ====================================================================
 
 	Describe("IntrospectToken", func() {
-		It("records success counter for an active token", func() {
+		It("records duration for an active token", func() {
 			startService()
 			storedToken := &storage.RefreshToken{
 				TokenID:   "rt-1",
@@ -363,10 +338,6 @@ var _ = Describe("TokenManager Metrics", func() {
 				Revoked:   false,
 			}
 			mockStore.EXPECT().Retrieve(gomock.Any(), "rt-1").Return(storedToken, nil)
-			mockM.EXPECT().IncrementCounter("jwtauth_tokens_introspected_total", map[string]string{
-				"status":    "success",
-				"namespace": "",
-			})
 			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "introspect_token",
 				"namespace": "",
@@ -376,13 +347,9 @@ var _ = Describe("TokenManager Metrics", func() {
 			Expect(meta.Active).To(BeTrue())
 		})
 
-		It("records success counter even when token is not found (returns inactive)", func() {
+		It("records duration even when token is not found (returns inactive)", func() {
 			startService()
 			mockStore.EXPECT().Retrieve(gomock.Any(), "unknown-rt").Return(nil, storage.ErrTokenNotFound)
-			mockM.EXPECT().IncrementCounter("jwtauth_tokens_introspected_total", map[string]string{
-				"status":    "success",
-				"namespace": "",
-			})
 			mockM.EXPECT().RecordDuration("jwtauth_operation_duration_seconds", gomock.Any(), map[string]string{
 				"operation": "introspect_token",
 				"namespace": "",
@@ -401,8 +368,7 @@ var _ = Describe("TokenManager Metrics", func() {
 		It("records success counter and duration on successful cleanup", func() {
 			startService()
 			mockStore.EXPECT().Cleanup(gomock.Any()).Return(3, nil)
-			mockM.EXPECT().IncrementCounter("jwtauth_operations_total", map[string]string{
-				"operation": "cleanup",
+			mockM.EXPECT().IncrementCounter("jwtauth_tokens_cleanup_total", map[string]string{
 				"status":    "success",
 				"namespace": "",
 			})

@@ -16,7 +16,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/aetomala/jwtauth/pkg/tracing"
@@ -113,65 +112,8 @@ var _ = Describe("OtelTracer", func() {
 		})
 	})
 
-	// ===== PHASE 3: Start — SpanKind Mapping =====
-	Describe("Phase 3: Start — SpanKind Mapping", func() {
-		DescribeTable("maps internal SpanKind to OTel SpanKind",
-			func(kind tracing.SpanKind, expected trace.SpanKind) {
-				_, span := otracer.Start(ctx, "op", tracing.WithSpanKind(kind))
-				span.End()
-				Expect(latestSpan().SpanKind).To(Equal(expected))
-			},
-			Entry("SpanKindServer", tracing.SpanKindServer, trace.SpanKindServer),
-			Entry("SpanKindClient", tracing.SpanKindClient, trace.SpanKindClient),
-			Entry("SpanKindProducer", tracing.SpanKindProducer, trace.SpanKindProducer),
-			Entry("SpanKindConsumer", tracing.SpanKindConsumer, trace.SpanKindConsumer),
-		)
-
-		It("should default to SpanKindInternal when no kind option is provided", func() {
-			_, span := otracer.Start(ctx, "op")
-			span.End()
-			Expect(latestSpan().SpanKind).To(Equal(trace.SpanKindInternal))
-		})
-	})
-
-	// ===== PHASE 4: Start — Initial Attributes via WithAttributes =====
-	Describe("Phase 4: Start — Initial Attributes", func() {
-		It("should record a single attribute passed via WithAttributes", func() {
-			_, span := otracer.Start(ctx, "op",
-				tracing.WithAttributes(map[string]any{
-					"user_id": "user-123",
-				}),
-			)
-			span.End()
-			val, found := findAttr(latestSpan().Attributes, "user_id")
-			Expect(found).To(BeTrue())
-			Expect(val.AsString()).To(Equal("user-123"))
-		})
-
-		It("should record all attributes when multiple are provided", func() {
-			_, span := otracer.Start(ctx, "op",
-				tracing.WithAttributes(map[string]any{
-					"key_a": "alpha",
-					"key_b": true,
-				}),
-			)
-			span.End()
-			attrs := latestSpan().Attributes
-			_, foundA := findAttr(attrs, "key_a")
-			_, foundB := findAttr(attrs, "key_b")
-			Expect(foundA).To(BeTrue())
-			Expect(foundB).To(BeTrue())
-		})
-
-		It("should record no attributes when WithAttributes is not provided", func() {
-			_, span := otracer.Start(ctx, "op")
-			span.End()
-			Expect(latestSpan().Attributes).To(BeEmpty())
-		})
-	})
-
-	// ===== PHASE 5: Span Operations =====
-	Describe("Phase 5: Span Operations", func() {
+	// ===== PHASE 3: Span Operations =====
+	Describe("Phase 3: Span Operations", func() {
 		var span tracing.Span
 
 		BeforeEach(func() {
@@ -304,8 +246,8 @@ var _ = Describe("OtelTracer", func() {
 		})
 	})
 
-	// ===== PHASE 6: toOtelAttribute Type Dispatch =====
-	Describe("Phase 6: toOtelAttribute Type Dispatch", func() {
+	// ===== PHASE 4: toOtelAttribute Type Dispatch =====
+	Describe("Phase 4: toOtelAttribute Type Dispatch", func() {
 		var span tracing.Span
 
 		BeforeEach(func() {
@@ -329,8 +271,8 @@ var _ = Describe("OtelTracer", func() {
 		)
 	})
 
-	// ===== PHASE 7: Typical Usage Pattern =====
-	Describe("Phase 7: Typical Usage Pattern", func() {
+	// ===== PHASE 5: Typical Usage Pattern =====
+	Describe("Phase 5: Typical Usage Pattern", func() {
 		It("should record the span when using the defer End pattern", func() {
 			func() {
 				_, span := otracer.Start(ctx, "deferred.op")
@@ -368,8 +310,8 @@ var _ = Describe("OtelTracer", func() {
 		})
 	})
 
-	// ===== PHASE 8: Concurrent Usage =====
-	Describe("Phase 8: Concurrent Usage", func() {
+	// ===== PHASE 6: Concurrent Usage =====
+	Describe("Phase 6: Concurrent Usage", func() {
 		It("should be safe for concurrent span creation and ending", func() {
 			const goroutines = 100
 			done := make(chan bool, goroutines)

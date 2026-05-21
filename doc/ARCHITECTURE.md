@@ -232,40 +232,24 @@ type Metrics interface {
 
 | Metric | Type | Labels |
 |--------|------|--------|
-| `jwtauth_tokens_issued_total` | Counter | status, error_type |
-| `jwtauth_tokens_validated_total` | Counter | status, error_type |
-| `jwtauth_tokens_refreshed_total` | Counter | status, error_type |
-| `jwtauth_tokens_revoked_total` | Counter | revocation_scope, status |
-| `jwtauth_tokens_introspected_total` | Counter | status |
-| `jwtauth_tokens_list_total` | Counter | namespace, error_type |
-| `jwtauth_tokens_list_duration_seconds` | Histogram | namespace |
-| `jwtauth_tokens_list_for_user_total` | Counter | namespace, error_type |
-| `jwtauth_tokens_list_for_user_duration_seconds` | Histogram | namespace |
-| `jwtauth_tokens_list_for_audience_total` | Counter | namespace, error_type |
-| `jwtauth_tokens_list_for_audience_duration_seconds` | Histogram | namespace |
-| `jwtauth_operations_total` | Counter | operation, status |
-| `jwtauth_operation_duration_seconds` | Histogram | operation |
-| `jwtauth_active_tokens` | Gauge | storage_backend |
-| `jwtauth_service_running` | Gauge | — |
-| `jwtauth_storage_operations_total` | Counter | operation, status, error_type, storage_backend |
-| `jwtauth_storage_cleanup_tokens_removed_total` | Counter | storage_backend |
-| `jwtauth_storage_operation_duration_seconds` | Histogram | operation, storage_backend |
-| `jwtauth_storage_tokens_count` | Gauge | storage_backend |
-| `jwtauth_storage_list_tokens_total` | Counter | storage_backend, namespace, error_type |
-| `jwtauth_storage_list_tokens_duration_seconds` | Histogram | storage_backend, namespace |
-| `jwtauth_storage_list_tokens_for_user_total` | Counter | storage_backend, namespace, error_type |
-| `jwtauth_storage_list_tokens_for_user_duration_seconds` | Histogram | storage_backend, namespace |
-| `jwtauth_storage_list_tokens_for_audience_total` | Counter | storage_backend, namespace, error_type |
-| `jwtauth_storage_list_tokens_for_audience_duration_seconds` | Histogram | storage_backend, namespace |
-| `jwtauth_keystore_operations_total` | Counter | operation, status, error_type, storage_backend |
-| `jwtauth_keystore_operation_duration_seconds` | Histogram | operation, storage_backend |
-| `jwtauth_keystore_keys_count` | Gauge | storage_backend |
-| `jwtauth_key_rotations_total` | Counter | status, error_type |
-| `jwtauth_key_signing_operations_total` | Counter | status, error_type |
-| `jwtauth_key_validation_operations_total` | Counter | status, error_type |
-| `jwtauth_key_operation_duration_seconds` | Histogram | operation |
-| `jwtauth_key_current_version` | Gauge | — |
-| `jwtauth_key_active_versions_count` | Gauge | — |
+| `jwtauth_tokens_issued_total` | Counter | status, error_type, namespace |
+| `jwtauth_tokens_validated_total` | Counter | status, error_type, namespace |
+| `jwtauth_tokens_refreshed_total` | Counter | status, error_type, namespace |
+| `jwtauth_tokens_revoked_total` | Counter | revocation_scope, status, namespace |
+| `jwtauth_tokens_cleanup_total` | Counter | status, namespace |
+| `jwtauth_tokens_list_total` | Counter | scope, namespace, error_type |
+| `jwtauth_operation_duration_seconds` | Histogram | operation, namespace |
+| `jwtauth_tokens_list_duration_seconds` | Histogram | scope, namespace |
+| `jwtauth_storage_operations_total` | Counter | operation, status, error_type, storage_backend, namespace |
+| `jwtauth_storage_cleanup_tokens_removed_total` | Counter | storage_backend, namespace |
+| `jwtauth_storage_operation_duration_seconds` | Histogram | operation, storage_backend, namespace |
+| `jwtauth_storage_tokens_count` | Gauge | storage_backend, namespace |
+| `jwtauth_keystore_operations_total` | Counter | operation, status, error_type, storage_backend, namespace |
+| `jwtauth_keystore_operation_duration_seconds` | Histogram | operation, storage_backend, namespace |
+| `jwtauth_keystore_keys_count` | Gauge | storage_backend, namespace |
+| `jwtauth_key_rotations_total` | Counter | status, error_type, namespace |
+| `jwtauth_key_operation_duration_seconds` | Histogram | operation, namespace |
+| `jwtauth_key_active_versions_count` | Gauge | namespace |
 
 > **`error_type` label convention**: `""` (empty string) on success; mirrors the `status` value on failure (e.g., `"cancelled"`, `"not_found"`, `"validation_error"`). Enables two-level dashboarding — success/failure rate at the `status` level, failure breakdown at the `error_type` level. Aligned with the OpenTelemetry `error.type` semantic convention.
 
@@ -516,9 +500,9 @@ Keys are optionally prefixed by `RedisKeyStoreConfig.KeyPrefix` (defaults to emp
 
 | Metric | Type | Labels |
 |--------|------|--------|
-| `jwtauth_keystore_operations_total` | Counter | `operation`, `status`, `storage_backend` |
-| `jwtauth_keystore_operation_duration_seconds` | Histogram | `operation`, `storage_backend` |
-| `jwtauth_keystore_keys_count` | Gauge | `storage_backend` |
+| `jwtauth_keystore_operations_total` | Counter | `operation`, `status`, `error_type`, `storage_backend`, `namespace` |
+| `jwtauth_keystore_operation_duration_seconds` | Histogram | `operation`, `storage_backend`, `namespace` |
+| `jwtauth_keystore_keys_count` | Gauge | `storage_backend`, `namespace` |
 
 `operation` values: `"load_all"`, `"save"`, `"update_metadata"`, `"load_key"`, `"delete"`
 
@@ -940,7 +924,7 @@ Catches:
 
 ### Phase 2: Metrics ✅
 - ✅ Metrics interface defined
-- ✅ Prometheus implementation (`PrometheusMetrics`) with 34 pre-registered metrics, 100% test coverage
+- ✅ Prometheus implementation (`PrometheusMetrics`) with 18 pre-registered metrics, 100% test coverage
 - ✅ NoOp implementation
 - ✅ gomock `MockMetrics` for dependency injection in tests
 - ✅ Wired into KeyManager, TokenManager, and RefreshStore — all components fully instrumented
@@ -1110,6 +1094,8 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 | [007](adr/007-namespace-consistency-contract.md) | Namespace Field on Manager Configs for Observability Consistency | 2026-04-27 |
 | [008](adr/008-reserved-claims-at-issuance.md) | Reserved Claims Protection at Token Issuance | 2026-04-29 |
 | [009](adr/009-multi-audience-token-revocation.md) | Multi-Audience Token Revocation Semantics | 2026-05-09 |
+| [010](adr/010-jti-and-replay-prevention.md) | JTI Uniqueness — No Replay Prevention | 2026-05-20 |
+| [011](adr/011-cursor-semantics.md) | Cursor Semantics — Opaque, Best-Effort, Unordered | 2026-05-20 |
 
 ---
 
@@ -1123,6 +1109,6 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 
 ---
 
-**Last Updated**: May 13, 2026
-**Version**: v0.6.0
-**Status**: Stable — all components fully instrumented (KeyManager, DiskKeyStore, RedisKeyStore, MemoryRefreshStore, RedisRefreshStore, Metrics [Prometheus, 34 metrics], Logging [Correlation ID], Distributed Tracing, TokenManager)
+**Last Updated**: May 21, 2026
+**Version**: v0.7.0
+**Status**: Stable — all components fully instrumented (KeyManager, DiskKeyStore, RedisKeyStore, MemoryRefreshStore, RedisRefreshStore, Metrics [Prometheus, 18 metrics], Logging [Correlation ID], Distributed Tracing, TokenManager)

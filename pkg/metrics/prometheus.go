@@ -95,13 +95,9 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 		"Total number of tokens revoked",
 		[]string{"revocation_scope", "status", "namespace"})
 
-	pm.registerCounter(namespace, "tokens_introspected_total",
-		"Total number of token introspections",
+	pm.registerCounter(namespace, "tokens_cleanup_total",
+		"Total number of cleanup operations",
 		[]string{"status", "namespace"})
-
-	pm.registerCounter(namespace, "operations_total",
-		"Total number of operations",
-		[]string{"operation", "status", "namespace"})
 
 	pm.registerHistogram(namespace, "operation_duration_seconds",
 		"Duration of operations in seconds",
@@ -110,38 +106,12 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 
 	pm.registerCounter(namespace, "tokens_list_total",
 		"Total number of list-tokens operations on the token manager",
-		[]string{"namespace", "error_type"})
+		[]string{"scope", "namespace", "error_type"})
 
 	pm.registerHistogram(namespace, "tokens_list_duration_seconds",
 		"Duration of list-tokens operations on the token manager in seconds",
-		[]string{"namespace"},
+		[]string{"scope", "namespace"},
 		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
-
-	pm.registerCounter(namespace, "tokens_list_for_user_total",
-		"Total number of list-tokens-for-user operations on the token manager",
-		[]string{"namespace", "error_type"})
-
-	pm.registerHistogram(namespace, "tokens_list_for_user_duration_seconds",
-		"Duration of list-tokens-for-user operations on the token manager in seconds",
-		[]string{"namespace"},
-		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
-
-	pm.registerCounter(namespace, "tokens_list_for_audience_total",
-		"Total number of list-tokens-for-audience operations on the token manager",
-		[]string{"namespace", "error_type"})
-
-	pm.registerHistogram(namespace, "tokens_list_for_audience_duration_seconds",
-		"Duration of list-tokens-for-audience operations on the token manager in seconds",
-		[]string{"namespace"},
-		[]float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10})
-
-	pm.registerGauge(namespace, "active_tokens",
-		"Number of active tokens",
-		[]string{"storage_backend", "namespace"})
-
-	pm.registerGauge(namespace, "service_running",
-		"Whether the service is running (1) or stopped (0)",
-		[]string{})
 
 	// ===== RefreshStore Metrics =====
 
@@ -161,33 +131,6 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 	pm.registerGauge(namespace, "storage_tokens_count",
 		"Number of tokens in storage",
 		[]string{"storage_backend", "namespace"})
-
-	pm.registerCounter(namespace, "storage_list_tokens_total",
-		"Total number of list-tokens operations",
-		[]string{"storage_backend", "namespace", "error_type"})
-
-	pm.registerHistogram(namespace, "storage_list_tokens_duration_seconds",
-		"Duration of list-tokens operations in seconds",
-		[]string{"storage_backend", "namespace"},
-		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
-
-	pm.registerCounter(namespace, "storage_list_tokens_for_user_total",
-		"Total number of list-tokens-for-user operations",
-		[]string{"storage_backend", "namespace", "error_type"})
-
-	pm.registerHistogram(namespace, "storage_list_tokens_for_user_duration_seconds",
-		"Duration of list-tokens-for-user operations in seconds",
-		[]string{"storage_backend", "namespace"},
-		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
-
-	pm.registerCounter(namespace, "storage_list_tokens_for_audience_total",
-		"Total number of list-tokens-for-audience operations",
-		[]string{"storage_backend", "namespace", "error_type"})
-
-	pm.registerHistogram(namespace, "storage_list_tokens_for_audience_duration_seconds",
-		"Duration of list-tokens-for-audience operations in seconds",
-		[]string{"storage_backend", "namespace"},
-		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05, .1, .25})
 
 	// ===== KeyStore Metrics =====
 
@@ -210,22 +153,10 @@ func (pm *PrometheusMetrics) registerAllMetrics(namespace string) {
 		"Total number of key rotations",
 		[]string{"status", "error_type", "namespace"})
 
-	pm.registerCounter(namespace, "key_signing_operations_total",
-		"Total number of key signing operations",
-		[]string{"status", "error_type", "namespace"})
-
-	pm.registerCounter(namespace, "key_validation_operations_total",
-		"Total number of key validation operations",
-		[]string{"status", "error_type", "namespace"})
-
 	pm.registerHistogram(namespace, "key_operation_duration_seconds",
 		"Duration of key operations in seconds",
 		[]string{"operation", "namespace"},
 		[]float64{.0001, .0005, .001, .0025, .005, .01, .025, .05})
-
-	pm.registerGauge(namespace, "key_current_version",
-		"Current active key version",
-		[]string{})
 
 	pm.registerGauge(namespace, "key_active_versions_count",
 		"Number of active key versions",

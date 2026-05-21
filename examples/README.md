@@ -21,6 +21,8 @@ A simple and fast HTTP framework. Best for:
 - Framework-agnostic token validation
 - Simple middleware using `gin.HandlerFunc`
 - Built-in request binding and validation
+- `POST /introspect` — RFC 7662-style introspection showing `Active`, `TokenID`, `Audience`
+- `GET /.well-known/jwks.json` — JWKS endpoint with `Cache-Control` headers for external token validators
 
 **Run**:
 ```bash
@@ -110,6 +112,7 @@ Custom Prometheus gauges driven by `GetCurrentKeyInfo` on a 30-second collection
 
 **Features**:
 - Three gauges: `jwtauth_key_age_seconds`, `jwtauth_rotation_scheduled_seconds`, `jwtauth_key_valid`
+- `jwtauth_cleaned_tokens_total` counter incremented by a manual 5-minute cleanup ticker
 - Background goroutine with a 30-second tick — exits cleanly on shutdown
 - `/metrics` endpoint via `promhttp.Handler()`
 - Initial gauge population before the first scrape
@@ -139,6 +142,68 @@ cd token-audit
 go run main.go
 ```
 
+### [Audience Revocation Example](audience-revocation/)
+
+Multi-audience token issuance and audience-scoped revocation. Best for:
+- Understanding `RevokeAllForAudience` and `RevokeAllForUserAndAudience`
+- Learning the atomicity property: a refresh token is revoked as a unit regardless of how many audiences it covers
+- Building service isolation patterns where different services share tokens
+
+**Features**:
+- Issues tokens with multiple audiences using `WithAudience("svc-payments", "svc-reports")`
+- Lists tokens scoped to a specific audience via `ListTokensForAudience`
+- Demonstrates `RevokeAllForAudience` and verifies that alice's token is revoked for both audiences
+- Demonstrates `RevokeAllForUserAndAudience` for targeted user+audience revocation
+- No HTTP server — runs as a standalone command-line demo and exits
+
+**Run**:
+```bash
+cd audience-revocation
+go run main.go
+```
+
+### [Redis Production Example](redis-production/)
+
+Redis backend wiring for production multi-instance deployments. Best for:
+- Understanding `RedisKeyStore` and `RedisRefreshStore` construction and wiring
+- Learning how `KeyPrefix` (ADR-006) isolates storage keys across services
+- Learning how `Namespace` (ADR-007) scopes observability labels
+- Setting up graceful shutdown with `signal.NotifyContext`
+
+**Features**:
+- Builds a Redis client from environment variables — no hard-coded connection strings
+- Wires `RedisKeyStore` and `RedisRefreshStore` with a shared `KeyPrefix`
+- Sets `Namespace` on both `KeyManagerConfig` and `TokenManagerConfig`
+- Issues and validates one token pair as a live wiring check
+- Demonstrates graceful shutdown via `signal.NotifyContext`
+- Optional TLS — enabled with `REDIS_TLS` env var
+
+**Run**:
+```bash
+REDIS_ADDR=localhost:6379 go run .
+```
+
+### [Custom Store Example](custom-store/)
+
+A minimal in-memory `RefreshStore` implementation serving as the reference guide for
+third-party backends (PostgreSQL, DynamoDB, etc.). Best for:
+- Understanding every `RefreshStore` interface method and its invariants
+- Learning the defensive-copy, cursor, and cleanup-count contracts before building a custom backend
+- Verifying a new implementation compiles and behaves correctly
+
+**Features**:
+- Full `RefreshStore` implementation with compile-time assertion
+- Mutex-guarded in-memory map — intentionally simple; correctness over performance
+- Comments on non-obvious invariants: metadata defensive copy, cursor semantics, Cleanup return value
+- Wires into `TokenManager` and runs issuance + revocation + introspection + cleanup smoke test
+- No HTTP server — runs as a standalone command-line demo and exits
+
+**Run**:
+```bash
+cd custom-store
+go run .
+```
+
 ## Common Pattern Across Examples
 
 All framework examples (Gin, Chi, Echo) follow the same token lifecycle pattern — login, validate, refresh, revoke. The `correlation-example` extends this pattern with per-request log tracing.
@@ -146,6 +211,12 @@ All framework examples (Gin, Chi, Echo) follow the same token lifecycle pattern 
 The `health-check` and `prometheus-metrics` examples focus exclusively on the **Key Inspection API** (`GetCurrentKeyInfo`) and do not require a full `TokenManager` or refresh-token flow — they are useful as standalone observability integrations or as a reference for adding key-state monitoring to an existing service.
 
 The `token-audit` example focuses on the **Token Enumeration API** (`ListTokens`, `ListTokensForUser`) — it demonstrates cursor-based pagination without an HTTP server and is useful as a reference for reconciliation jobs or session management tooling.
+
+The `audience-revocation` example focuses on the **Audience-Scoped Revocation API** (`RevokeAllForAudience`, `RevokeAllForUserAndAudience`, `ListTokensForAudience`) — it demonstrates multi-audience token issuance, bulk revocation, and the atomicity property of refresh token revocation.
+
+The `redis-production` example focuses on the **Redis Backend API** (`RedisKeyStore`, `RedisRefreshStore`) — it demonstrates production connection wiring, `KeyPrefix` (ADR-006), `Namespace` (ADR-007), and graceful shutdown without an HTTP server.
+
+The `custom-store` example focuses on the **RefreshStore interface contract** — it demonstrates all 11 interface methods, non-obvious invariants (defensive copies, cursor semantics, Cleanup return value), and serves as the reference guide for building PostgreSQL or other third-party backends.
 
 ### 1. Setup Service Dependencies
 
@@ -361,19 +432,43 @@ The examples show how simple it is to write middleware for any framework that ca
 
 ## Example Comparison
 
-| Feature | Gin | Chi | Echo | Correlation | Health Check | Prometheus Metrics | Token Audit |
-|---------|-----|-----|------|-------------|--------------|-------------------|-------------|
-| **Framework** | Gin | Chi | Echo | stdlib | stdlib | stdlib | stdlib |
-| **Middleware** | `gin.HandlerFunc` | `func(Handler)Handler` | `MiddlewareFunc` | `func(HandlerFunc)HandlerFunc` | — | — | — |
-| **Complexity** | Simple | Minimal | Rich features | Minimal | Minimal | Minimal | Minimal |
-| **Learning curve** | Easy | Very easy | Medium | Very easy | Very easy | Very easy | Very easy |
-| **Ecosystem** | Large | Small | Large | None (stdlib only) | None (stdlib only) | Prometheus | None (stdlib only) |
-| **Best for** | Microservices | Simplicity | Feature-rich apps | Log tracing demo | Health probes | Alerting & dashboards | Audit / reconciliation |
-| **Correlation ID** | Not shown | Not shown | Not shown | Full demo | Not shown | Not shown | Not shown |
-| **Key Inspection** | `/admin/key-status` | `/admin/key-status` | Not shown | Not shown | Full demo | Full demo | Not shown |
-| **Token Enumeration** | Not shown | Not shown | Not shown | Not shown | Not shown | Not shown | Full demo |
+### HTTP Framework Integration
 
-The framework examples (Gin, Chi, Echo) focus on the full token lifecycle. The `health-check` and `prometheus-metrics` examples focus on the Key Inspection API — they are key-inspection-only and do not demonstrate login or refresh flows. The `token-audit` example focuses on the Token Enumeration API and runs as a CLI tool rather than an HTTP server.
+These examples show the full token lifecycle (login, validate, refresh, logout) with
+framework-specific middleware. Start here if you are integrating jwtauth into a web API.
+
+| Feature | [Gin](gin-example/) | [Chi](chi-example/) | [Echo](echo-example/) |
+|---------|---------------------|---------------------|----------------------|
+| **Framework** | Gin | Chi | Echo |
+| **Middleware** | `gin.HandlerFunc` | `func(Handler)Handler` | `MiddlewareFunc` |
+| **Complexity** | Simple | Minimal | Rich features |
+| **Ecosystem** | Large | Small | Large |
+| **Best for** | Microservices | Simplicity | Feature-rich apps |
+
+### Production Operations
+
+These examples focus on running jwtauth in production — log tracing, key-state monitoring,
+and Redis backend wiring. None require a framework; most run as standalone programs.
+
+| Feature | [Correlation](correlation-example/) | [Health Check](health-check/) | [Prometheus Metrics](prometheus-metrics/) | [Redis Production](redis-production/) |
+|---------|--------------------------------------|-------------------------------|-------------------------------------------|---------------------------------------|
+| **Focus** | Per-request log tracing | Key inspection endpoint | Key state metrics | Redis backend wiring |
+| **External deps** | None (stdlib) | None (stdlib) | Prometheus | Redis |
+| **HTTP server** | Yes | Yes | Yes (`/metrics`) | No |
+| **Best for** | Log tracing demo | Health / readiness probes | Alerting & dashboards | Multi-instance deployments |
+
+### Token Operations
+
+These examples demonstrate specialized token lifecycle operations — enumeration,
+audience-scoped revocation, and custom backend implementation. All run as CLI tools
+without an HTTP server.
+
+| Feature | [Token Audit](token-audit/) | [Audience Revocation](audience-revocation/) | [Custom Store](custom-store/) |
+|---------|------------------------------|---------------------------------------------|-------------------------------|
+| **Focus** | Cursor-based token enumeration | Audience-scoped bulk revocation | RefreshStore interface implementation |
+| **Key APIs** | `ListTokens`, `ListTokensForUser` | `RevokeAllForAudience`, `RevokeAllForUserAndAudience`, `ListTokensForAudience` | Full `RefreshStore` contract |
+| **Storage backend** | MemoryRefreshStore | MemoryRefreshStore | Custom in-memory implementation |
+| **Best for** | Audit / reconciliation pipelines | Multi-audience revocation | Third-party backend reference |
 
 ## Next Steps
 

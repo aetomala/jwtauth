@@ -42,6 +42,21 @@ func (m *MockKeyManager) EXPECT() *MockKeyManagerMockRecorder {
 	return m.recorder
 }
 
+// GetAllKeyInfo mocks base method.
+func (m *MockKeyManager) GetAllKeyInfo(ctx context.Context) ([]keys.KeyInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAllKeyInfo", ctx)
+	ret0, _ := ret[0].([]keys.KeyInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAllKeyInfo indicates an expected call of GetAllKeyInfo.
+func (mr *MockKeyManagerMockRecorder) GetAllKeyInfo(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllKeyInfo", reflect.TypeOf((*MockKeyManager)(nil).GetAllKeyInfo), ctx)
+}
+
 // GetCurrentKeyInfo mocks base method.
 func (m *MockKeyManager) GetCurrentKeyInfo(ctx context.Context) (*keys.KeyInfo, error) {
 	m.ctrl.T.Helper()

@@ -24,11 +24,12 @@ import (
 
 // DiskKeyStoreConfig holds configuration for a DiskKeyStore instance.
 type DiskKeyStoreConfig struct {
-	Dir     string          // Absolute or relative path to the key storage directory.
-	KeySize int             // Minimum accepted RSA key bit-size for load-time validation. Defaults to 2048.
-	Logger  logging.Logger  // Optional; nil defaults to NoOpLogger.
-	Metrics metrics.Metrics // Optional; nil defaults to NoOpMetrics.
-	Tracer  tracing.Tracer  // Optional; nil defaults to NoOpTracer.
+	Dir       string          // Absolute or relative path to the key storage directory.
+	KeySize   int             // Minimum accepted RSA key bit-size for load-time validation. Defaults to 2048.
+	Logger    logging.Logger  // Optional; nil defaults to NoOpLogger.
+	Metrics   metrics.Metrics // Optional; nil defaults to NoOpMetrics.
+	Tracer    tracing.Tracer  // Optional; nil defaults to NoOpTracer.
+	Namespace string          // Optional; scopes log fields, span attributes, and metric labels. Empty string preserves prior behavior.
 }
 
 // DiskKeyStoreConfigDefault returns a DiskKeyStoreConfig with sensible defaults.
@@ -53,10 +54,11 @@ type DiskKeyStore struct {
 	keySize int    // minimum accepted RSA key bit-size for load-time validation
 
 	// ===== Observability =====
-	logger  logging.Logger  // never nil; defaults to NoOpLogger
-	metrics metrics.Metrics // never nil; defaults to NoOpMetrics
-	tracer  tracing.Tracer  // never nil; defaults to NoOpTracer
-	backend string          // always "disk"
+	logger    logging.Logger  // never nil; defaults to NoOpLogger
+	metrics   metrics.Metrics // never nil; defaults to NoOpMetrics
+	tracer    tracing.Tracer  // never nil; defaults to NoOpTracer
+	backend   string          // always "disk"
+	namespace string          // = cfg.Namespace; emitted in log fields, span attributes, and metric labels
 }
 
 // NewDiskKeyStore returns a new DiskKeyStore using cfg. Zero-value and nil
@@ -83,6 +85,9 @@ func NewDiskKeyStore(cfg DiskKeyStoreConfig) (*DiskKeyStore, error) {
 	if cfg.Tracer == nil {
 		cfg.Tracer = defaults.Tracer
 	}
+	if cfg.Namespace != "" {
+		cfg.Logger = cfg.Logger.With("namespace", cfg.Namespace)
+	}
 
 	// ===== STEP 3: Create Directory =====
 	if err := os.MkdirAll(cfg.Dir, 0755); err != nil {
@@ -91,26 +96,28 @@ func NewDiskKeyStore(cfg DiskKeyStoreConfig) (*DiskKeyStore, error) {
 
 	// ===== STEP 4: Return Initialized Store =====
 	return &DiskKeyStore{
-		dir:     cfg.Dir,
-		keySize: cfg.KeySize,
-		backend: "disk",
-		logger:  cfg.Logger,
-		metrics: cfg.Metrics,
-		tracer:  cfg.Tracer,
+		dir:       cfg.Dir,
+		keySize:   cfg.KeySize,
+		backend:   "disk",
+		logger:    cfg.Logger,
+		metrics:   cfg.Metrics,
+		tracer:    cfg.Tracer,
+		namespace: cfg.Namespace,
 	}, nil
 }
 
-// Namespace returns empty string — DiskKeyStore uses directory-level isolation
-// and does not support the namespace concept.
-func (d *DiskKeyStore) Namespace() string { return "" }
+// Namespace returns the observability namespace configured for this store.
+// Returns an empty string when none was configured.
+func (d *DiskKeyStore) Namespace() string { return d.namespace }
 
-// startSpan begins a new tracing span with storage.backend pre-set to "disk".
+// startSpan begins a new tracing span with storage.backend and storage.namespace pre-set.
 func (d *DiskKeyStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
-	return d.tracer.Start(ctx, "DiskKeyStore."+operation,
-		tracing.WithAttributes(map[string]any{
-			"storage.backend": d.backend,
-		}),
-	)
+	ctx, span := d.tracer.Start(ctx, "DiskKeyStore."+operation)
+	span.SetAttributes(map[string]any{
+		"storage.backend":   d.backend,
+		"storage.namespace": d.namespace,
+	})
+	return ctx, span
 }
 
 // LoadAll returns every valid (non-expired) key in the directory. Corrupted PEM
@@ -131,14 +138,17 @@ func (d *DiskKeyStore) LoadAll(ctx context.Context) ([]*StoredKey, error) {
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": d.backend,
+			"namespace":       d.namespace,
 		})
 		d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
 			"operation":       "load_all",
 			"storage_backend": d.backend,
+			"namespace":       d.namespace,
 		})
 		if status == "success" {
 			d.metrics.SetGauge(metricKeyStoreKeysCount, float64(keyCount), map[string]string{
 				"storage_backend": d.backend,
+				"namespace":       d.namespace,
 			})
 		}
 	}()
@@ -224,10 +234,12 @@ func (d *DiskKeyStore) Save(ctx context.Context, keyID string, privateKey *rsa.P
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": d.backend,
+			"namespace":       d.namespace,
 		})
 		d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
 			"operation":       "save",
 			"storage_backend": d.backend,
+			"namespace":       d.namespace,
 		})
 	}()
 
@@ -316,10 +328,12 @@ func (d *DiskKeyStore) UpdateMetadata(ctx context.Context, keyID string, meta Ke
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": d.backend,
+			"namespace":       d.namespace,
 		})
 		d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
 			"operation":       "update_metadata",
 			"storage_backend": d.backend,
+			"namespace":       d.namespace,
 		})
 	}()
 
@@ -385,10 +399,12 @@ func (d *DiskKeyStore) LoadKey(ctx context.Context, keyID string) (*rsa.PrivateK
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": d.backend,
+			"namespace":       d.namespace,
 		})
 		d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
 			"operation":       "load_key",
 			"storage_backend": d.backend,
+			"namespace":       d.namespace,
 		})
 	}()
 
@@ -464,10 +480,12 @@ func (d *DiskKeyStore) Delete(ctx context.Context, keyID string) error {
 			"status":          status,
 			"error_type":      errorType,
 			"storage_backend": d.backend,
+			"namespace":       d.namespace,
 		})
 		d.metrics.RecordDuration(metricKeyStoreOpDuration, time.Since(start), map[string]string{
 			"operation":       "delete",
 			"storage_backend": d.backend,
+			"namespace":       d.namespace,
 		})
 	}()
 

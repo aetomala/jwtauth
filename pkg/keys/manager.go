@@ -455,7 +455,6 @@ func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, st
 
 	// ===== STEP 1: Check Manager is Running =====
 	if !m.IsRunning() {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error", "namespace": m.namespace})
 		span.RecordError(ErrManagerNotRunning)
 		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
 		return nil, "", ErrManagerNotRunning
@@ -463,7 +462,6 @@ func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, st
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "cancelled", "error_type": "cancelled", "namespace": m.namespace})
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, "", err
@@ -477,14 +475,12 @@ func (m *Manager) GetCurrentSigningKey(ctx context.Context) (*rsa.PrivateKey, st
 	keyPair, found := m.keys[m.currentKeyID]
 
 	if !found {
-		m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "error", "error_type": "error", "namespace": m.namespace})
 		span.RecordError(ErrKeyNotFound)
 		span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
 		return nil, "", ErrKeyNotFound
 	}
 
 	// ===== STEP 4: Return Key and ID =====
-	m.metrics.IncrementCounter(metricKeySigningOpsTotal, map[string]string{"status": "success", "error_type": "", "namespace": m.namespace})
 	span.SetAttribute("key_id", m.currentKeyID)
 	span.SetStatus(tracing.StatusOK, "")
 	return keyPair.PrivateKey, m.currentKeyID, nil
@@ -558,12 +554,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	ctx, span := m.startSpan(ctx, "GetPublicKey")
 	defer span.End()
 
-	status := "error"
-	errorType := "error"
-	defer func() {
-		m.metrics.IncrementCounter(metricKeyValidationOpsTotal, map[string]string{"status": status, "error_type": errorType, "namespace": m.namespace})
-	}()
-
 	// ===== STEP 1: Validate Key ID =====
 	keyID = strings.TrimSpace(keyID)
 	if len(keyID) == 0 {
@@ -574,8 +564,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 
 	// ===== STEP 2: Context Check =====
 	if err := ctx.Err(); err != nil {
-		status = "cancelled"
-		errorType = "cancelled"
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return nil, err
@@ -588,8 +576,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	if keyPair, exists := m.keys[keyID]; exists {
 		m.mu.RUnlock()
 		m.config.Logger.Debug("public key cache hit", ctx, "keyID", keyID)
-		status = "success"
-		errorType = ""
 		span.SetStatus(tracing.StatusOK, "")
 		return keyPair.PublicKey, nil
 	}
@@ -600,8 +586,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	privateKey, meta, err := m.config.KeyStore.LoadKey(ctx, keyID)
 	if err != nil {
 		if errors.Is(err, ErrKeyStoreKeyNotFound) {
-			status = "not_found"
-			errorType = "not_found"
 			span.RecordError(ErrKeyNotFound)
 			span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
 			return nil, ErrKeyNotFound
@@ -613,8 +597,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 
 	// ===== STEP 5: Check Expiration =====
 	if !meta.ExpiresAt.IsZero() && time.Now().After(meta.ExpiresAt) {
-		status = "not_found"
-		errorType = "not_found"
 		span.RecordError(ErrKeyNotFound)
 		span.SetStatus(tracing.StatusError, ErrKeyNotFound.Error())
 		return nil, ErrKeyNotFound
@@ -625,8 +607,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 	defer m.mu.Unlock()
 
 	if keyPair, exists := m.keys[keyID]; exists {
-		status = "success"
-		errorType = ""
 		span.SetStatus(tracing.StatusOK, "")
 		return keyPair.PublicKey, nil
 	}
@@ -638,8 +618,6 @@ func (m *Manager) GetPublicKey(ctx context.Context, keyID string) (*rsa.PublicKe
 		ExpiresAt: meta.ExpiresAt,
 	}
 
-	status = "success"
-	errorType = ""
 	span.SetStatus(tracing.StatusOK, "")
 	return &privateKey.PublicKey, nil
 }
@@ -772,6 +750,69 @@ func (m *Manager) GetKeyInfo(ctx context.Context, keyID string) (*KeyInfo, error
 // Returns the context error if the context is cancelled.
 func (m *Manager) GetCurrentKeyInfo(ctx context.Context) (*KeyInfo, error) {
 	return m.GetKeyInfo(ctx, "")
+}
+
+// GetAllKeyInfo returns metadata for all keys currently held in the manager's
+// in-memory cache — the active signing key plus any keys still in their overlap
+// window. Order is unspecified. Returns an empty slice (not an error) when no keys
+// are loaded. Returns ErrManagerNotRunning if the manager is not running. Returns
+// the context error if the context is cancelled. No private key material is included.
+func (m *Manager) GetAllKeyInfo(ctx context.Context) ([]KeyInfo, error) {
+	start := time.Now()
+	ctx, span := m.startSpan(ctx, "GetAllKeyInfo")
+	defer span.End()
+
+	// ===== STEP 1: Check Context =====
+	if err := ctx.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(tracing.StatusError, err.Error())
+		m.config.Logger.Error("GetAllKeyInfo aborted: context error", ctx, "error", err)
+		return nil, err
+	}
+
+	// ===== STEP 2: Check Manager is Running =====
+	if !m.IsRunning() {
+		span.RecordError(ErrManagerNotRunning)
+		span.SetStatus(tracing.StatusError, ErrManagerNotRunning.Error())
+		m.config.Logger.Error("GetAllKeyInfo called on stopped manager", ctx, "error", ErrManagerNotRunning)
+		return nil, ErrManagerNotRunning
+	}
+
+	// ===== STEP 3: Acquire Read Lock =====
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// ===== STEP 4: Build KeyInfo Slice =====
+	now := time.Now()
+	result := make([]KeyInfo, 0, len(m.keys))
+	for _, keyPair := range m.keys {
+		isCurrent := keyPair.ID == m.currentKeyID
+		isValid := keyPair.ExpiresAt.IsZero() || now.Before(keyPair.ExpiresAt)
+
+		var rotateAt time.Time
+		if isCurrent {
+			rotateAt = keyPair.CreatedAt.Add(m.config.KeyRotationInterval)
+		}
+
+		result = append(result, KeyInfo{
+			KeyID:       keyPair.ID,
+			CreatedAt:   keyPair.CreatedAt,
+			RotateAt:    rotateAt,
+			ExpiresAt:   keyPair.ExpiresAt,
+			KeySizeBits: keyPairKeySize(keyPair),
+			Algorithm:   "RS256",
+			IsCurrent:   isCurrent,
+			IsValid:     isValid,
+		})
+	}
+
+	span.SetAttribute("key.count", len(result))
+	span.SetStatus(tracing.StatusOK, "")
+	m.config.Logger.Info("retrieved all key info", ctx, "count", len(result), "namespace", m.namespace)
+	m.metrics.RecordDuration(metricKeyOpDuration, time.Since(start),
+		map[string]string{"operation": "get_all_key_info", "namespace": m.namespace})
+
+	return result, nil
 }
 
 // RotateKeys rotates the current signing key to a newly generated one, and marks
@@ -992,13 +1033,10 @@ func base64urlEncode(data []byte) string {
 
 // startSpan begins a new tracing span for the given Manager operation,
 // pre-seeded with the key.namespace attribute.
-func (m *Manager) startSpan(ctx context.Context, operation string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
-	opts = append([]tracing.SpanOption{
-		tracing.WithAttributes(map[string]any{
-			"key.namespace": m.namespace,
-		}),
-	}, opts...)
-	return m.tracer.Start(ctx, "KeyManager."+operation, opts...)
+func (m *Manager) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
+	ctx, span := m.tracer.Start(ctx, "KeyManager."+operation)
+	span.SetAttributes(map[string]any{"key.namespace": m.namespace})
+	return ctx, span
 }
 
 // getJWK converts an RSA private key and its ID into a JWK (JSON Web Key) format

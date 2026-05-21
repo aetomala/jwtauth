@@ -4,6 +4,139 @@ This document describes breaking changes and the mechanical steps required to up
 
 ---
 
+## v0.6.x → v0.7.0
+
+### `keys.KeyManager` gains `GetAllKeyInfo`
+
+`GetAllKeyInfo(ctx context.Context) ([]KeyInfo, error)` is a new required method on the
+`KeyManager` interface. Custom implementations that do not add it will fail to compile.
+
+**Action required:** Add the method to any custom `KeyManager` implementation:
+
+```go
+func (k *MyKeyManager) GetAllKeyInfo(ctx context.Context) ([]keys.KeyInfo, error) {
+    // return metadata for all currently held keys
+}
+```
+
+Use a compile-time assertion to catch the gap immediately:
+
+```go
+var _ keys.KeyManager = (*MyKeyManager)(nil)
+```
+
+### `tracing.Tracer.Start` loses variadic `SpanOption` parameter
+
+`Tracer.Start()` no longer accepts `SpanOption` arguments. `SpanOption`, `SpanConfig`,
+`SpanKind`, `WithAttributes`, and `WithSpanKind` are removed from the tracing package.
+All library spans are always `SpanKindInternal` — span kind is not configurable.
+
+**Before:**
+```go
+ctx, span := tracer.Start(ctx, "operation",
+    tracing.WithAttributes(map[string]interface{}{"key": "value"}),
+    tracing.WithSpanKind(tracing.SpanKindServer),
+)
+```
+
+**After:**
+```go
+ctx, span := tracer.Start(ctx, "operation")
+span.SetAttributes(map[string]interface{}{"key": "value"})
+```
+
+**Action required — custom `Tracer` implementation:** remove `opts ...SpanOption` from `Start()`.
+
+**Action required — `WithAttributes` usage:** move attribute setting to `span.SetAttributes()` immediately after `Start()`.
+
+**Action required — `WithSpanKind` usage:** remove it; span kind is always `Internal`.
+
+See #207.
+
+---
+
+v0.7.0 reduces the PrometheusMetrics registered metric set from 34 to 18 high-signal
+metrics. The `Metrics` interface is unchanged — all five methods (`IncrementCounter`,
+`AddCounter`, `SetGauge`, `RecordHistogram`, `RecordDuration`) are unaffected. Prometheus
+dashboards and alert rules that query removed metrics must be updated.
+
+### Removed metrics
+
+#### Phase 1 — lifecycle and admin metrics
+
+| Metric | Type | Reason |
+|---|---|---|
+| `jwtauth_service_running` | Gauge | Derivable from scrape health — use `up{job="jwtauth"}` instead |
+| `jwtauth_tokens_introspected_total` | Counter | Admin/debug use-case; low operational signal |
+| `jwtauth_active_tokens` | Gauge | Zero production call sites; never populated |
+
+**Action required:** Remove alert rules, recording rules, or dashboards referencing
+these metrics. Replace `jwtauth_service_running` with `up{job="jwtauth"}` for
+scrape-health alerting.
+
+#### Phase 2 — redundant cross-layer metrics
+
+| Metric | Type | Reason |
+|---|---|---|
+| `jwtauth_key_signing_operations_total` | Counter | Redundant — `jwtauth_tokens_issued_total` covers signing at the token layer |
+| `jwtauth_key_validation_operations_total` | Counter | Redundant — `jwtauth_tokens_validated_total` covers validation at the token layer |
+| `jwtauth_key_current_version` | Gauge | Zero production call sites; never populated |
+| `jwtauth_storage_list_tokens_total` | Counter | Redundant with token-layer `jwtauth_tokens_list_total` |
+| `jwtauth_storage_list_tokens_duration_seconds` | Histogram | Redundant with token-layer `jwtauth_tokens_list_duration_seconds` |
+| `jwtauth_storage_list_tokens_for_user_total` | Counter | Redundant |
+| `jwtauth_storage_list_tokens_for_user_duration_seconds` | Histogram | Redundant |
+| `jwtauth_storage_list_tokens_for_audience_total` | Counter | Redundant |
+| `jwtauth_storage_list_tokens_for_audience_duration_seconds` | Histogram | Redundant |
+
+**Action required:** Remove dashboards and alert rules referencing these metrics.
+Storage-layer list operations remain observable via the token-layer `jwtauth_tokens_list_*`
+metrics and the `jwtauth_storage_operations_total` counter.
+
+### Renamed metrics
+
+#### Phase 3 — `operations_total` → `tokens_cleanup_total`
+
+`jwtauth_operations_total` is renamed to `jwtauth_tokens_cleanup_total`. The `operation`
+label is dropped — the metric name now encodes the operation. The `status` and `namespace`
+labels are unchanged.
+
+**Before:** `jwtauth_operations_total{operation="cleanup", status="success", namespace="..."}`
+**After:** `jwtauth_tokens_cleanup_total{status="success", namespace="..."}`
+
+**Action required:** Update alert rules and dashboards. The `operation="cleanup"` label
+carried no additional cardinality — no information is lost.
+
+### Changed metrics
+
+#### Phase 4 — list metrics unified under `scope` label
+
+`jwtauth_tokens_list_for_user_total`, `jwtauth_tokens_list_for_user_duration_seconds`,
+`jwtauth_tokens_list_for_audience_total`, and `jwtauth_tokens_list_for_audience_duration_seconds`
+are removed. `jwtauth_tokens_list_total` and `jwtauth_tokens_list_duration_seconds` gain a
+`scope` label: `"all"`, `"user"`, or `"audience"`.
+
+**Before:**
+```
+jwtauth_tokens_list_total                            # scope="all" only
+jwtauth_tokens_list_for_user_total
+jwtauth_tokens_list_for_audience_total
+```
+
+**After:**
+```
+jwtauth_tokens_list_total{scope="all"}
+jwtauth_tokens_list_total{scope="user"}
+jwtauth_tokens_list_total{scope="audience"}
+```
+
+To aggregate across all scopes: `sum(jwtauth_tokens_list_total)`
+
+**Action required:** Add `{scope="all"}` to existing `jwtauth_tokens_list_total` queries
+to preserve prior semantics, or use `sum(...)` to aggregate all scopes. Remove dashboards
+referencing the four removed per-scope metrics.
+
+---
+
 ## v0.5.x → v0.6.0
 
 v0.6.0 contains no breaking changes. All existing call sites compile and behave
