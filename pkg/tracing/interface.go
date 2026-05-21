@@ -54,9 +54,7 @@ type Tracer interface {
 	//
 	//     ctx, span := tracer.Start(ctx, "operation_name")
 	//     defer span.End()
-	//
-	// SpanOptions can customize span creation (kind, attributes, etc.).
-	Start(ctx context.Context, name string, opts ...SpanOption) (context.Context, Span)
+	Start(ctx context.Context, name string) (context.Context, Span)
 }
 
 // Span represents a single operation in a distributed trace.
@@ -132,99 +130,5 @@ func (s StatusCode) String() string {
 		return "UNSET"
 	default:
 		return "UNKNOWN"
-	}
-}
-
-// SpanOption configures span creation.
-//
-// Options are applied in order during Tracer.Start().
-type SpanOption func(*SpanConfig)
-
-// SpanConfig holds configuration for span creation.
-//
-// Not typically used directly; configured via SpanOption functions.
-type SpanConfig struct {
-	// Attributes to add to the span at creation time.
-	Attributes map[string]interface{}
-
-	// Kind indicates the span's role in the trace (internal, server, client, etc.).
-	Kind SpanKind
-}
-
-// SpanKind categorizes a span's role in a trace.
-type SpanKind int
-
-const (
-	// SpanKindInternal represents an internal operation within a service.
-	// Used for operations that don't cross service boundaries.
-	// Default kind if not specified.
-	SpanKindInternal SpanKind = iota
-
-	// SpanKindServer represents a server handling a request.
-	// Used for HTTP handlers, gRPC server methods, message consumers, etc.
-	SpanKindServer
-
-	// SpanKindClient represents a client making a request.
-	// Used for HTTP clients, gRPC client calls, database queries, etc.
-	SpanKindClient
-
-	// SpanKindProducer represents a message producer.
-	// Used when sending messages to a queue.
-	SpanKindProducer
-
-	// SpanKindConsumer represents a message consumer.
-	// Used when receiving messages from a queue.
-	SpanKindConsumer
-)
-
-// String returns a human-readable representation of the span kind.
-func (k SpanKind) String() string {
-	switch k {
-	case SpanKindInternal:
-		return "INTERNAL"
-	case SpanKindServer:
-		return "SERVER"
-	case SpanKindClient:
-		return "CLIENT"
-	case SpanKindProducer:
-		return "PRODUCER"
-	case SpanKindConsumer:
-		return "CONSUMER"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-// WithAttributes adds attributes to the span at creation time.
-//
-// Example:
-//
-//	ctx, span := tracer.Start(ctx, "operation",
-//	    tracing.WithAttributes(map[string]interface{}{
-//	        "user_id": "user-123",
-//	        "operation": "token_refresh",
-//	    }),
-//	)
-func WithAttributes(attrs map[string]interface{}) SpanOption {
-	return func(c *SpanConfig) {
-		if c.Attributes == nil {
-			c.Attributes = make(map[string]interface{})
-		}
-		for k, v := range attrs {
-			c.Attributes[k] = v
-		}
-	}
-}
-
-// WithSpanKind sets the span's kind.
-//
-// Example:
-//
-//	ctx, span := tracer.Start(ctx, "RefreshAccessToken",
-//	    tracing.WithSpanKind(tracing.SpanKindServer),
-//	)
-func WithSpanKind(kind SpanKind) SpanOption {
-	return func(c *SpanConfig) {
-		c.Kind = kind
 	}
 }

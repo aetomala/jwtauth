@@ -125,10 +125,11 @@ var _ = Describe("Manager", func() {
 			It("should accept an explicit Tracer without error", func() {
 				mockTracer := testutil.NewMockTracer(ctrl)
 				mockSpan := testutil.NewMockSpan(ctrl)
-				mockTracer.EXPECT().Start(gomock.Any(), gomock.Any(), gomock.Any()).Return(ctx, mockSpan).AnyTimes()
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Any()).Return(ctx, mockSpan).AnyTimes()
 				mockSpan.EXPECT().End().AnyTimes()
 				mockSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
 				mockSpan.EXPECT().SetAttribute(gomock.Any(), gomock.Any()).AnyTimes()
+				mockSpan.EXPECT().SetAttributes(gomock.Any()).AnyTimes()
 				mockSpan.EXPECT().RecordError(gomock.Any()).AnyTimes()
 
 				cfg := newTestConfig(mockKS)
@@ -891,10 +892,11 @@ var _ = Describe("Manager", func() {
 		// Individual tests register their own span (testSpan) for the method under test.
 		newTracingManager := func(setupSpan *testutil.MockSpan) *keys.Manager {
 			setupSpan.EXPECT().End().AnyTimes()
+			setupSpan.EXPECT().SetAttributes(gomock.Any()).AnyTimes()
 			setupSpan.EXPECT().SetStatus(gomock.Any(), gomock.Any()).AnyTimes()
 
-			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.Start"), gomock.Any()).Return(ctx, setupSpan)
-			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.Shutdown"), gomock.Any()).Return(ctx, setupSpan).AnyTimes()
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.Start")).Return(ctx, setupSpan)
+			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.Shutdown")).Return(ctx, setupSpan).AnyTimes()
 
 			existingKey := newTestKey()
 			existingID := "tracing-test-key"
@@ -931,7 +933,8 @@ var _ = Describe("Manager", func() {
 				m := newTracingManager(setupSpan)
 				defer shutdownManager()
 
-				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.GetCurrentSigningKey"), gomock.Any()).Return(ctx, testSpan)
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.GetCurrentSigningKey")).Return(ctx, testSpan)
+				testSpan.EXPECT().SetAttributes(map[string]any{"key.namespace": ""})
 				testSpan.EXPECT().SetAttribute("key_id", "tracing-test-key")
 				testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 				testSpan.EXPECT().End()
@@ -950,7 +953,8 @@ var _ = Describe("Manager", func() {
 				m := newTracingManager(setupSpan)
 				defer shutdownManager()
 
-				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.GetPublicKey"), gomock.Any()).Return(ctx, testSpan)
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.GetPublicKey")).Return(ctx, testSpan)
+				testSpan.EXPECT().SetAttributes(map[string]any{"key.namespace": ""})
 				testSpan.EXPECT().SetAttribute("key_id", "ghost-key")
 				testSpan.EXPECT().RecordError(keys.ErrKeyNotFound)
 				testSpan.EXPECT().SetStatus(tracing.StatusError, keys.ErrKeyNotFound.Error())
@@ -970,7 +974,8 @@ var _ = Describe("Manager", func() {
 				m := newTracingManager(setupSpan)
 				defer shutdownManager()
 
-				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.RotateKeys"), gomock.Any()).Return(ctx, testSpan)
+				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.RotateKeys")).Return(ctx, testSpan)
+				testSpan.EXPECT().SetAttributes(map[string]any{"key.namespace": ""})
 				testSpan.EXPECT().SetAttribute("key_id", gomock.Any())
 				testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 				testSpan.EXPECT().End()

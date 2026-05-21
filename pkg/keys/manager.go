@@ -1033,13 +1033,10 @@ func base64urlEncode(data []byte) string {
 
 // startSpan begins a new tracing span for the given Manager operation,
 // pre-seeded with the key.namespace attribute.
-func (m *Manager) startSpan(ctx context.Context, operation string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
-	opts = append([]tracing.SpanOption{
-		tracing.WithAttributes(map[string]any{
-			"key.namespace": m.namespace,
-		}),
-	}, opts...)
-	return m.tracer.Start(ctx, "KeyManager."+operation, opts...)
+func (m *Manager) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
+	ctx, span := m.tracer.Start(ctx, "KeyManager."+operation)
+	span.SetAttributes(map[string]any{"key.namespace": m.namespace})
+	return ctx, span
 }
 
 // getJWK converts an RSA private key and its ID into a JWK (JSON Web Key) format

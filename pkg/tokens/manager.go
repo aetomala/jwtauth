@@ -278,13 +278,10 @@ func NewManager(config TokenManagerConfig) (*Manager, error) {
 }
 
 // startSpan begins a new tracing span for the given Manager operation.
-func (m *Manager) startSpan(ctx context.Context, operation string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
-	opts = append([]tracing.SpanOption{
-		tracing.WithAttributes(map[string]any{
-			"token.namespace": m.namespace,
-		}),
-	}, opts...)
-	return m.tracer.Start(ctx, "TokenManager."+operation, opts...)
+func (m *Manager) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
+	ctx, span := m.tracer.Start(ctx, "TokenManager."+operation)
+	span.SetAttributes(map[string]any{"token.namespace": m.namespace})
+	return ctx, span
 }
 
 // Start initializes the service and begins background operations. It starts

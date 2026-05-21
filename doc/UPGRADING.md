@@ -25,6 +25,34 @@ Use a compile-time assertion to catch the gap immediately:
 var _ keys.KeyManager = (*MyKeyManager)(nil)
 ```
 
+### `tracing.Tracer.Start` loses variadic `SpanOption` parameter
+
+`Tracer.Start()` no longer accepts `SpanOption` arguments. `SpanOption`, `SpanConfig`,
+`SpanKind`, `WithAttributes`, and `WithSpanKind` are removed from the tracing package.
+All library spans are always `SpanKindInternal` — span kind is not configurable.
+
+**Before:**
+```go
+ctx, span := tracer.Start(ctx, "operation",
+    tracing.WithAttributes(map[string]interface{}{"key": "value"}),
+    tracing.WithSpanKind(tracing.SpanKindServer),
+)
+```
+
+**After:**
+```go
+ctx, span := tracer.Start(ctx, "operation")
+span.SetAttributes(map[string]interface{}{"key": "value"})
+```
+
+**Action required — custom `Tracer` implementation:** remove `opts ...SpanOption` from `Start()`.
+
+**Action required — `WithAttributes` usage:** move attribute setting to `span.SetAttributes()` immediately after `Start()`.
+
+**Action required — `WithSpanKind` usage:** remove it; span kind is always `Internal`.
+
+See #207.
+
 ---
 
 v0.7.0 reduces the PrometheusMetrics registered metric set from 34 to 18 high-signal

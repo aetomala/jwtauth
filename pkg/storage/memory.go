@@ -93,9 +93,9 @@ func (m *MemoryRefreshStore) Namespace() string { return "" }
 // startSpan starts a new span for the given operation name, pre-seeded with
 // the storage.backend attribute.
 func (m *MemoryRefreshStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
-	return m.tracer.Start(ctx, "MemoryRefreshStore."+operation,
-		tracing.WithAttributes(map[string]any{"storage.backend": m.backend}),
-	)
+	ctx, span := m.tracer.Start(ctx, "MemoryRefreshStore."+operation)
+	span.SetAttributes(map[string]any{"storage.backend": m.backend})
+	return ctx, span
 }
 
 // Store persists a new refresh token. Returns ErrInvalidTokenID if tokenID is

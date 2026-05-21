@@ -61,38 +61,6 @@ var _ = Describe("NoOpTracer", func() {
 			})
 		})
 
-		Context("with span options", func() {
-			It("should accept WithSpanKind option without error", func() {
-				_, span := tracer.Start(ctx, "test.operation",
-					tracing.WithSpanKind(tracing.SpanKindServer),
-				)
-
-				Expect(span).NotTo(BeNil())
-			})
-
-			It("should accept WithAttributes option without error", func() {
-				_, span := tracer.Start(ctx, "test.operation",
-					tracing.WithAttributes(map[string]any{
-						"user_id": "user-123",
-						"count":   42,
-					}),
-				)
-
-				Expect(span).NotTo(BeNil())
-			})
-
-			It("should accept multiple options without error", func() {
-				_, span := tracer.Start(ctx, "test.operation",
-					tracing.WithSpanKind(tracing.SpanKindClient),
-					tracing.WithAttributes(map[string]any{
-						"endpoint": "/api/users",
-					}),
-				)
-
-				Expect(span).NotTo(BeNil())
-			})
-		})
-
 		Context("with different operation names", func() {
 			It("should handle empty operation name", func() {
 				_, span := tracer.Start(ctx, "")

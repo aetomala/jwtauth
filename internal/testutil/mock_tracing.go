@@ -42,23 +42,18 @@ func (m *MockTracer) EXPECT() *MockTracerMockRecorder {
 }
 
 // Start mocks base method.
-func (m *MockTracer) Start(ctx context.Context, name string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
+func (m *MockTracer) Start(ctx context.Context, name string) (context.Context, tracing.Span) {
 	m.ctrl.T.Helper()
-	varargs := []any{ctx, name}
-	for _, a := range opts {
-		varargs = append(varargs, a)
-	}
-	ret := m.ctrl.Call(m, "Start", varargs...)
+	ret := m.ctrl.Call(m, "Start", ctx, name)
 	ret0, _ := ret[0].(context.Context)
 	ret1, _ := ret[1].(tracing.Span)
 	return ret0, ret1
 }
 
 // Start indicates an expected call of Start.
-func (mr *MockTracerMockRecorder) Start(ctx, name any, opts ...any) *gomock.Call {
+func (mr *MockTracerMockRecorder) Start(ctx, name any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{ctx, name}, opts...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Start", reflect.TypeOf((*MockTracer)(nil).Start), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Start", reflect.TypeOf((*MockTracer)(nil).Start), ctx, name)
 }
 
 // MockSpan is a mock of Span interface.
