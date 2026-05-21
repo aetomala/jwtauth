@@ -8,7 +8,7 @@
 
 **You verify identity. jwtauth manages everything after:** zero-downtime key rotation, access token issuance, refresh token lifecycle, and instant revocation across horizontal scale.
 
-> **API Stability (pre-v1.0)**: All components are production-quality with comprehensive test coverage. The API surface is still evolving before v1.0.0. **v0.5.0 shipped:** `IssueOption` / `WithAudience` for per-call audience targeting (#124) — all six issuing methods accept `...tokens.IssueOption`; existing call sites compile unchanged. **v0.5.0 planned:** Audience-based token revocation `RevokeAllForAudience` (#135) — adds `Audience []string` to `RefreshToken` and two new methods to `RefreshStore`; custom implementations must be updated (see `UPGRADING.md`).
+> **API Stability (pre-v1.0)**: All components are production-quality with comprehensive test coverage. The API surface is still evolving before v1.0.0. **v0.5.0 shipped:** `IssueOption` / `WithAudience` for per-call audience targeting (#124) — all six issuing methods accept `...tokens.IssueOption`; existing call sites compile unchanged. **v0.7.0 shipped:** Metrics set reduced from 34 → 18, `Tracer` interface simplified (SpanOption/SpanKind removed), `GetAllKeyInfo` added to `KeyManager`. See `doc/UPGRADING.md` for migration details.
 
 ## Overview
 
@@ -54,7 +54,7 @@ If you've already decided you need stateful token management, here's how jwtauth
 | **Refresh tokens** | ❌ | ❌ | ❌ | ✅ Stateful storage |
 | **Instant revocation** | ❌ | ❌ | ❌ | ✅ RevokeAllUserTokens |
 | **Distributed state** | N/A | ❌ | N/A | ✅ Redis backend |
-| **Metrics** | ❌ | ❌ | ❌ | ✅ 22 Prometheus metrics |
+| **Metrics** | ❌ | ❌ | ❌ | ✅ 18 Prometheus metrics |
 | **Correlation logging** | ❌ | ❌ | ❌ | ✅ Built-in |
 | **Framework lock-in** | ❌ | ✅ Gin only | ❌ | ❌ |
 | **Complexity** | Low | Medium | High (JOSE) | Medium |
@@ -112,7 +112,7 @@ km, _ := keys.NewManager(keys.KeyManagerConfig{
 | Revocation (single token, all user sessions) | `RevokeRefreshToken`, `RevokeAllUserTokens` |
 | Custom claims round-trip without re-parsing | `IssueAccessTokenWithClaims` + `ValidateAccessTokenWithClaims` |
 | Clock skew tolerance for distributed deployments | `TokenManagerConfig.ClockSkew` |
-| 22 Prometheus metrics across all operations | Pre-registered, zero config |
+| 18 Prometheus metrics across all operations | Pre-registered, zero config |
 | 10 typed sentinel errors for middleware logic | `ErrTokenExpired`, `ErrTokenRevoked`, `ErrInvalidAudience`, … |
 
 **jwtauth is what you'd build on top of golang-jwt after a few months in production.**
@@ -283,7 +283,7 @@ You've already verified identity and need **production-grade token machinery** f
 - **Service state management** ensuring tokens only issue when service is running
 - **OpenTelemetry distributed tracing** — `Tracer` field wires spans into all token operations; defaults to `NoOpTracer` for zero-config use
 - **Namespace labeling** — `Namespace` field propagates an opaque label through all logs, spans, and metric labels for multi-tenant and multi-instance deployments
-- **Comprehensive BDD test coverage** (153 tests covering lifecycle, issuance, validation, clock skew, custom claims, refresh, revocation, and introspection; ~87% statement coverage)
+- **Comprehensive BDD test coverage** (258 tests covering lifecycle, issuance, validation, clock skew, custom claims, refresh, revocation, and introspection; ~87% statement coverage)
 
 **RefreshTokenStore** ✅
 - **Two implementations**: Memory (in-process) and Redis (distributed)
@@ -291,14 +291,14 @@ You've already verified identity and need **production-grade token machinery** f
   - Perfect for single-instance deployments and testing
   - Dual-index lookups (tokenID → token, userID → []tokenID) for O(1) retrieval
   - Defensive copying for isolation from caller mutations
-  - 77 comprehensive tests with 100% statement coverage
+  - 111 comprehensive tests with 100% statement coverage
 - **RedisRefreshStore**: Distributed storage for multi-instance deployments
   - Uses go-redis/v9 with pipeline support for atomic operations
   - Millisecond-precision timestamp storage
   - Efficient SCAN-based cleanup for expired tokens
   - Production-ready error handling and logging
-  - 77 comprehensive tests (identical test suite as Memory implementation)
-- **Shared test suite** pattern: Single suite (77 tests) runs against both implementations
+  - 111 comprehensive tests (identical test suite as Memory implementation)
+- **Shared test suite** pattern: Single suite (111 tests) runs against both implementations
 - **Common features** (both implementations):
   - Token lifecycle management (Store, Retrieve, Revoke, RevokeAllForUser, Cleanup)
   - **Cursor-based enumeration**: `ListTokens` iterates all tokens globally; `ListTokensForUser` iterates a single user's tokens — pass `""` as cursor to start from the beginning
@@ -306,7 +306,7 @@ You've already verified identity and need **production-grade token machinery** f
   - Idempotent revocation (safe to call multiple times)
   - Comprehensive context handling with cancellation propagation
   - Structured logging for audit trail
-  - **154 total storage tests** (77 × 2 implementations)
+  - **222 total storage tests** (111 × 2 implementations)
 
 ## Architecture Highlights
 
@@ -950,37 +950,34 @@ mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
 })
 ```
 
-**Metric reference** (22 metrics, namespace `jwtauth_` by default):
+**Metric reference** (18 metrics, namespace `jwtauth_` by default):
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `tokens_issued_total` | Counter | `status`, `error_type` | Tokens issued (access + refresh) |
-| `tokens_validated_total` | Counter | `status`, `error_type` | Access token validations |
-| `tokens_refreshed_total` | Counter | `status`, `error_type` | Refresh operations |
-| `tokens_revoked_total` | Counter | `operation`, `status` | Revocation calls |
-| `tokens_introspected_total` | Counter | `status` | RFC 7662 introspection calls |
-| `operations_total` | Counter | `operation`, `status` | General service operations |
-| `operation_duration_seconds` | Histogram | `operation` | Service operation latency |
-| `active_tokens` | Gauge | `storage_backend` | Active token count |
-| `service_running` | Gauge | — | `1` when running, `0` when stopped |
-| `storage_operations_total` | Counter | `operation`, `status`, `error_type`, `storage_backend` | RefreshStore operations |
-| `storage_cleanup_tokens_removed_total` | Counter | `storage_backend` | Tokens removed during cleanup |
-| `storage_operation_duration_seconds` | Histogram | `operation`, `storage_backend` | Storage operation latency |
-| `storage_tokens_count` | Gauge | `storage_backend` | Tokens currently in storage |
-| `keystore_operations_total` | Counter | `operation`, `status`, `error_type`, `storage_backend` | KeyStore operations |
-| `keystore_operation_duration_seconds` | Histogram | `operation`, `storage_backend` | KeyStore operation latency |
-| `keystore_keys_count` | Gauge | `storage_backend` | Keys in key store |
-| `key_rotations_total` | Counter | `status`, `error_type` | Key rotation attempts |
-| `key_signing_operations_total` | Counter | `status`, `error_type` | Signing key retrievals |
-| `key_validation_operations_total` | Counter | `status`, `error_type` | Validation key retrievals |
-| `key_operation_duration_seconds` | Histogram | `operation` | Key operation latency |
-| `key_current_version` | Gauge | — | Active key version number |
-| `key_active_versions_count` | Gauge | — | Active key version count |
+| `tokens_issued_total` | Counter | `status`, `error_type`, `namespace` | Tokens issued |
+| `tokens_validated_total` | Counter | `status`, `error_type`, `namespace` | Access token validations |
+| `tokens_refreshed_total` | Counter | `status`, `error_type`, `namespace` | Refresh operations |
+| `tokens_revoked_total` | Counter | `revocation_scope`, `status`, `namespace` | Revocation calls |
+| `tokens_cleanup_total` | Counter | `status`, `namespace` | Cleanup operations |
+| `tokens_list_total` | Counter | `scope`, `namespace`, `error_type` | List-tokens calls (scope: all/user/audience) |
+| `operation_duration_seconds` | Histogram | `operation`, `namespace` | TokenManager operation latency |
+| `tokens_list_duration_seconds` | Histogram | `scope`, `namespace` | List-tokens latency |
+| `storage_operations_total` | Counter | `operation`, `status`, `error_type`, `storage_backend`, `namespace` | RefreshStore operations |
+| `storage_cleanup_tokens_removed_total` | Counter | `storage_backend`, `namespace` | Tokens removed during cleanup |
+| `storage_operation_duration_seconds` | Histogram | `operation`, `storage_backend`, `namespace` | Storage operation latency |
+| `storage_tokens_count` | Gauge | `storage_backend`, `namespace` | Tokens currently in storage |
+| `keystore_operations_total` | Counter | `operation`, `status`, `error_type`, `storage_backend`, `namespace` | KeyStore operations |
+| `keystore_operation_duration_seconds` | Histogram | `operation`, `storage_backend`, `namespace` | KeyStore operation latency |
+| `keystore_keys_count` | Gauge | `storage_backend`, `namespace` | Keys in key store |
+| `key_rotations_total` | Counter | `status`, `error_type`, `namespace` | Key rotation attempts |
+| `key_operation_duration_seconds` | Histogram | `operation`, `namespace` | Key operation latency |
+| `key_active_versions_count` | Gauge | `namespace` | Active key versions (alert on == 0) |
 
 **Label conventions**:
 - `status` — `"success"` on the happy path, a short error code on failure (e.g. `"token_expired"`, `"key_not_found"`)
 - `error_type` — `""` on success, mirrors the `status` value on failure — follows the OpenTelemetry `error.type` semantic convention
 - `storage_backend` — `"memory"`, `"redis"`, or `"disk"`
+- `namespace` — operator-defined label set at construction time via `TokenManagerConfig.Namespace`, `KeyManagerConfig.Namespace`, or `DiskKeyStoreConfig.Namespace` / `RedisKeyStoreConfig.Namespace`; defaults to `""` when not configured
 
 **Example PromQL queries**:
 ```promql
@@ -1000,7 +997,7 @@ jwtauth_key_active_versions_count
 **Alerting guidance**:
 - `jwtauth_key_active_versions_count == 0` → critical — no signing key available, all token issuance will fail
 - `rate(jwtauth_key_rotations_total{status!="success"}[1h]) > 0` → warning — key rotation is failing
-- `jwtauth_service_running == 0` → critical — TokenManager has stopped
+- `up{job="jwtauth"} == 0` → critical — jwtauth process is not responding
 
 For the full operator reference including Grafana dashboard guidance and label cardinality analysis, see [doc/METRICS.md](doc/METRICS.md).
 
@@ -1087,9 +1084,9 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 
 ### Test Coverage
 
-**Current**: 959 comprehensive specs (899 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
+**Current**: 945 comprehensive specs (885 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
 
-**KeyManager** (3 test suites — 170 total specs):
+**KeyManager** (3 test suites — 168 total specs):
 - **9-phase Manager tests** (MockKeyStore — no I/O):
   - Constructor validation, config defaults, ErrInvalidKeyStore
   - Start: loads from store, generates key on empty store, error paths
@@ -1107,7 +1104,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
   - Concurrency, metrics recording (storage_backend: "redis")
 
-**TokenManager** (7 test suites, 259 total specs):
+**TokenManager** (7 test suites, 258 total specs):
 - **Lifecycle Management Tests**:
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency, restart after clean shutdown
@@ -1154,16 +1151,15 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 - `NoOpLogger` — no-op implementation
 
 **Metrics** (66 specs):
-- `PrometheusMetrics` — 34 pre-registered metrics covering all six components
+- `PrometheusMetrics` — 18 pre-registered metrics covering all six components
 - `IncrementCounter`, `AddCounter`, `SetGauge`, `RecordHistogram`, `RecordDuration` implementations
 - Label correctness: `error_type` label on all counters, `namespace` label propagation
 - `NoOpMetrics` — no-op implementation
 
-**Tracing** (78 specs):
+**Tracing** (67 specs):
 - `NoOpTracer` / `NoOpSpan` — no-op implementation, race-detection clean
 - `OtelTracer` adapter — bridges `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
-- `SpanOption` functional options: `WithAttributes`, `WithSpanKind`
-- All `StatusCode` and `SpanKind` enum values exercised
+- All `StatusCode` enum values exercised
 
 **Integration Tests** (60 specs, `pkg/tokens/integration/`):
 - Runs against both disk+memory and Redis backends (miniredis)
@@ -1228,7 +1224,7 @@ Tests follow **progressive phase-based development**:
 - ✅ RefreshStore: Shared test suite pattern (eliminates duplication, runs against all implementations)
 - ✅ RefreshStore: MemoryRefreshStore with defensive copying and concurrent safety
 - ✅ RefreshStore: RedisRefreshStore for distributed deployments with go-redis/v9
-- ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with 22 pre-registered jwtauth metrics
+- ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with 18 pre-registered jwtauth metrics
 - ✅ KeyStore interface extracted from KeyManager — `DiskKeyStore` for single-instance, `RedisKeyStore` for distributed deployments
 
 ### v0.3.0
@@ -1380,5 +1376,5 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 **Status**: v0.5.0-dev — production-quality, pre-v1.0 (see API Stability note at top)
 **Version**: v0.5.0 (active development; latest release: v0.4.0)
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
-**Test Coverage**: 956 specs (896 unit + 60 integration) — KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
+**Test Coverage**: 945 specs (885 unit + 60 integration) — KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
 **Last Updated**: May 7, 2026
