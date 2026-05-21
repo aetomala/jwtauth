@@ -81,6 +81,13 @@ All notable changes to this project will be documented in this file.
   `TokenManager` for an issuance + revocation + introspection + cleanup smoke test.
   Reference guide for PostgreSQL and other third-party backends. See #189.
 
+### Chore
+
+- **`tokens.Manager` expiry checks normalized to `!ExpiresAt.After(now)`** — three secondary
+  expiry checks in `RefreshAccessToken`, `RefreshAccessTokenWithClaims`, and `IntrospectToken`
+  now use the canonical boundary idiom established in #176. No behavior change under normal
+  operation; closes the at-boundary inconsistency. Closes #217.
+
 ### Fixed
 
 - **DiskKeyStore metrics silently dropped when using `PrometheusMetrics`** — the three keystore metrics (`jwtauth_keystore_operations_total`, `jwtauth_keystore_operation_duration_seconds`, `jwtauth_keystore_keys_count`) are registered with a required `namespace` label, but `DiskKeyStore` omitted that label from every call. This caused `GetMetricWith` to return an error and silently discard every observation — all DiskKeyStore metrics were effectively dead. Adding `Namespace string` to `DiskKeyStoreConfig` resolves this. See #184.
