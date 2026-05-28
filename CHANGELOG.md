@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [v0.7.1] — 2026-05-28
+
 ### Added
 
 - **`tokens.TokenManager` interface** — defines nine core service-layer operations
