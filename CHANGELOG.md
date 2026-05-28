@@ -10,7 +10,109 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+---
+
+## [v0.7.1] — 2026-05-28
+
+### Added
+
+- **`tokens.TokenManager` interface** — defines nine core service-layer operations
+  (`IssueTokenPairWithClaims`, `RefreshAccessTokenWithClaims`, `ValidateAccessToken`,
+  `ValidateAccessTokenWithClaims`, `IntrospectToken`, `RevokeRefreshToken`,
+  `RevokeAllUserTokens`, `RevokeAllForAudience`, `RevokeAllForUserAndAudience`).
+  Consumers may depend on this interface rather than the concrete `*Manager` type,
+  enabling service-layer unit testing without a running key store or storage backend.
+  Compile-time satisfaction is asserted on `*Manager`. See #248.
+
+---
+
 ## [v0.7.0] — 2026-05-21
+
+### Breaking
+
+- **`keys.KeyManager` gains `GetAllKeyInfo(ctx context.Context) ([]KeyInfo, error)`** — all custom `KeyManager` implementations must add this method or they will not compile. The built-in `keys.Manager` and `MockKeyManager` are already updated. Add a compile-time assertion to catch the gap early: `var _ keys.KeyManager = (*MyKeyManager)(nil)`. See #183.
+
+- **`tracing.Tracer.Start` loses variadic `SpanOption` parameter** — `SpanOption`, `SpanConfig`, `SpanKind`, `WithAttributes`, and `WithSpanKind` are removed. All library spans are `SpanKindInternal`; move attribute setting to `span.SetAttributes()` after `Start()`. Custom `Tracer` implementations must update their `Start()` signature. See #207 and `doc/UPGRADING.md`.
+
+- **`PrometheusMetrics` metric set reduced from 34 to 18** — sixteen metrics are removed or collapsed. The `Metrics` interface is unchanged — all five methods (`IncrementCounter`, `AddCounter`, `SetGauge`, `RecordHistogram`, `RecordDuration`) are unaffected. Update Prometheus dashboards and alert rules that reference removed or renamed metrics. See #206 and `doc/UPGRADING.md` for the full migration table.
+
+  **Removed metrics (16):** `jwtauth_service_running`, `jwtauth_tokens_introspected_total`, `jwtauth_active_tokens`, `jwtauth_key_signing_operations_total`, `jwtauth_key_validation_operations_total`, `jwtauth_key_current_version`, `jwtauth_storage_list_tokens_total`, `jwtauth_storage_list_tokens_duration_seconds`, `jwtauth_storage_list_tokens_for_user_total`, `jwtauth_storage_list_tokens_for_user_duration_seconds`, `jwtauth_storage_list_tokens_for_audience_total`, `jwtauth_storage_list_tokens_for_audience_duration_seconds`, `jwtauth_tokens_list_for_user_total`, `jwtauth_tokens_list_for_user_duration_seconds`, `jwtauth_tokens_list_for_audience_total`, `jwtauth_tokens_list_for_audience_duration_seconds`.
+
+  **Renamed:** `jwtauth_operations_total{operation="cleanup"}` → `jwtauth_tokens_cleanup_total`. The `operation` label is dropped — the metric name now encodes the operation.
+
+  **Label added:** `jwtauth_tokens_list_total` and `jwtauth_tokens_list_duration_seconds` gain a `scope` label (`"all"`, `"user"`, `"audience"`). Existing queries targeting the all-tokens case must add `{scope="all"}` or use `sum(...)` to aggregate across scopes.
+
+### Added
+
+- **`keys.Manager.GetAllKeyInfo(ctx context.Context) ([]KeyInfo, error)`** — returns one `KeyInfo` per key currently in the manager's in-memory cache — the active signing key plus any keys still in their overlap window. Order is unspecified. Returns an empty slice (not an error) when no keys are loaded. Suitable for admin surfaces, JWKS-parity health checks, and rotation monitoring dashboards — no private key material is included. See #183.
+
+- **`DiskKeyStoreConfig.Namespace string`** — optional observability namespace label. When set, the value is carried on log fields (via logger enrichment at construction), span attributes (`"storage.namespace"`), and all keystore metric labels. Consistent with the existing `RedisKeyStore` namespace pattern and ADR-007. See #184.
+
+### Documentation
+
+- **ADR-010** — Documents the JTI uniqueness and replay prevention stance: access tokens
+  carry a unique UUID v4 `jti` claim used for audit correlation; jwtauth does not perform
+  JTI-based replay prevention for access tokens (short TTL mitigates the window; refresh
+  token revocation covers the refresh flow). Operator guidance for adding JTI replay
+  prevention in middleware is included. See #185.
+
+- **ADR-011** — Documents the cursor semantics and pagination consistency contract for
+  `ListTokens`, `ListTokensForUser`, and `ListTokensForAudience`: cursors are opaque
+  byte sequences, pagination is best-effort (Redis SCAN semantics apply across both
+  backends), and iteration order is not guaranteed stable. Operator guidance for
+  correctness-critical audit pipelines is included. See #186.
+
+- **`examples/audience-revocation`** — new runnable example demonstrating multi-audience
+  token issuance (`WithAudience`), audience-scoped listing (`ListTokensForAudience`),
+  bulk revocation (`RevokeAllForAudience`), atomicity verification, and user+audience
+  revocation (`RevokeAllForUserAndAudience`). References ADR-009 and ADR-010. See #187.
+
+- **`examples/redis-production`** — new runnable example demonstrating production Redis
+  backend wiring: `RedisKeyStore` + `RedisRefreshStore` with `KeyPrefix` (ADR-006),
+  `Namespace` on both manager configs (ADR-007), env-var-driven connection config,
+  optional TLS, a token issuance + validation round-trip, and `signal.NotifyContext`
+  graceful shutdown. See #188.
+
+- **`examples/README.md`** — restructured Example Comparison from one wide table into
+  three focused tables: HTTP Framework Integration (Gin, Chi, Echo), Production Operations
+  (Correlation, Health Check, Prometheus Metrics, Redis Production), and Token Operations
+  (Token Audit, Audience Revocation). See #188.
+
+- **`examples/prometheus-metrics`** — extended with `TokenManager` and a manual cleanup
+  loop: `CleanupExpiredTokens` on a 5-minute ticker, `jwtauth_cleaned_tokens_total`
+  Prometheus counter, structured log output, and a comment explaining manual vs background
+  cleanup trade-offs. See #192.
+
+- **`examples/gin-example`** — added `GET /.well-known/jwks.json` handler demonstrating
+  `GetJWKS`: JSON Web Key Set serialisation, `Cache-Control: public, max-age=300` header,
+  and the "rotate on unknown kid" consumption pattern in a comment. See #191.
+
+- **`examples/gin-example`** — added `POST /introspect` handler demonstrating `IntrospectToken`:
+  RFC 7662-style token metadata, `Active` / `TokenID` / `Audience` fields, and the pattern
+  for using `TokenID` to feed into `RevokeRefreshToken` for admin revocation flows. See #190.
+
+- **`examples/custom-store`** — new runnable example with a full in-memory `RefreshStore`
+  implementation: compile-time assertion, all 11 interface methods, non-obvious invariants
+  documented (defensive copy, cursor semantics, Cleanup return value), wired into
+  `TokenManager` for an issuance + revocation + introspection + cleanup smoke test.
+  Reference guide for PostgreSQL and other third-party backends. See #189.
+
+### Chore
+
+- **`tokens.Manager` expiry checks normalized to `!ExpiresAt.After(now)`** — three secondary
+  expiry checks in `RefreshAccessToken`, `RefreshAccessTokenWithClaims`, and `IntrospectToken`
+  now use the canonical boundary idiom established in #176. No behavior change under normal
+  operation; closes the at-boundary inconsistency. Closes #217.
+
+### Fixed
+
+- **DiskKeyStore metrics silently dropped when using `PrometheusMetrics`** — the three keystore metrics (`jwtauth_keystore_operations_total`, `jwtauth_keystore_operation_duration_seconds`, `jwtauth_keystore_keys_count`) are registered with a required `namespace` label, but `DiskKeyStore` omitted that label from every call. This caused `GetMetricWith` to return an error and silently discard every observation — all DiskKeyStore metrics were effectively dead. Adding `Namespace string` to `DiskKeyStoreConfig` resolves this. See #184.
+
+---
+
+## [v0.6.0] — 2026-05-13
 
 ### Breaking
 
