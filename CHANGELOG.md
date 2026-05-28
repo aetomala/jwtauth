@@ -10,6 +10,20 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`tokens.TokenManager` interface** — defines nine core service-layer operations
+  (`IssueTokenPairWithClaims`, `RefreshAccessTokenWithClaims`, `ValidateAccessToken`,
+  `ValidateAccessTokenWithClaims`, `IntrospectToken`, `RevokeRefreshToken`,
+  `RevokeAllUserTokens`, `RevokeAllForAudience`, `RevokeAllForUserAndAudience`).
+  Consumers may depend on this interface rather than the concrete `*Manager` type,
+  enabling service-layer unit testing without a running key store or storage backend.
+  Compile-time satisfaction is asserted on `*Manager`. See #248.
+
+---
+
 ## [v0.7.0] — 2026-05-21
 
 ### Breaking
