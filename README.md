@@ -1,7 +1,8 @@
 # jwtauth
 
-![Tests](https://github.com/aetomala/jwtauth/actions/workflows/CI.yml/badge.svg?branch=main)
-![Go Version](https://img.shields.io/badge/go-1.25+-blue.svg)
+[![Tests](https://github.com/aetomala/jwtauth/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/aetomala/jwtauth/actions/workflows/CI.yml)
+[![Go Version](https://img.shields.io/badge/go-1.25+-blue.svg)](https://pkg.go.dev/github.com/aetomala/jwtauth)
+[![Release](https://img.shields.io/github/v/release/aetomala/jwtauth)](https://github.com/aetomala/jwtauth/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 **Stateful JWT authorization token engine for distributed Go applications**
