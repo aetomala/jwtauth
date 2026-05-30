@@ -2758,7 +2758,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			newTracingManager()
 
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueAccessToken")).Return(ctx, testSpan)
-			testSpan.EXPECT().SetAttributes(map[string]any{"token.namespace": ""})
+			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 			testSpan.EXPECT().SetAttribute("user_id", "tracing-user")
 			testSpan.EXPECT().SetAttribute("token_id", gomock.Any())
 			testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
@@ -2781,7 +2781,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			Expect(manager.Shutdown(shutdownCtx)).To(Succeed())
 
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueAccessToken")).Return(ctx, testSpan)
-			testSpan.EXPECT().SetAttributes(map[string]any{"token.namespace": ""})
+			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 			testSpan.EXPECT().SetAttribute("user_id", "stopped-user")
 			testSpan.EXPECT().RecordError(tokens.ErrManagerNotRunning)
 			testSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
@@ -2810,7 +2810,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.RefreshAccessToken")).Return(ctx, testSpan)
 			// IssueAccessToken is called internally — route to setupSpan to avoid expectation conflicts.
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueAccessToken")).Return(ctx, setupSpan)
-			testSpan.EXPECT().SetAttributes(map[string]any{"token.namespace": ""})
+			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 			testSpan.EXPECT().SetAttribute("token_id", refreshTok)
 			testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 			testSpan.EXPECT().End()
@@ -2825,7 +2825,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			newTracingManager()
 
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.ValidateAccessToken")).Return(ctx, testSpan)
-			testSpan.EXPECT().SetAttributes(map[string]any{"token.namespace": ""})
+			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 			testSpan.EXPECT().RecordError(tokens.ErrInvalidToken)
 			testSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
 			testSpan.EXPECT().End()
@@ -2840,7 +2840,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			newTracingManager()
 
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueTokenPairWithClaims")).Return(ctx, testSpan)
-			testSpan.EXPECT().SetAttributes(map[string]any{"token.namespace": ""})
+			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 			testSpan.EXPECT().SetAttribute("user_id", "tracing-user")
 			testSpan.EXPECT().SetAttribute("token_id", gomock.Any())
 			testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
@@ -2864,7 +2864,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			Expect(manager.Shutdown(shutdownCtx)).To(Succeed())
 
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueTokenPairWithClaims")).Return(ctx, testSpan)
-			testSpan.EXPECT().SetAttributes(map[string]any{"token.namespace": ""})
+			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 			testSpan.EXPECT().SetAttribute("user_id", "stopped-user")
 			testSpan.EXPECT().RecordError(tokens.ErrManagerNotRunning)
 			testSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
@@ -2893,7 +2893,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.RefreshAccessTokenWithClaims")).Return(ctx, testSpan)
 			// IssueAccessTokenWithClaims is called internally — route to setupSpan to avoid expectation conflicts.
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueAccessTokenWithClaims")).Return(ctx, setupSpan)
-			testSpan.EXPECT().SetAttributes(map[string]any{"token.namespace": ""})
+			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 			testSpan.EXPECT().SetAttribute("token_id", refreshTok)
 			testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 			testSpan.EXPECT().End()
@@ -2913,7 +2913,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			Expect(manager.Shutdown(shutdownCtx)).To(Succeed())
 
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.RefreshAccessTokenWithClaims")).Return(ctx, testSpan)
-			testSpan.EXPECT().SetAttributes(map[string]any{"token.namespace": ""})
+			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 			testSpan.EXPECT().RecordError(tokens.ErrManagerNotRunning)
 			testSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
 			testSpan.EXPECT().End()

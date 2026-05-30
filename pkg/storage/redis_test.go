@@ -255,7 +255,7 @@ var _ = Describe("RedisRefreshStore — Phase 10: Tracing", func() {
 	Context("Store — success path", func() {
 		It("should start a span named RedisRefreshStore.Store with storage.backend, token_id and StatusOK", func() {
 			mockTracer.EXPECT().Start(gomock.Any(), "RedisRefreshStore.Store").Return(ctx, mockSpan)
-			mockSpan.EXPECT().SetAttributes(map[string]any{"storage.backend": "redis", "storage.namespace": ""})
+			mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "redis", "namespace": ""})
 			mockSpan.EXPECT().SetAttribute("token_id", "trace-store-token")
 			mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 			mockSpan.EXPECT().End()
@@ -267,7 +267,7 @@ var _ = Describe("RedisRefreshStore — Phase 10: Tracing", func() {
 	Context("Retrieve — error path", func() {
 		It("should call RecordError and StatusError when token is not found", func() {
 			mockTracer.EXPECT().Start(gomock.Any(), "RedisRefreshStore.Retrieve").Return(ctx, mockSpan)
-			mockSpan.EXPECT().SetAttributes(map[string]any{"storage.backend": "redis", "storage.namespace": ""})
+			mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "redis", "namespace": ""})
 			mockSpan.EXPECT().SetAttribute("token_id", "missing-trace-token")
 			mockSpan.EXPECT().RecordError(storage.ErrTokenNotFound)
 			mockSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())

@@ -307,12 +307,13 @@ func (m *Manager) RotateKeys(ctx context.Context) error {
 **Interface**:
 ```go
 type Tracer interface {
-    Start(ctx context.Context, name string, opts ...SpanOption) (context.Context, Span)
+    Start(ctx context.Context, name string) (context.Context, Span)
 }
 
 type Span interface {
     End()
     SetAttribute(key string, value any)
+    SetAttributes(attrs map[string]any)
     SetStatus(code StatusCode, description string)
     RecordError(err error)
 }
@@ -324,14 +325,68 @@ type Span interface {
 
 **Span naming convention**: `<TypeName>.<MethodName>` — e.g., `TokenManager.IssueAccessToken`, `DiskKeyStore.Save`
 
-**Span attributes by layer**:
+**Attribute naming convention**: all attribute keys use `snake_case` — e.g., `user_id`, `token_id`, `storage_backend`. See the per-component tables below for the canonical names.
 
-| Component | Attributes |
-|-----------|-----------|
-| `DiskKeyStore` / `RedisKeyStore` | `storage.backend` (`"disk"` / `"redis"`), `key_id` |
-| `MemoryRefreshStore` / `RedisRefreshStore` | `storage.backend` (`"memory"` / `"redis"`), `token_id` |
-| `KeyManager` | `key_id` |
-| `TokenManager` | `user_id`, `token_id`, `active` (IntrospectToken), `deleted_count` (CleanupExpiredTokens) |
+**Span attributes — KeyManager**:
+
+| Span | Attributes |
+|------|-----------|
+| All spans (pre-set) | `namespace` |
+| `KeyManager.GetCurrentSigningKey` | `key_id` |
+| `KeyManager.GetPublicKey` | `key_id` |
+| `KeyManager.GetKeyInfo` | `key_id` |
+| `KeyManager.GetAllKeyInfo` | `key_count` |
+| `KeyManager.RotateKeys` | `key_id` |
+
+**Span attributes — DiskKeyStore / RedisKeyStore**:
+
+| Span | Attributes |
+|------|-----------|
+| All spans (pre-set) | `storage_backend` (`"disk"` / `"redis"`), `namespace` |
+| `DiskKeyStore.Save` / `RedisKeyStore.Save` | `key_id` |
+| `DiskKeyStore.UpdateMetadata` / `RedisKeyStore.UpdateMetadata` | `key_id` |
+| `DiskKeyStore.LoadKey` / `RedisKeyStore.LoadKey` | `key_id` |
+| `DiskKeyStore.Delete` / `RedisKeyStore.Delete` | `key_id` |
+
+**Span attributes — TokenManager**:
+
+| Span | Attributes |
+|------|-----------|
+| All spans (pre-set) | `namespace` |
+| `TokenManager.IssueAccessToken` | `user_id`, `token_id`, `audience` (if non-empty) |
+| `TokenManager.IssueAccessTokenWithClaims` | `user_id`, `token_id`, `audience` (if non-empty) |
+| `TokenManager.IssueRefreshToken` | `user_id`, `token_id`, `audience` (if non-empty) |
+| `TokenManager.IssueRefreshTokenWithClaims` | `user_id`, `token_id`, `audience` (if non-empty) |
+| `TokenManager.IssueTokenPair` | `user_id`, `token_id`, `audience` (if non-empty) |
+| `TokenManager.IssueTokenPairWithClaims` | `user_id`, `token_id`, `audience` (if non-empty) |
+| `TokenManager.ValidateAccessToken` | `user_id`, `token_id` |
+| `TokenManager.ValidateAccessTokenWithClaims` | `user_id`, `token_id` |
+| `TokenManager.RefreshAccessToken` | `token_id` |
+| `TokenManager.RefreshAccessTokenWithClaims` | `token_id` |
+| `TokenManager.RevokeRefreshToken` | `token_id` |
+| `TokenManager.RevokeAllUserTokens` | `user_id` |
+| `TokenManager.RevokeAllForAudience` | `audience` |
+| `TokenManager.RevokeAllForUserAndAudience` | `user_id`, `audience` |
+| `TokenManager.IntrospectToken` | `token_id` |
+| `TokenManager.ListTokens` | `namespace`, `cursor`, `count`, `result_count` |
+| `TokenManager.ListTokensForUser` | `namespace`, `user_id`, `cursor`, `count`, `result_count` |
+| `TokenManager.ListTokensForAudience` | `namespace`, `audience`, `cursor`, `count`, `result_count` |
+
+**Span attributes — MemoryRefreshStore / RedisRefreshStore**:
+
+| Span | Attributes |
+|------|-----------|
+| All spans (pre-set) | `storage_backend` (`"memory"` / `"redis"`), `namespace` (RedisRefreshStore only) |
+| `*.Store` | `token_id` |
+| `*.Retrieve` | `token_id` |
+| `*.Revoke` | `token_id` |
+| `*.RevokeAllForUser` | `user_id` |
+| `*.RevokeAllForAudience` | `audience` |
+| `*.RevokeAllForUserAndAudience` | `user_id`, `audience` |
+| `*.Cleanup` | `removed_count` |
+| `*.ListTokens` | `cursor`, `count`, `result_count` |
+| `*.ListTokensForUser` | `user_id`, `cursor`, `count`, `result_count` |
+| `*.ListTokensForAudience` | `audience`, `cursor`, `count`, `result_count` |
 
 **Status conventions**: `StatusOK` on all success paths; `RecordError(err)` + `StatusError` on all error paths. Wrapped errors (via `fmt.Errorf("...: %w", err)`) are passed to `RecordError` so the full message propagates to the trace backend.
 
@@ -341,8 +396,10 @@ type DiskKeyStore struct {
     tracer tracing.Tracer // never nil; defaults to NoOpTracer
 }
 
-func (d *DiskKeyStore) startSpan(ctx context.Context, op string, opts ...tracing.SpanOption) (context.Context, tracing.Span) {
-    return d.tracer.Start(ctx, "DiskKeyStore."+op, opts...)
+func (d *DiskKeyStore) startSpan(ctx context.Context, op string) (context.Context, tracing.Span) {
+    ctx, span := d.tracer.Start(ctx, "DiskKeyStore."+op)
+    span.SetAttributes(map[string]any{"storage_backend": d.backend, "namespace": d.namespace})
+    return ctx, span
 }
 
 func (d *DiskKeyStore) Save(ctx context.Context, key *KeyInfo) error {
@@ -979,7 +1036,7 @@ Catches:
 - ✅ Redis integration tests via miniredis (`pkg/tokens/integration`) covering distributed token operations end-to-end
 
 ### Phase 6: Distributed Tracing (v0.4.0)
-- ✅ `pkg/tracing` — `Tracer` and `Span` interfaces defined; `SpanOption` functional options; `StatusCode` and `SpanKind` enumerations
+- ✅ `pkg/tracing` — `Tracer` and `Span` interfaces defined; `StatusCode` enumeration
 - ✅ `NoOpTracer` / `NoOpSpan` — zero-allocation implementations; 36 tests, race-detection clean
 - ✅ `MockTracer` / `MockSpan` generated via gomock for dependency injection in component tests
 - ✅ Tracing wired into all six components — `DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore`, `KeyManager`, `TokenManager`

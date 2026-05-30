@@ -73,8 +73,9 @@ type Span interface {
 
 	// SetAttribute adds a key-value attribute to the span.
 	//
-	// Attributes provide additional context about the operation.
-	// Common examples: user_id, token_id, operation type, etc.
+	// Attribute keys must use snake_case — e.g., user_id, token_id,
+	// storage_backend. See doc/ARCHITECTURE.md for the canonical
+	// per-component attribute list.
 	//
 	// The value can be string, int, int64, float64, or bool.
 	// Other types are converted to string via fmt.Sprintf.

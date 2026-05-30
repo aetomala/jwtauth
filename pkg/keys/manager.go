@@ -806,7 +806,7 @@ func (m *Manager) GetAllKeyInfo(ctx context.Context) ([]KeyInfo, error) {
 		})
 	}
 
-	span.SetAttribute("key.count", len(result))
+	span.SetAttribute("key_count", len(result))
 	span.SetStatus(tracing.StatusOK, "")
 	m.config.Logger.Info("retrieved all key info", ctx, "count", len(result), "namespace", m.namespace)
 	m.metrics.RecordDuration(metricKeyOpDuration, time.Since(start),
@@ -1035,7 +1035,7 @@ func base64urlEncode(data []byte) string {
 // pre-seeded with the key.namespace attribute.
 func (m *Manager) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
 	ctx, span := m.tracer.Start(ctx, "KeyManager."+operation)
-	span.SetAttributes(map[string]any{"key.namespace": m.namespace})
+	span.SetAttributes(map[string]any{"namespace": m.namespace})
 	return ctx, span
 }
 
