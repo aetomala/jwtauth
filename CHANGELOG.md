@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+
+- Span attribute keys standardised to `snake_case` across all components. Operators with span-based dashboards or alert rules must update the following keys: `storage.backend` → `storage_backend`; `token.namespace` / `key.namespace` / `storage.namespace` → `namespace`; `token.audience` / `storage.audience` → `audience`; `key.count` → `key_count`; `storage.cursor` → `cursor`; `storage.count` → `count`; `storage.result_count` → `result_count`; `storage.user_id` → `user_id`. See `doc/ARCHITECTURE.md` for the canonical per-component attribute list.
+
 ---
 
 ## [v0.7.1] — 2026-05-28

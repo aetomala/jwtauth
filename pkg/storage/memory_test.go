@@ -81,7 +81,7 @@ var _ = Describe("MemoryRefreshStore — Phase 10: Tracing", func() {
 	Context("Store — success path", func() {
 		It("should start a span named MemoryRefreshStore.Store with storage.backend, token_id and StatusOK", func() {
 			mockTracer.EXPECT().Start(gomock.Any(), "MemoryRefreshStore.Store").Return(ctx, mockSpan)
-			mockSpan.EXPECT().SetAttributes(map[string]any{"storage.backend": "memory"})
+			mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "memory"})
 			mockSpan.EXPECT().SetAttribute("token_id", "trace-store-token")
 			mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 			mockSpan.EXPECT().End()
@@ -93,7 +93,7 @@ var _ = Describe("MemoryRefreshStore — Phase 10: Tracing", func() {
 	Context("Retrieve — error path", func() {
 		It("should call RecordError and StatusError when token is not found", func() {
 			mockTracer.EXPECT().Start(gomock.Any(), "MemoryRefreshStore.Retrieve").Return(ctx, mockSpan)
-			mockSpan.EXPECT().SetAttributes(map[string]any{"storage.backend": "memory"})
+			mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "memory"})
 			mockSpan.EXPECT().SetAttribute("token_id", "missing-trace-token")
 			mockSpan.EXPECT().RecordError(storage.ErrTokenNotFound)
 			mockSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())

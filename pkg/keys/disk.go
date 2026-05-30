@@ -114,8 +114,8 @@ func (d *DiskKeyStore) Namespace() string { return d.namespace }
 func (d *DiskKeyStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
 	ctx, span := d.tracer.Start(ctx, "DiskKeyStore."+operation)
 	span.SetAttributes(map[string]any{
-		"storage.backend":   d.backend,
-		"storage.namespace": d.namespace,
+		"storage_backend": d.backend,
+		"namespace":       d.namespace,
 	})
 	return ctx, span
 }

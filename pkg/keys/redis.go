@@ -108,8 +108,8 @@ func (r *RedisKeyStore) Namespace() string { return r.namespace }
 func (r *RedisKeyStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
 	ctx, span := r.tracer.Start(ctx, "RedisKeyStore."+operation)
 	span.SetAttributes(map[string]any{
-		"storage.backend":   r.backend,
-		"storage.namespace": r.namespace,
+		"storage_backend": r.backend,
+		"namespace":       r.namespace,
 	})
 	return ctx, span
 }

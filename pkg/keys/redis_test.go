@@ -753,7 +753,7 @@ var _ = Describe("RedisKeyStore", func() {
 		Context("Save — success path", func() {
 			It("should start a span named RedisKeyStore.Save with storage.backend, key_id and StatusOK", func() {
 				mockTracer.EXPECT().Start(gomock.Any(), "RedisKeyStore.Save").Return(ctx, mockSpan)
-				mockSpan.EXPECT().SetAttributes(map[string]any{"storage.backend": "redis", "storage.namespace": ""})
+				mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "redis", "namespace": ""})
 				mockSpan.EXPECT().SetAttribute("key_id", testKeyA)
 				mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 				mockSpan.EXPECT().End()
@@ -768,7 +768,7 @@ var _ = Describe("RedisKeyStore", func() {
 		Context("LoadKey — error path", func() {
 			It("should call RecordError and StatusError when key is not found", func() {
 				mockTracer.EXPECT().Start(gomock.Any(), "RedisKeyStore.LoadKey").Return(ctx, mockSpan)
-				mockSpan.EXPECT().SetAttributes(map[string]any{"storage.backend": "redis", "storage.namespace": ""})
+				mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "redis", "namespace": ""})
 				mockSpan.EXPECT().SetAttribute("key_id", testKeyMissing)
 				mockSpan.EXPECT().RecordError(keys.ErrKeyStoreKeyNotFound)
 				mockSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
