@@ -907,4 +907,33 @@ var _ = Describe("Prometheus", func() {
 			})
 		})
 	})
+
+	// ===== PHASE 10: MetricNames =====
+	Describe("Phase 10: MetricNames", func() {
+		It("should return a non-empty map after construction", func() {
+			names := pm.MetricNames()
+			Expect(names).NotTo(BeEmpty())
+		})
+
+		It("should contain all 18 registered metrics with correct help strings", func() {
+			names := pm.MetricNames()
+			Expect(names).To(HaveLen(18))
+
+			Expect(names).To(HaveKeyWithValue("jwtauth_tokens_issued_total", "Total number of tokens issued"))
+			Expect(names).To(HaveKeyWithValue("jwtauth_tokens_validated_total", "Total number of tokens validated"))
+			Expect(names).To(HaveKeyWithValue("jwtauth_operation_duration_seconds", "Duration of operations in seconds"))
+			Expect(names).To(HaveKeyWithValue("jwtauth_storage_operations_total", "Total number of storage operations"))
+			Expect(names).To(HaveKeyWithValue("jwtauth_storage_tokens_count", "Number of tokens in storage"))
+			Expect(names).To(HaveKeyWithValue("jwtauth_keystore_operations_total", "Total number of key store operations"))
+			Expect(names).To(HaveKeyWithValue("jwtauth_key_active_versions_count", "Number of active key versions"))
+		})
+
+		It("should return a defensive copy — mutations do not affect the registry", func() {
+			first := pm.MetricNames()
+			first["injected_key"] = "injected_help"
+
+			second := pm.MetricNames()
+			Expect(second).NotTo(HaveKey("injected_key"))
+		})
+	})
 })

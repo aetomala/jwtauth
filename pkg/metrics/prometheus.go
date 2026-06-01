@@ -34,6 +34,9 @@ type PrometheusMetrics struct {
 	// ===== Histograms =====
 	histograms   map[string]*prometheus.HistogramVec
 	histogramsMu sync.RWMutex
+
+	// ===== Metric Names =====
+	names map[string]string // name → help string; written once at construction, read-only after
 }
 
 // PrometheusConfig holds configuration for a PrometheusMetrics instance.
@@ -67,6 +70,7 @@ func NewPrometheusMetrics(config PrometheusConfig) *PrometheusMetrics {
 		counters:   make(map[string]*prometheus.CounterVec),
 		gauges:     make(map[string]*prometheus.GaugeVec),
 		histograms: make(map[string]*prometheus.HistogramVec),
+		names:      make(map[string]string),
 	}
 
 	// ===== STEP 3: Pre-register All Metrics =====
@@ -177,6 +181,7 @@ func (pm *PrometheusMetrics) registerCounter(namespace, name, help string, label
 	)
 	pm.registry.MustRegister(counter)
 	pm.counters[namespace+"_"+name] = counter
+	pm.names[namespace+"_"+name] = help
 }
 
 // registerGauge creates a GaugeVec with the given namespace, name, help
@@ -193,6 +198,7 @@ func (pm *PrometheusMetrics) registerGauge(namespace, name, help string, labels 
 	)
 	pm.registry.MustRegister(gauge)
 	pm.gauges[namespace+"_"+name] = gauge
+	pm.names[namespace+"_"+name] = help
 }
 
 // registerHistogram creates a HistogramVec with the given namespace, name,
@@ -210,6 +216,7 @@ func (pm *PrometheusMetrics) registerHistogram(namespace, name, help string, lab
 	)
 	pm.registry.MustRegister(histogram)
 	pm.histograms[namespace+"_"+name] = histogram
+	pm.names[namespace+"_"+name] = help
 }
 
 // IncrementCounter increments the named counter by 1. It is a convenience
@@ -320,4 +327,14 @@ func (pm *PrometheusMetrics) Handler() http.Handler {
 // families in tests.
 func (pm *PrometheusMetrics) Registry() *prometheus.Registry {
 	return pm.registry
+}
+
+// MetricNames returns a map of every registered metric name to its help string.
+// Returns a defensive copy — mutations do not affect the registry.
+func (pm *PrometheusMetrics) MetricNames() map[string]string {
+	result := make(map[string]string, len(pm.names))
+	for k, v := range pm.names {
+		result[k] = v
+	}
+	return result
 }
