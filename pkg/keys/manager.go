@@ -242,27 +242,6 @@ func (m *Manager) IsRunning() bool {
 	return atomic.LoadInt32(&m.state) == StateStarted
 }
 
-// Mu returns the Manager's read-write mutex for testing purposes only.
-// This is exported solely to enable tests that need to synchronize access with
-// key cache mutations.
-func (m *Manager) Mu() *sync.RWMutex {
-	return &m.mu
-}
-
-// Keys returns the Manager's key cache map for testing purposes only.
-// This is exported solely to enable tests that need to inspect or manipulate
-// the in-memory key cache. Do not use in production code.
-func (m *Manager) Keys() map[string]*KeyPair {
-	return m.keys
-}
-
-// CleanupExpiredKeysForTest invokes cleanupExpiredKeys for testing purposes only.
-// This is exported solely to allow tests to trigger the cleanup sweep synchronously
-// without waiting for the rotation scheduler ticker.
-func (m *Manager) CleanupExpiredKeysForTest(ctx context.Context) {
-	m.cleanupExpiredKeys(ctx)
-}
-
 // NewManager creates and returns a new Manager with the given configuration.
 // Returns ErrInvalidKeyStore if KeyStore is nil, ErrInvalidKeySize if KeySize is
 // less than 2048 bits, ErrInvalidKeyRotationInterval if KeyRotationInterval is
@@ -537,12 +516,6 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.config.Logger.Info("key manager stopped", ctx)
 	span.SetStatus(tracing.StatusOK, "")
 	return nil
-}
-
-// IsRotationSchedulerActive reports whether the background rotation scheduler
-// goroutine is currently running. Used for testing and diagnostics.
-func (m *Manager) IsRotationSchedulerActive() bool {
-	return m.rotationSchedulerActive.Load()
 }
 
 // GetPublicKey returns the public key for the given key ID. Checks the in-memory
