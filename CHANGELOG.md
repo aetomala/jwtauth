@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 
 ### Breaking
 
+- `keys.Manager.Mu()`, `keys.Manager.Keys()`, `keys.Manager.CleanupExpiredKeysForTest()`, and `keys.Manager.IsRotationSchedulerActive()` removed from the production API surface. These methods existed on the concrete `*keys.Manager` type only (not the `KeyManager` interface) and were explicitly documented as testing-only. They are relocated to `pkg/keys/export_test.go` and remain available within the test binary.
 - Span attribute keys standardised to `snake_case` across all components. Operators with span-based dashboards or alert rules must update the following keys: `storage.backend` → `storage_backend`; `token.namespace` / `key.namespace` / `storage.namespace` → `namespace`; `token.audience` / `storage.audience` → `audience`; `key.count` → `key_count`; `storage.cursor` → `cursor`; `storage.count` → `count`; `storage.result_count` → `result_count`; `storage.user_id` → `user_id`. See `doc/ARCHITECTURE.md` for the canonical per-component attribute list.
 
 ---
