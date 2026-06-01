@@ -23,6 +23,20 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [v0.7.2] — 2026-06-01
+
+### Breaking
+
+- `tokens.TokenManager` interface expanded with 10 additional methods covering
+  issuance variants (`IssueAccessToken`, `IssueAccessTokenWithClaims`,
+  `IssueRefreshToken`, `IssueRefreshTokenWithClaims`, `IssueTokenPair`,
+  `RefreshAccessToken`) and the operational path (`CleanupExpiredTokens`,
+  `ListTokens`, `ListTokensForUser`, `ListTokensForAudience`). Consumers that
+  use `TokenManager` as a dependency type are unaffected. Direct implementors
+  (hand-written test doubles) must add the new method stubs. See #258.
+
+---
+
 ## [v0.7.1] — 2026-05-28
 
 ### Added
