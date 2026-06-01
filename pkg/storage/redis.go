@@ -24,6 +24,7 @@ import (
 type RedisRefreshStoreConfig struct {
 	Client    *redis.Client   // Required. Redis client used for all operations.
 	KeyPrefix string          // Optional; prepended to all Redis keys; empty preserves current behavior.
+	Namespace string          // Optional; scopes log fields, span attributes, and metric labels. Defaults to KeyPrefix when empty.
 	Logger    logging.Logger  // Optional; nil defaults to NoOpLogger.
 	Metrics   metrics.Metrics // Optional; nil defaults to NoOpMetrics.
 	Tracer    tracing.Tracer  // Optional; nil defaults to NoOpTracer.
@@ -51,7 +52,7 @@ type RedisRefreshStore struct {
 	client *redis.Client // Redis client; internally thread-safe
 
 	// ===== Key Prefixes =====
-	namespace            string // = cfg.KeyPrefix; returned by Namespace()
+	namespace            string // observability label; cfg.Namespace when set, else cfg.KeyPrefix
 	tokenPrefix          string // = cfg.KeyPrefix + tokenKeyPrefix;         applied to all token hash keys
 	userSetPrefix        string // = cfg.KeyPrefix + userSetKeyPrefix;        applied to all user-set keys
 	audienceSetPrefix    string // = cfg.KeyPrefix + audienceSetKeyPrefix;    applied to audience-scoped index sets
@@ -83,13 +84,18 @@ func NewRedisRefreshStore(cfg RedisRefreshStoreConfig) (*RedisRefreshStore, erro
 	if cfg.Tracer == nil {
 		cfg.Tracer = defaults.Tracer
 	}
-	if cfg.KeyPrefix != "" {
-		cfg.Logger = cfg.Logger.With("namespace", cfg.KeyPrefix)
+	// ===== Resolve Observability Namespace =====
+	namespace := cfg.Namespace
+	if namespace == "" {
+		namespace = cfg.KeyPrefix
+	}
+	if namespace != "" {
+		cfg.Logger = cfg.Logger.With("namespace", namespace)
 	}
 
 	return &RedisRefreshStore{
 		client:               cfg.Client,
-		namespace:            cfg.KeyPrefix,
+		namespace:            namespace,
 		tokenPrefix:          cfg.KeyPrefix + tokenKeyPrefix,
 		userSetPrefix:        cfg.KeyPrefix + userSetKeyPrefix,
 		audienceSetPrefix:    cfg.KeyPrefix + audienceSetKeyPrefix,
@@ -101,8 +107,8 @@ func NewRedisRefreshStore(cfg RedisRefreshStoreConfig) (*RedisRefreshStore, erro
 	}, nil
 }
 
-// Namespace returns the KeyPrefix this store was configured with. An empty
-// string indicates an unscoped (single-tenant) deployment.
+// Namespace returns the observability namespace this store was configured with.
+// An empty string indicates an unscoped (single-tenant) deployment.
 func (r *RedisRefreshStore) Namespace() string { return r.namespace }
 
 // startSpan starts a new span for the given operation name, pre-seeded with

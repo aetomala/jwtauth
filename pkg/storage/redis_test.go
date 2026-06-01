@@ -110,10 +110,20 @@ var _ = Describe("RedisRefreshStore — Constructor", func() {
 		ctx := context.Background()
 		Expect(store.Store(ctx, "tracer-token", "tracer-user", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 	})
+
+	It("should return Namespace() equal to the Namespace field, not KeyPrefix", func() {
+		store, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{
+			Client:    client,
+			KeyPrefix: "storage:",
+			Namespace: "obs-ns",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.Namespace()).To(Equal("obs-ns"))
+	})
 })
 
-// ===== PHASE 11: KeyPrefix Namespace Isolation =====
-var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix Namespace Isolation", func() {
+// ===== PHASE 11: KeyPrefix and Namespace Isolation =====
+var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix and Namespace Isolation", func() {
 	var (
 		mr  *miniredis.Miniredis
 		ctx context.Context
@@ -216,6 +226,28 @@ var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix Namespace Isolation"
 			Expect(removed).To(Equal(0))
 		})
 	})
+
+	Context("with both KeyPrefix and Namespace set", func() {
+		It("should use KeyPrefix for Redis key routing and Namespace for observability", func() {
+			client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			store, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{
+				Client:    client,
+				KeyPrefix: "tokens:tenant-a:",
+				Namespace: "tenant-a-obs",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(store.Namespace()).To(Equal("tenant-a-obs"))
+
+			Expect(store.Store(ctx, "tok1", "user1", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
+
+			rawClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			storedKeys, err := rawClient.Keys(ctx, "*").Result()
+			Expect(err).NotTo(HaveOccurred())
+			for _, k := range storedKeys {
+				Expect(k).To(HavePrefix("tokens:tenant-a:"))
+			}
+		})
+	})
 })
 
 // ===== PHASE 10: Tracing =====
@@ -275,6 +307,32 @@ var _ = Describe("RedisRefreshStore — Phase 10: Tracing", func() {
 
 			_, err := tracingStore.Retrieve(ctx, "missing-trace-token")
 			Expect(err).To(MatchError(storage.ErrTokenNotFound))
+		})
+	})
+
+	Context("Namespace field takes precedence over KeyPrefix in span attributes", func() {
+		It("should set namespace span attribute from Namespace field, not KeyPrefix", func() {
+			var err error
+			localMr, err := miniredis.Run()
+			Expect(err).NotTo(HaveOccurred())
+			defer localMr.Close()
+
+			client := redis.NewClient(&redis.Options{Addr: localMr.Addr()})
+			store, err := storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{
+				Client:    client,
+				KeyPrefix: "storage:",
+				Namespace: "obs-ns",
+				Tracer:    mockTracer,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			mockTracer.EXPECT().Start(gomock.Any(), "RedisRefreshStore.Store").Return(ctx, mockSpan)
+			mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "redis", "namespace": "obs-ns"})
+			mockSpan.EXPECT().SetAttribute("token_id", "trace-ns-token")
+			mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+			mockSpan.EXPECT().End()
+
+			Expect(store.Store(ctx, "trace-ns-token", "user1", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 		})
 	})
 })

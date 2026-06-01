@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `RedisKeyStoreConfig.Namespace` and `RedisRefreshStoreConfig.Namespace` — explicit observability namespace field that decouples log fields, span attributes, and metric labels from the `KeyPrefix` storage routing field. Empty value falls back to `KeyPrefix` for backward compatibility.
 - `PrometheusMetrics.MetricNames()` returns a map of all registered metric names to their help strings — enables programmatic dashboard generation and test assertions without hand-maintaining a metric name list.
 
 ### Breaking
