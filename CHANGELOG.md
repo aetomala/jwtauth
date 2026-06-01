@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [v0.7.2] — 2026-06-01
+
 ### Breaking
 
 - `tokens.TokenManager` interface expanded with 10 additional methods covering
