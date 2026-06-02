@@ -14,8 +14,13 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- `examples/telemetry/` — three runnable examples demonstrating how to wire `PrometheusMetrics` (custom registry + `promhttp.HandlerFor`), OTLP HTTP traces, and structured logging with namespace propagation into `KeyManagerConfig` and `TokenManagerConfig`.
 - `RedisKeyStoreConfig.Namespace` and `RedisRefreshStoreConfig.Namespace` — explicit observability namespace field that decouples log fields, span attributes, and metric labels from the `KeyPrefix` storage routing field. Empty value falls back to `KeyPrefix` for backward compatibility.
 - `PrometheusMetrics.MetricNames()` returns a map of all registered metric names to their help strings — enables programmatic dashboard generation and test assertions without hand-maintaining a metric name list.
+
+### Fixed
+
+- `TokenManager.Start` now succeeds when the `KeyManager` was pre-started by the caller before `TokenManager.Start` was called. Previously, `TokenManager.Start` would return `"failed to start key manager: manager is already running"` because it called `KeyManager.Start` unconditionally — breaking every example that follows the documented start-key-manager-first pattern.
 
 ### Breaking
 

@@ -17,6 +17,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/aetomala/jwtauth/internal/testutil"
+	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/tokens"
 )
 
@@ -164,6 +165,16 @@ var _ = Describe("TokenManager", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("key manager start failed"))
 			Expect(service.IsRunning()).To(BeFalse())
+		})
+
+		It("should succeed when KeyManager was pre-started by the caller", func() {
+			mockKM.EXPECT().
+				Start(gomock.Any()).
+				Return(keys.ErrAlreadyRunning)
+
+			err := service.Start(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(service.IsRunning()).To(BeTrue())
 		})
 
 		It("should log error when background cleanup fails", func() {

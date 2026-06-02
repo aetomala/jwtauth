@@ -309,14 +309,18 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	// ===== STEP 3: Start KeyManager =====
 	if err := m.keyManager.Start(ctx); err != nil {
-		m.isRunning.Store(false) // Revert state
+		// ErrAlreadyRunning means the caller pre-started the key manager before
+		// calling TokenManager.Start — treat as success, not an error.
+		if !errors.Is(err, keys.ErrAlreadyRunning) {
+			m.isRunning.Store(false) // Revert state
 
-		m.logger.Error("failed to start token service", ctx,
-			"error", err)
-		wrapped := fmt.Errorf("failed to start key manager: %w", err)
-		span.RecordError(wrapped)
-		span.SetStatus(tracing.StatusError, wrapped.Error())
-		return wrapped
+			m.logger.Error("failed to start token service", ctx,
+				"error", err)
+			wrapped := fmt.Errorf("failed to start key manager: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return wrapped
+		}
 	}
 
 	// ===== STEP 4: Start Background Cleanup Goroutine =====
