@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+---
+
+## [v1.0.0] — 2026-06-03
+
 ### Added
 
 - `examples/telemetry/` — three runnable examples demonstrating how to wire `PrometheusMetrics` (custom registry + `promhttp.HandlerFor`), OTLP HTTP traces, and structured logging with namespace propagation into `KeyManagerConfig` and `TokenManagerConfig`.
