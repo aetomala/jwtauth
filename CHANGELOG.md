@@ -22,6 +22,10 @@ All notable changes to this project will be documented in this file.
 
 - `TokenManager.Start` now succeeds when the `KeyManager` was pre-started by the caller before `TokenManager.Start` was called. Previously, `TokenManager.Start` would return `"failed to start key manager: manager is already running"` because it called `KeyManager.Start` unconditionally — breaking every example that follows the documented start-key-manager-first pattern.
 
+### Documentation
+
+- `doc/PERFORMANCE.md` refreshed with v1.0.0 baseline numbers (Apple M4 Max, Go 1.26.2). All storage, key manager, token lifecycle, observability tax, and golang-jwt comparison tables updated. Regression threshold aligned to the 15% policy.
+
 ### Breaking
 
 - `keys.Manager.Mu()`, `keys.Manager.Keys()`, `keys.Manager.CleanupExpiredKeysForTest()`, and `keys.Manager.IsRotationSchedulerActive()` removed from the production API surface. These methods existed on the concrete `*keys.Manager` type only (not the `KeyManager` interface) and were explicitly documented as testing-only. They are relocated to `pkg/keys/export_test.go` and remain available within the test binary.

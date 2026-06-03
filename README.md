@@ -1056,22 +1056,22 @@ All spans set `StatusOK` on success and `RecordError` + `StatusError` on failure
 
 ## Performance
 
-Measured on Apple M4 Max, Go 1.26.3, `GOMAXPROCS=16`. Redis numbers use in-process miniredis — add your Redis network RTT for real deployments.
+Measured on Apple M4 Max, Go 1.26.2, `GOMAXPROCS=16`. Redis numbers use in-process miniredis — add your Redis network RTT for real deployments.
 
 | Operation | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `IssueAccessToken` | 78,775 | 6,893 | 75 |
-| `ValidateAccessToken` | 5,067 | 6,633 | 102 |
-| `IssueTokenPair` | 69,436 | 8,612 | 90 |
-| `RefreshAccessToken` | 867,641 | 9,497 | 109 |
-| `Store` (Memory) | 797 | 2,034 | 23 |
-| `Store` (Redis/miniredis) | 37,031 | 6,083 | 137 |
+| `IssueAccessToken` | 61,640 | 6,624 | 70 |
+| `ValidateAccessToken` | 4,184 | 6,352 | 96 |
+| `IssueTokenPair` | 58,485 | 8,347 | 83 |
+| `RefreshAccessToken` | 702,740 | 10,414 | 111 |
+| `Store` (Memory) | 746 | 1,988 | 21 |
+| `Store` (Redis/miniredis) | 34,670 | 6,016 | 135 |
 
 The rotation-under-load benchmark (`BenchmarkValidateAccessToken_DuringRotation`) runs parallel validators against a key manager rotating every 50 ms — quantifying validation latency variance during the key overlap window. This is the library's primary differentiator: zero-downtime key rotation cannot be reproduced by single-key JWT libraries.
 
 Reproduction:
 ```bash
-go test -bench=. -benchmem ./pkg/storage/ ./pkg/keys/ ./pkg/tokens/
+go test -bench=. -benchmem -run=^$ ./pkg/storage/ ./pkg/keys/ ./pkg/tokens/
 ```
 
 For full methodology, per-operation tables (all N variants, observability tax, and golang-jwt baseline comparison), and `benchstat` regression workflow, see [doc/PERFORMANCE.md](doc/PERFORMANCE.md).
