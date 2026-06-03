@@ -71,3 +71,21 @@ When non-empty:
 An empty string preserves prior behavior exactly. With this change, all six components tracked
 in ADR-007 are fully wired: KeyManager, TokenManager, DiskKeyStore, RedisKeyStore,
 RedisRefreshStore, and MemoryRefreshStore (single-tenant; namespace="" by design).
+
+## Addendum — RedisKeyStore and RedisRefreshStore explicit Namespace field (issue #241, 2026-06-01)
+
+Both `RedisKeyStoreConfig` and `RedisRefreshStoreConfig` previously used `KeyPrefix` for dual
+roles: storage routing (Redis key prefix) and observability labeling (log fields, span
+attributes, metric labels). An operator who wanted a distinct observability namespace was forced
+to change the Redis key prefix too, conflating two independent concerns.
+
+An explicit `Namespace string` field has been added to both configs, following the pattern
+established for `DiskKeyStoreConfig` in issue #184. When `Namespace` is set it is used
+exclusively for observability output; `KeyPrefix` continues to drive storage routing. When
+`Namespace` is empty, the store falls back to `KeyPrefix` for observability — preserving
+backward compatibility for existing deployments.
+
+With this addendum, all four store types have clean separation between storage and observability
+namespace axes: `DiskKeyStore` (Namespace only), `RedisKeyStore` (KeyPrefix + Namespace),
+`RedisRefreshStore` (KeyPrefix + Namespace), and `MemoryRefreshStore` (single-tenant;
+namespace="" by design).

@@ -24,6 +24,7 @@ import (
 type RedisRefreshStoreConfig struct {
 	Client    *redis.Client   // Required. Redis client used for all operations.
 	KeyPrefix string          // Optional; prepended to all Redis keys; empty preserves current behavior.
+	Namespace string          // Optional; scopes log fields, span attributes, and metric labels. Defaults to KeyPrefix when empty.
 	Logger    logging.Logger  // Optional; nil defaults to NoOpLogger.
 	Metrics   metrics.Metrics // Optional; nil defaults to NoOpMetrics.
 	Tracer    tracing.Tracer  // Optional; nil defaults to NoOpTracer.
@@ -51,7 +52,7 @@ type RedisRefreshStore struct {
 	client *redis.Client // Redis client; internally thread-safe
 
 	// ===== Key Prefixes =====
-	namespace            string // = cfg.KeyPrefix; returned by Namespace()
+	namespace            string // observability label; cfg.Namespace when set, else cfg.KeyPrefix
 	tokenPrefix          string // = cfg.KeyPrefix + tokenKeyPrefix;         applied to all token hash keys
 	userSetPrefix        string // = cfg.KeyPrefix + userSetKeyPrefix;        applied to all user-set keys
 	audienceSetPrefix    string // = cfg.KeyPrefix + audienceSetKeyPrefix;    applied to audience-scoped index sets
@@ -83,13 +84,18 @@ func NewRedisRefreshStore(cfg RedisRefreshStoreConfig) (*RedisRefreshStore, erro
 	if cfg.Tracer == nil {
 		cfg.Tracer = defaults.Tracer
 	}
-	if cfg.KeyPrefix != "" {
-		cfg.Logger = cfg.Logger.With("namespace", cfg.KeyPrefix)
+	// ===== Resolve Observability Namespace =====
+	namespace := cfg.Namespace
+	if namespace == "" {
+		namespace = cfg.KeyPrefix
+	}
+	if namespace != "" {
+		cfg.Logger = cfg.Logger.With("namespace", namespace)
 	}
 
 	return &RedisRefreshStore{
 		client:               cfg.Client,
-		namespace:            cfg.KeyPrefix,
+		namespace:            namespace,
 		tokenPrefix:          cfg.KeyPrefix + tokenKeyPrefix,
 		userSetPrefix:        cfg.KeyPrefix + userSetKeyPrefix,
 		audienceSetPrefix:    cfg.KeyPrefix + audienceSetKeyPrefix,
@@ -101,8 +107,8 @@ func NewRedisRefreshStore(cfg RedisRefreshStoreConfig) (*RedisRefreshStore, erro
 	}, nil
 }
 
-// Namespace returns the KeyPrefix this store was configured with. An empty
-// string indicates an unscoped (single-tenant) deployment.
+// Namespace returns the observability namespace this store was configured with.
+// An empty string indicates an unscoped (single-tenant) deployment.
 func (r *RedisRefreshStore) Namespace() string { return r.namespace }
 
 // startSpan starts a new span for the given operation name, pre-seeded with
@@ -110,8 +116,8 @@ func (r *RedisRefreshStore) Namespace() string { return r.namespace }
 func (r *RedisRefreshStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
 	ctx, span := r.tracer.Start(ctx, "RedisRefreshStore."+operation)
 	span.SetAttributes(map[string]any{
-		"storage.backend":   r.backend,
-		"storage.namespace": r.namespace,
+		"storage_backend": r.backend,
+		"namespace":       r.namespace,
 	})
 	return ctx, span
 }
@@ -792,8 +798,8 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count int) ([]*RefreshToken, string, error) {
 	ctx, span := r.startSpan(ctx, "ListTokens")
 	defer span.End()
-	span.SetAttribute("storage.cursor", cursor)
-	span.SetAttribute("storage.count", count)
+	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
@@ -850,7 +856,7 @@ func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count
 
 	// ===== STEP 7: Log and Return =====
 	resultCount := len(tokens)
-	span.SetAttribute("storage.result_count", resultCount)
+	span.SetAttribute("result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	r.logger.Info("listTokens: page returned", ctx,
 		"result_count", resultCount,
@@ -872,9 +878,9 @@ func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count
 func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string, cursor string, count int) ([]*RefreshToken, string, error) {
 	ctx, span := r.startSpan(ctx, "ListTokensForUser")
 	defer span.End()
-	span.SetAttribute("storage.user_id", userID)
-	span.SetAttribute("storage.cursor", cursor)
-	span.SetAttribute("storage.count", count)
+	span.SetAttribute("user_id", userID)
+	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
@@ -935,7 +941,7 @@ func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string
 
 	// ===== STEP 7: Log and Return =====
 	resultCount := len(tokens)
-	span.SetAttribute("storage.result_count", resultCount)
+	span.SetAttribute("result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	r.logger.Info("listTokensForUser: page returned", ctx,
 		"user_id", userID,
@@ -1246,9 +1252,9 @@ func (r *RedisRefreshStore) RevokeAllForUserAndAudience(ctx context.Context, use
 func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*RefreshToken, string, error) {
 	ctx, span := r.startSpan(ctx, "ListTokensForAudience")
 	defer span.End()
-	span.SetAttribute("storage.audience", audience)
-	span.SetAttribute("storage.cursor", cursor)
-	span.SetAttribute("storage.count", count)
+	span.SetAttribute("audience", audience)
+	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
@@ -1309,7 +1315,7 @@ func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience 
 
 	// ===== STEP 7: Log and Return =====
 	resultCount := len(tokens)
-	span.SetAttribute("storage.result_count", resultCount)
+	span.SetAttribute("result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	r.logger.Info("listTokensForAudience: page returned", ctx,
 		"audience", audience,

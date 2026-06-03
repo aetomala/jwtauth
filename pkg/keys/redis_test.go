@@ -98,6 +98,18 @@ var _ = Describe("RedisKeyStore", func() {
 			})
 		})
 
+		Context("with an explicit Namespace field", func() {
+			It("should return Namespace() equal to the Namespace field, not KeyPrefix", func() {
+				store, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+					Client:    client,
+					KeyPrefix: "storage:",
+					Namespace: "obs-ns",
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(store.Namespace()).To(Equal("obs-ns"))
+			})
+		})
+
 		Context("with a nil client", func() {
 			It("should return ErrNilRedisClient", func() {
 				_, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{})
@@ -625,10 +637,39 @@ var _ = Describe("RedisKeyStore", func() {
 				Expect(func() { _ = rs.Delete(ctx, testKeyA) }).NotTo(Panic())
 			})
 		})
+
+		Context("Namespace field takes precedence over KeyPrefix in metric labels", func() {
+			It("should emit namespace label from Namespace field, not KeyPrefix", func() {
+				mockM.EXPECT().IncrementCounter("jwtauth_keystore_operations_total", map[string]string{
+					"operation":       "save",
+					"status":          "success",
+					"error_type":      "",
+					"storage_backend": "redis",
+					"namespace":       "obs-ns",
+				})
+				mockM.EXPECT().RecordDuration("jwtauth_keystore_operation_duration_seconds", gomock.Any(), map[string]string{
+					"operation":       "save",
+					"storage_backend": "redis",
+					"namespace":       "obs-ns",
+				})
+
+				store, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+					Client:    client,
+					KeyPrefix: "storage:",
+					Namespace: "obs-ns",
+					Metrics:   mockM,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				key := newTestKey()
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				Expect(store.Save(ctx, testKeyA, key, metadata)).To(Succeed())
+			})
+		})
 	})
 
-	// ===== PHASE 11: KeyPrefix Namespace Isolation =====
-	Describe("Phase 11: KeyPrefix Namespace Isolation", func() {
+	// ===== PHASE 11: KeyPrefix and Namespace Isolation =====
+	Describe("Phase 11: KeyPrefix and Namespace Isolation", func() {
 		Context("with a non-empty KeyPrefix", func() {
 			It("should store all keys under the configured prefix", func() {
 				store, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
@@ -728,6 +769,28 @@ var _ = Describe("RedisKeyStore", func() {
 				Expect(err).NotTo(HaveOccurred())
 			})
 		})
+
+		Context("with both KeyPrefix and Namespace set", func() {
+			It("should use KeyPrefix for Redis key routing and Namespace for observability", func() {
+				store, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+					Client:    client,
+					KeyPrefix: "ks:tenant-a:",
+					Namespace: "tenant-a-obs",
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(store.Namespace()).To(Equal("tenant-a-obs"))
+
+				key := newTestKey()
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				Expect(store.Save(ctx, testKeyA, key, metadata)).To(Succeed())
+
+				storedKeys, err := client.Keys(ctx, "*").Result()
+				Expect(err).NotTo(HaveOccurred())
+				for _, k := range storedKeys {
+					Expect(k).To(HavePrefix("ks:tenant-a:"))
+				}
+			})
+		})
 	})
 
 	// ===== PHASE 10: Tracing =====
@@ -753,7 +816,7 @@ var _ = Describe("RedisKeyStore", func() {
 		Context("Save — success path", func() {
 			It("should start a span named RedisKeyStore.Save with storage.backend, key_id and StatusOK", func() {
 				mockTracer.EXPECT().Start(gomock.Any(), "RedisKeyStore.Save").Return(ctx, mockSpan)
-				mockSpan.EXPECT().SetAttributes(map[string]any{"storage.backend": "redis", "storage.namespace": ""})
+				mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "redis", "namespace": ""})
 				mockSpan.EXPECT().SetAttribute("key_id", testKeyA)
 				mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 				mockSpan.EXPECT().End()
@@ -768,7 +831,7 @@ var _ = Describe("RedisKeyStore", func() {
 		Context("LoadKey — error path", func() {
 			It("should call RecordError and StatusError when key is not found", func() {
 				mockTracer.EXPECT().Start(gomock.Any(), "RedisKeyStore.LoadKey").Return(ctx, mockSpan)
-				mockSpan.EXPECT().SetAttributes(map[string]any{"storage.backend": "redis", "storage.namespace": ""})
+				mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "redis", "namespace": ""})
 				mockSpan.EXPECT().SetAttribute("key_id", testKeyMissing)
 				mockSpan.EXPECT().RecordError(keys.ErrKeyStoreKeyNotFound)
 				mockSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
@@ -776,6 +839,28 @@ var _ = Describe("RedisKeyStore", func() {
 
 				_, _, err := tracingStore.LoadKey(ctx, testKeyMissing)
 				Expect(err).To(MatchError(keys.ErrKeyStoreKeyNotFound))
+			})
+		})
+
+		Context("Namespace field takes precedence over KeyPrefix in span attributes", func() {
+			It("should set namespace span attribute from Namespace field, not KeyPrefix", func() {
+				store, err := keys.NewRedisKeyStore(keys.RedisKeyStoreConfig{
+					Client:    client,
+					KeyPrefix: "storage:",
+					Namespace: "obs-ns",
+					Tracer:    mockTracer,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				mockTracer.EXPECT().Start(gomock.Any(), "RedisKeyStore.Save").Return(ctx, mockSpan)
+				mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "redis", "namespace": "obs-ns"})
+				mockSpan.EXPECT().SetAttribute("key_id", testKeyA)
+				mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
+				mockSpan.EXPECT().End()
+
+				key := newTestKey()
+				metadata := keys.KeyMetadata{ID: testKeyA, CreatedAt: time.Now()}
+				Expect(store.Save(ctx, testKeyA, key, metadata)).To(Succeed())
 			})
 		})
 	})

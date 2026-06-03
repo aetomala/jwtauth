@@ -94,7 +94,7 @@ func (m *MemoryRefreshStore) Namespace() string { return "" }
 // the storage.backend attribute.
 func (m *MemoryRefreshStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
 	ctx, span := m.tracer.Start(ctx, "MemoryRefreshStore."+operation)
-	span.SetAttributes(map[string]any{"storage.backend": m.backend})
+	span.SetAttributes(map[string]any{"storage_backend": m.backend})
 	return ctx, span
 }
 
@@ -596,8 +596,8 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, count int) ([]*RefreshToken, string, error) {
 	ctx, span := m.startSpan(ctx, "ListTokens")
 	defer span.End()
-	span.SetAttribute("storage.cursor", cursor)
-	span.SetAttribute("storage.count", count)
+	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
@@ -669,7 +669,7 @@ func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, coun
 
 	// ===== STEP 7: Log and Return =====
 	resultCount := len(tokens)
-	span.SetAttribute("storage.result_count", resultCount)
+	span.SetAttribute("result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("listTokens: page returned", ctx,
 		"result_count", resultCount,
@@ -691,9 +691,9 @@ func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, coun
 func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID string, cursor string, count int) ([]*RefreshToken, string, error) {
 	ctx, span := m.startSpan(ctx, "ListTokensForUser")
 	defer span.End()
-	span.SetAttribute("storage.user_id", userID)
-	span.SetAttribute("storage.cursor", cursor)
-	span.SetAttribute("storage.count", count)
+	span.SetAttribute("user_id", userID)
+	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
@@ -774,7 +774,7 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 
 	// ===== STEP 7: Log and Return =====
 	resultCount := len(tokens)
-	span.SetAttribute("storage.result_count", resultCount)
+	span.SetAttribute("result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("listTokensForUser: page returned", ctx,
 		"user_id", userID,
@@ -799,9 +799,9 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*RefreshToken, string, error) {
 	ctx, span := m.startSpan(ctx, "ListTokensForAudience")
 	defer span.End()
-	span.SetAttribute("storage.audience", audience)
-	span.SetAttribute("storage.cursor", cursor)
-	span.SetAttribute("storage.count", count)
+	span.SetAttribute("audience", audience)
+	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
 	if err := ctx.Err(); err != nil {
@@ -882,7 +882,7 @@ func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience
 
 	// ===== STEP 7: Log and Return =====
 	resultCount := len(tokens)
-	span.SetAttribute("storage.result_count", resultCount)
+	span.SetAttribute("result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("listTokensForAudience: page returned", ctx,
 		"audience", audience,

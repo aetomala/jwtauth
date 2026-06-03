@@ -735,7 +735,7 @@ var _ = Describe("DiskKeyStore", func() {
 		Context("Save — success path", func() {
 			It("should start a span named DiskKeyStore.Save with key_id and StatusOK", func() {
 				mockTracer.EXPECT().Start(gomock.Any(), "DiskKeyStore.Save").Return(ctx, mockSpan)
-				mockSpan.EXPECT().SetAttributes(map[string]any{"storage.backend": "disk", "storage.namespace": ""})
+				mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "disk", "namespace": ""})
 				mockSpan.EXPECT().SetAttribute("key_id", testKeyA)
 				mockSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 				mockSpan.EXPECT().End()
@@ -750,7 +750,7 @@ var _ = Describe("DiskKeyStore", func() {
 		Context("LoadKey — error path", func() {
 			It("should call RecordError and StatusError when key is not found", func() {
 				mockTracer.EXPECT().Start(gomock.Any(), "DiskKeyStore.LoadKey").Return(ctx, mockSpan)
-				mockSpan.EXPECT().SetAttributes(map[string]any{"storage.backend": "disk", "storage.namespace": ""})
+				mockSpan.EXPECT().SetAttributes(map[string]any{"storage_backend": "disk", "namespace": ""})
 				mockSpan.EXPECT().SetAttribute("key_id", testKeyMissing)
 				mockSpan.EXPECT().SetStatus(tracing.StatusError, gomock.Any())
 				mockSpan.EXPECT().End()

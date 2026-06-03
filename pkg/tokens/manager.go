@@ -280,7 +280,7 @@ func NewManager(config TokenManagerConfig) (*Manager, error) {
 // startSpan begins a new tracing span for the given Manager operation.
 func (m *Manager) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
 	ctx, span := m.tracer.Start(ctx, "TokenManager."+operation)
-	span.SetAttributes(map[string]any{"token.namespace": m.namespace})
+	span.SetAttributes(map[string]any{"namespace": m.namespace})
 	return ctx, span
 }
 
@@ -309,14 +309,18 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	// ===== STEP 3: Start KeyManager =====
 	if err := m.keyManager.Start(ctx); err != nil {
-		m.isRunning.Store(false) // Revert state
+		// ErrAlreadyRunning means the caller pre-started the key manager before
+		// calling TokenManager.Start — treat as success, not an error.
+		if !errors.Is(err, keys.ErrAlreadyRunning) {
+			m.isRunning.Store(false) // Revert state
 
-		m.logger.Error("failed to start token service", ctx,
-			"error", err)
-		wrapped := fmt.Errorf("failed to start key manager: %w", err)
-		span.RecordError(wrapped)
-		span.SetStatus(tracing.StatusError, wrapped.Error())
-		return wrapped
+			m.logger.Error("failed to start token service", ctx,
+				"error", err)
+			wrapped := fmt.Errorf("failed to start key manager: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return wrapped
+		}
 	}
 
 	// ===== STEP 4: Start Background Cleanup Goroutine =====
@@ -493,7 +497,7 @@ func (m *Manager) IssueAccessToken(ctx context.Context, userID string, opts ...I
 
 	audience := resolveAudience(m.audience, opts)
 	if !audienceEqual(audience, m.audience) {
-		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		span.SetAttribute("audience", strings.Join(audience, ","))
 		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
 	}
 
@@ -644,7 +648,7 @@ func (m *Manager) IssueAccessTokenWithClaims(ctx context.Context, userID string,
 
 	audience := resolveAudience(m.audience, opts)
 	if !audienceEqual(audience, m.audience) {
-		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		span.SetAttribute("audience", strings.Join(audience, ","))
 		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
 	}
 
@@ -805,7 +809,7 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string, opts ...
 
 	audience := resolveAudience(m.audience, opts)
 	if !audienceEqual(audience, m.audience) {
-		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		span.SetAttribute("audience", strings.Join(audience, ","))
 		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
 	}
 
@@ -934,7 +938,7 @@ func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string
 
 	audience := resolveAudience(m.audience, opts)
 	if !audienceEqual(audience, m.audience) {
-		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		span.SetAttribute("audience", strings.Join(audience, ","))
 		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
 	}
 
@@ -1066,7 +1070,7 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string, opts ...Iss
 
 	audience := resolveAudience(m.audience, opts)
 	if !audienceEqual(audience, m.audience) {
-		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		span.SetAttribute("audience", strings.Join(audience, ","))
 		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
 	}
 
@@ -1251,7 +1255,7 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 
 	audience := resolveAudience(m.audience, opts)
 	if !audienceEqual(audience, m.audience) {
-		span.SetAttribute("token.audience", strings.Join(audience, ","))
+		span.SetAttribute("audience", strings.Join(audience, ","))
 		m.logger.Info("issuing token with non-default audience", ctx, "audience", audience)
 	}
 
@@ -2433,9 +2437,9 @@ func (m *Manager) CleanupExpiredTokens(ctx context.Context) (int, error) {
 func (m *Manager) ListTokens(ctx context.Context, cursor string, count int) ([]*storage.RefreshToken, string, error) {
 	ctx, span := m.startSpan(ctx, "ListTokens")
 	defer span.End()
-	span.SetAttribute("token.namespace", m.namespace)
-	span.SetAttribute("token.cursor", cursor)
-	span.SetAttribute("token.count", count)
+	span.SetAttribute("namespace", m.namespace)
+	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("count", count)
 
 	start := time.Now()
 	errorType := "error"
@@ -2481,7 +2485,7 @@ func (m *Manager) ListTokens(ctx context.Context, cursor string, count int) ([]*
 
 	// ===== STEP 4: Record Success and Log =====
 	errorType = ""
-	span.SetAttribute("token.result_count", len(tokens))
+	span.SetAttribute("result_count", len(tokens))
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("tokens listed", ctx,
 		"result_count", len(tokens),
@@ -2496,10 +2500,10 @@ func (m *Manager) ListTokens(ctx context.Context, cursor string, count int) ([]*
 func (m *Manager) ListTokensForUser(ctx context.Context, userID string, cursor string, count int) ([]*storage.RefreshToken, string, error) {
 	ctx, span := m.startSpan(ctx, "ListTokensForUser")
 	defer span.End()
-	span.SetAttribute("token.namespace", m.namespace)
-	span.SetAttribute("token.user_id", userID)
-	span.SetAttribute("token.cursor", cursor)
-	span.SetAttribute("token.count", count)
+	span.SetAttribute("namespace", m.namespace)
+	span.SetAttribute("user_id", userID)
+	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("count", count)
 
 	start := time.Now()
 	errorType := "error"
@@ -2545,7 +2549,7 @@ func (m *Manager) ListTokensForUser(ctx context.Context, userID string, cursor s
 
 	// ===== STEP 4: Record Success and Log =====
 	errorType = ""
-	span.SetAttribute("token.result_count", len(tokens))
+	span.SetAttribute("result_count", len(tokens))
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("tokens listed for user", ctx,
 		"user_id", userID,
@@ -2562,10 +2566,10 @@ func (m *Manager) ListTokensForUser(ctx context.Context, userID string, cursor s
 func (m *Manager) ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*storage.RefreshToken, string, error) {
 	ctx, span := m.startSpan(ctx, "ListTokensForAudience")
 	defer span.End()
-	span.SetAttribute("token.namespace", m.namespace)
-	span.SetAttribute("token.audience", audience)
-	span.SetAttribute("token.cursor", cursor)
-	span.SetAttribute("token.count", count)
+	span.SetAttribute("namespace", m.namespace)
+	span.SetAttribute("audience", audience)
+	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("count", count)
 
 	start := time.Now()
 	errorType := "error"
@@ -2611,7 +2615,7 @@ func (m *Manager) ListTokensForAudience(ctx context.Context, audience string, cu
 
 	// ===== STEP 4: Record Success and Log =====
 	errorType = ""
-	span.SetAttribute("token.result_count", len(tokens))
+	span.SetAttribute("result_count", len(tokens))
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("tokens listed for audience", ctx,
 		"audience", audience,

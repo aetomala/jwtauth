@@ -14,6 +14,29 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [v1.0.0] — 2026-06-03
+
+### Added
+
+- `examples/telemetry/` — three runnable examples demonstrating how to wire `PrometheusMetrics` (custom registry + `promhttp.HandlerFor`), OTLP HTTP traces, and structured logging with namespace propagation into `KeyManagerConfig` and `TokenManagerConfig`.
+- `RedisKeyStoreConfig.Namespace` and `RedisRefreshStoreConfig.Namespace` — explicit observability namespace field that decouples log fields, span attributes, and metric labels from the `KeyPrefix` storage routing field. Empty value falls back to `KeyPrefix` for backward compatibility.
+- `PrometheusMetrics.MetricNames()` returns a map of all registered metric names to their help strings — enables programmatic dashboard generation and test assertions without hand-maintaining a metric name list.
+
+### Fixed
+
+- `TokenManager.Start` now succeeds when the `KeyManager` was pre-started by the caller before `TokenManager.Start` was called. Previously, `TokenManager.Start` would return `"failed to start key manager: manager is already running"` because it called `KeyManager.Start` unconditionally — breaking every example that follows the documented start-key-manager-first pattern.
+
+### Documentation
+
+- `doc/PERFORMANCE.md` refreshed with v1.0.0 baseline numbers (Apple M4 Max, Go 1.26.2). All storage, key manager, token lifecycle, observability tax, and golang-jwt comparison tables updated. Regression threshold aligned to the 15% policy.
+
+### Breaking
+
+- `keys.Manager.Mu()`, `keys.Manager.Keys()`, `keys.Manager.CleanupExpiredKeysForTest()`, and `keys.Manager.IsRotationSchedulerActive()` removed from the production API surface. These methods existed on the concrete `*keys.Manager` type only (not the `KeyManager` interface) and were explicitly documented as testing-only. They are relocated to `pkg/keys/export_test.go` and remain available within the test binary.
+- Span attribute keys standardised to `snake_case` across all components. Operators with span-based dashboards or alert rules must update the following keys: `storage.backend` → `storage_backend`; `token.namespace` / `key.namespace` / `storage.namespace` → `namespace`; `token.audience` / `storage.audience` → `audience`; `key.count` → `key_count`; `storage.cursor` → `cursor`; `storage.count` → `count`; `storage.result_count` → `result_count`; `storage.user_id` → `user_id`. See `doc/ARCHITECTURE.md` for the canonical per-component attribute list.
+
+---
+
 ## [v0.7.2] — 2026-06-01
 
 ### Breaking

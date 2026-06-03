@@ -934,7 +934,7 @@ var _ = Describe("Manager", func() {
 				defer shutdownManager()
 
 				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.GetCurrentSigningKey")).Return(ctx, testSpan)
-				testSpan.EXPECT().SetAttributes(map[string]any{"key.namespace": ""})
+				testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 				testSpan.EXPECT().SetAttribute("key_id", "tracing-test-key")
 				testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 				testSpan.EXPECT().End()
@@ -954,7 +954,7 @@ var _ = Describe("Manager", func() {
 				defer shutdownManager()
 
 				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.GetPublicKey")).Return(ctx, testSpan)
-				testSpan.EXPECT().SetAttributes(map[string]any{"key.namespace": ""})
+				testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 				testSpan.EXPECT().SetAttribute("key_id", "ghost-key")
 				testSpan.EXPECT().RecordError(keys.ErrKeyNotFound)
 				testSpan.EXPECT().SetStatus(tracing.StatusError, keys.ErrKeyNotFound.Error())
@@ -975,7 +975,7 @@ var _ = Describe("Manager", func() {
 				defer shutdownManager()
 
 				mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("KeyManager.RotateKeys")).Return(ctx, testSpan)
-				testSpan.EXPECT().SetAttributes(map[string]any{"key.namespace": ""})
+				testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 				testSpan.EXPECT().SetAttribute("key_id", gomock.Any())
 				testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 				testSpan.EXPECT().End()

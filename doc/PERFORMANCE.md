@@ -13,20 +13,23 @@ observability dispatch. Real Redis network RTT is not included; see
 
 | Field | Value |
 |---|---|
+| **Date** | 2026-06-03 (v1.0.0) |
 | Hardware | Apple M4 Max |
-| OS | macOS 15.x (darwin/arm64) |
+| OS | macOS 25.5.0 (darwin/arm64) |
 | Go | 1.26.2 |
 | `GOMAXPROCS` | 16 |
 | Redis (storage layer) | in-process miniredis (no network) |
 
 Reproduction command:
 ```bash
-go test -bench=. -benchmem -run=^$ ./pkg/storage/ ./pkg/keys/ ./pkg/tokens/
+go test -bench=. -benchmem -run=^$ ./pkg/storage/ ./pkg/keys/ ./pkg/tokens/ \
+  | tee bench.txt
+benchstat bench.txt
 ```
 
-> **Note:** Passing `-count=1` is required when running only benchmarks (no Ginkgo specs).
-> Ginkgo rejects `-count=N` for N > 1. Use `benchstat` with multiple `-count` runs if you
-> need statistical confidence intervals (see [Regression Detection](#regression-detection)).
+> **Note:** `-run=^$` skips Ginkgo specs — Ginkgo rejects `-count=N` for N > 1.
+> Use `benchstat` with multiple `-count` runs for regression comparisons (see
+> [Regression Detection](#regression-detection)).
 
 ---
 
@@ -39,46 +42,50 @@ All operations measured on `MemoryRefreshStore` and `RedisRefreshStore` (minired
 
 | Benchmark | Memory ns/op | Memory B/op | Memory allocs | Redis ns/op | Redis B/op | Redis allocs |
 |---|---|---|---|---|---|---|
-| `Store` | 797 | 2,034 | 23 | 37,031 | 6,083 | 137 |
-| `Store` (WithAudience) | 862 | 2,124 | 24 | 42,117 | 7,308 | 181 |
-| `Retrieve` | 492 | 1,352 | 16 | 28,269 | 2,883 | 74 |
-| `Revoke` | 1,147 | 1,160 | 13 | 52,430 | 2,119 | 54 |
+| `Store` | 746 | 1,988 | 21 | 34,670 | 6,016 | 135 |
+| `Store` (WithAudience) | 799 | 2,107 | 22 | 42,384 | 7,396 | 179 |
+| `Retrieve` | 413 | 1,328 | 14 | 24,956 | 2,859 | 72 |
+| `Revoke` | 977 | 1,136 | 11 | 51,180 | 2,091 | 52 |
 
 ### Bulk revocation (N tokens per call)
 
 | Benchmark | N | Memory ns/op | Redis ns/op |
 |---|---|---|---|
-| `RevokeAllForUser` | 10 | 2,114 | 90,156 |
-| `RevokeAllForUser` | 100 | 11,104 | 420,295 |
-| `RevokeAllForUser` | 1,000 | 99,983 | 4,203,787 |
-| `RevokeAllForAudience` | 10 | 2,307 | 96,923 |
-| `RevokeAllForAudience` | 100 | 11,658 | 482,940 |
-| `RevokeAllForAudience` | 1,000 | 165,791 | 6,212,172 |
-| `RevokeAllForUserAndAudience` | 10 | 2,656 | 92,570 |
-| `RevokeAllForUserAndAudience` | 100 | 14,161 | 435,261 |
-| `RevokeAllForUserAndAudience` | 1,000 | 129,824 | 3,955,142 |
+| `RevokeAllForUser` | 10 | 1,775 | 110,204 |
+| `RevokeAllForUser` | 100 | 10,050 | 417,856 |
+| `RevokeAllForUser` | 1,000 | 87,608 | 3,714,148 |
+| `RevokeAllForAudience` | 10 | 2,230 | 94,776 |
+| `RevokeAllForAudience` | 100 | 11,078 | 476,106 |
+| `RevokeAllForAudience` | 1,000 | 93,164 | 5,568,471 |
+| `RevokeAllForUserAndAudience` | 10 | 2,566 | 88,618 |
+| `RevokeAllForUserAndAudience` | 100 | 13,488 | 419,715 |
+| `RevokeAllForUserAndAudience` | 1,000 | 112,303 | 3,781,664 |
 
 ### Cursor-based listing (full scan, page size 100)
 
 | Benchmark | N tokens | Memory ns/op | Redis ns/op |
 |---|---|---|---|
-| `ListTokens` | 100 | 8,165 | 569,111 |
-| `ListTokens` | 1,000 | 827,597 | 5,071,786 |
-| `ListTokens` | 10,000 | 92,270,139 | 49,281,907 |
-| `ListTokensForUser` | 100 | 4,543 | 600,595 |
-| `ListTokensForUser` | 1,000 | 50,824 | 7,588,131 |
-| `ListTokensForUser` | 10,000 | 502,806 | 223,654,758 |
-| `ListTokensForAudience` | 100 | 5,899 | 647,146 |
-| `ListTokensForAudience` | 1,000 | 68,953 | 7,887,236 |
-| `ListTokensForAudience` | 10,000 | 714,893 | 251,224,281 |
+| `ListTokens` | 100 | 6,852 | 554,958 |
+| `ListTokens` | 1,000 | 680,359 | 4,984,003 |
+| `ListTokens` | 10,000 | 79,988,533 | 49,922,752 |
+| `ListTokensForUser` | 100 | 3,941 | 599,343 |
+| `ListTokensForUser` | 1,000 | 44,405 | 7,046,524 |
+| `ListTokensForUser` | 10,000 | 430,750 | 227,454,858 |
+| `ListTokensForAudience` | 100 | 5,024 | 623,756 |
+| `ListTokensForAudience` | 1,000 | 58,487 | 7,255,995 |
+| `ListTokensForAudience` | 10,000 | 599,470 | 231,709,417 |
 
-### Cleanup (scan only, no deletions, N live tokens)
+### Cleanup (scan and delete, N expired tokens)
 
 | N | Memory ns/op | Redis ns/op |
 |---|---|---|
-| 100 | 1,275 | 2,553,852 |
-| 1,000 | 9,094 | 26,172,139 |
-| 10,000 | 82,225 | 269,240,656 |
+| 100 | 1,056 | 2,543,289 |
+| 1,000 | 6,934 | 25,609,035 |
+| 10,000 | 59,640 | 261,540,490 |
+
+Memory cleanup is O(N) with 13 allocations regardless of N — allocations do not scale because
+the store reuses internal iteration state. Redis cleanup issues a `DEL` per expired entry via
+a pipeline, so cost scales linearly.
 
 ---
 
@@ -86,11 +93,11 @@ All operations measured on `MemoryRefreshStore` and `RedisRefreshStore` (minired
 
 | Benchmark | ns/op | B/op | allocs/op | Notes |
 |---|---|---|---|---|
-| `GetPublicKey` (cache hit) | 177 | 440 | 6 | In-memory read-lock path — overwhelmingly common |
-| `GetPublicKey` (cache miss) | 146,577 | 16,375 | 114 | DiskKeyStore load on new instance startup |
-| `RotateKeys` | 41,091,208 | 583,374 | 5,300 | RSA 2048-bit key generation + disk write (~41 ms) |
-| `GetCurrentKeyInfo` | 190 | 504 | 5 | Metadata-only read, no private material |
-| `GetJWKS` | 198 | 496 | 6 | JWKS serialization for `/.well-known/jwks.json` |
+| `GetPublicKey` (cache hit) | 154 | 440 | 6 | In-memory read-lock path — overwhelmingly common |
+| `GetPublicKey` (cache miss) | 143,837 | 16,130 | 113 | `KeyStore.LoadKey` on cache eviction |
+| `RotateKeys` | ~46,000,000 | ~650,000 | ~6,000 | RSA 2048-bit key generation + disk write (~46 ms) |
+| `GetCurrentKeyInfo` | 169 | 504 | 5 | Metadata-only read, no private material |
+| `GetJWKS` | 176 | 496 | 6 | JWKS serialization for `/.well-known/jwks.json` |
 
 `RotateKeys` is intentionally expensive — it generates a fresh RSA 2048-bit key pair and
 writes two files to disk. In production, rotation happens at most once per
@@ -106,16 +113,16 @@ All token manager benchmarks use `MemoryRefreshStore` for deterministic crypto i
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `IssueAccessToken` | 61,646 | 6,633 | 70 |
-| `IssueAccessToken` (WithAudience) | 63,982 | 6,847 | 73 |
-| `IssueAccessTokenWithClaims` — Small (2 fields) | 71,123 | 8,441 | 89 |
-| `IssueAccessTokenWithClaims` — Medium (10 fields) | 79,138 | 11,592 | 109 |
-| `IssueAccessTokenWithClaims` — Large (50 fields) | 95,422 | 29,985 | 198 |
-| `ValidateAccessToken` | 4,199 | 6,352 | 96 |
-| `ValidateAccessTokenWithClaims` | 5,287 | 9,512 | 151 |
-| `IssueTokenPair` | 58,103 | 8,325 | 83 |
+| `IssueAccessToken` | 61,640 | 6,624 | 70 |
+| `IssueAccessToken` (WithAudience) | 65,533 | 6,834 | 73 |
+| `IssueAccessTokenWithClaims` — Small (2 fields) | 72,807 | 8,433 | 89 |
+| `IssueAccessTokenWithClaims` — Medium (5 fields) | 78,542 | 11,577 | 109 |
+| `IssueAccessTokenWithClaims` — Large (15 fields) | 97,736 | 30,013 | 198 |
+| `ValidateAccessToken` | 4,184 | 6,352 | 96 |
+| `ValidateAccessTokenWithClaims` | 5,311 | 9,512 | 151 |
+| `IssueTokenPair` | 58,485 | 8,347 | 83 |
 
-Issuance (~62–95 µs) is dominated by RSA 2048-bit signing. Validation (~4.2 µs) is PKCS#1
+Issuance (~62–98 µs) is dominated by RSA 2048-bit signing. Validation (~4.2 µs) is PKCS#1
 v1.5 verification — roughly 15× faster than signing.
 
 `WithAudience` adds no measurable overhead — the functional-option closure dispatch is
@@ -151,34 +158,34 @@ path.
 
 | Benchmark | ns/op | B/op | allocs/op | Notes |
 |---|---|---|---|---|
-| `RefreshAccessToken` | 718,784 | 10,410 | 111 | Full rotation: new access token + refresh token re-storage |
-| `RevokeRefreshToken` | 1,446 | 2,256 | 21 | Single-token revocation — in-memory store write |
-| `IntrospectToken` | 382 | 2,400 | 26 | Metadata read — no JWT re-parse |
+| `RefreshAccessToken` | 702,740 | 10,414 | 111 | Full rotation: validate + new access token + new refresh token |
+| `RevokeRefreshToken` | 1,525 | 2,256 | 21 | Single-token revocation — in-memory store write |
+| `IntrospectToken` | 386 | 2,400 | 26 | Metadata read — no JWT re-parse |
 
-`RefreshAccessToken` is expensive (~719 µs) because it generates a new RSA-signed access
-token and a new opaque refresh token in a single call.
+`RefreshAccessToken` is expensive (~703 µs) because it validates the incoming refresh token,
+generates a new RSA-signed access token, and stores a new opaque refresh token in a single call.
 
 ### Bulk Revocation (N tokens per call, MemoryRefreshStore)
 
 | Benchmark | N | ns/op | B/op | allocs/op |
 |---|---|---|---|---|
-| `RevokeAllUserTokens` | 10 | 2,278 | 3,408 | 50 |
-| `RevokeAllUserTokens` | 100 | 10,622 | 13,488 | 320 |
-| `RevokeAllUserTokens` | 1,000 | 91,055 | 114,304 | 3,021 |
-| `RevokeAllForAudience` | 10 | 2,554 | 3,472 | 51 |
-| `RevokeAllForAudience` | 100 | 11,341 | 13,552 | 321 |
-| `RevokeAllForAudience` | 1,000 | 95,612 | 114,368 | 3,023 |
-| `RevokeAllForUserAndAudience` | 10 | 2,890 | 4,080 | 65 |
-| `RevokeAllForUserAndAudience` | 100 | 13,592 | 18,480 | 425 |
-| `RevokeAllForUserAndAudience` | 1,000 | 112,805 | 162,496 | 4,027 |
+| `RevokeAllUserTokens` | 10 | 2,649 | 3,408 | 50 |
+| `RevokeAllUserTokens` | 100 | 11,140 | 13,488 | 320 |
+| `RevokeAllUserTokens` | 1,000 | 93,158 | 114,304 | 3,021 |
+| `RevokeAllForAudience` | 10 | 2,792 | 3,472 | 51 |
+| `RevokeAllForAudience` | 100 | 11,871 | 13,552 | 321 |
+| `RevokeAllForAudience` | 1,000 | 102,654 | 114,368 | 3,023 |
+| `RevokeAllForUserAndAudience` | 10 | 3,054 | 4,080 | 65 |
+| `RevokeAllForUserAndAudience` | 100 | 13,935 | 18,480 | 425 |
+| `RevokeAllForUserAndAudience` | 1,000 | 116,459 | 162,496 | 4,027 |
 
 ### Audience-Scoped Listing (full scan, page size 100, MemoryRefreshStore)
 
 | N tokens | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| 100 | 4,877 | 17,040 | 218 |
-| 1,000 | 54,099 | 171,004 | 2,225 |
-| 10,000 | 567,105 | 1,710,726 | 22,295 |
+| 100 | 5,550 | 17,040 | 218 |
+| 1,000 | 61,391 | 171,004 | 2,225 |
+| 10,000 | 744,392 | 1,710,725 | 22,295 |
 
 ---
 
@@ -186,13 +193,13 @@ token and a new opaque refresh token in a single call.
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `ValidateAccessToken` (steady state) | 4,199 | 6,352 | 96 |
-| `ValidateAccessToken` (during rotation) | 10,335 | 6,464 | 97 |
+| `ValidateAccessToken` (steady state) | 4,184 | 6,352 | 96 |
+| `ValidateAccessToken` (during rotation) | 8,382 | 6,437 | 96 |
 
 `BenchmarkValidateAccessToken_DuringRotation` runs 16 parallel validator goroutines
 against a token signed with the initial key while a background goroutine calls
 `RotateKeys` every 50 ms. The key overlap window (5 minutes) keeps the original token
-valid throughout the run. The 2.5× slowdown (4.2 µs → 10.3 µs) reflects read-write mutex
+valid throughout the run. The 2× slowdown (4.2 µs → 8.4 µs) reflects read-write mutex
 contention during the brief window when a rotation updates the key cache.
 
 This benchmark cannot be reproduced by single-key JWT libraries. It validates the
@@ -210,20 +217,21 @@ network calls.
 
 | Variant | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| NoOp (baseline) | 56,563 | 6,570 | 70 |
-| PrometheusMetrics | 56,656 | 6,570 | 70 |
-| OtelTracer | 56,704 | 7,050 | 79 |
+| NoOp (baseline) | 56,800 | 6,568 | 70 |
+| PrometheusMetrics | 56,025 | 6,568 | 70 |
+| OtelTracer | 57,061 | 7,048 | 79 |
 
 ### Validation (`ValidateAccessToken`)
 
 | Variant | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| NoOp (baseline) | 2,574 | 6,352 | 96 |
-| OtelTracer | 2,642 | 6,832 | 105 |
+| NoOp (baseline) | 2,463 | 6,352 | 96 |
+| OtelTracer | 2,504 | 6,832 | 105 |
 
-Observability overhead is negligible — PrometheusMetrics adds < 0.2% to issuance; the
-OtelTracer dispatch (span start/end via the no-op provider) adds < 0.3% to issuance and
-~2.6% to validation. Both are noise relative to real Redis RTT in production.
+Observability overhead is negligible — `PrometheusMetrics` adds < 0.2% to issuance because
+counters and histograms use pre-built label maps allocated at construction time (ADR-007).
+The `OtelTracer` span dispatch adds < 0.5% to issuance and ~1.7% to validation. Both are
+noise relative to real Redis RTT in production.
 
 ---
 
@@ -231,20 +239,20 @@ OtelTracer dispatch (span start/end via the no-op provider) adds < 0.3% to issua
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `Sign` — raw `golang-jwt/jwt` | 56,699 | 3,385 | 30 |
-| `IssueAccessToken` — jwtauth | 57,471 | 6,571 | 70 |
-| `Verify` — raw `golang-jwt/jwt` | 2,255 | 4,288 | 62 |
-| `ValidateAccessToken` — jwtauth | 2,574 | 6,352 | 96 |
+| `Sign` — raw `golang-jwt/jwt` | 57,113 | 3,384 | 30 |
+| `IssueAccessToken` — jwtauth | 56,653 | 6,568 | 70 |
+| `Verify` — raw `golang-jwt/jwt` | 2,174 | 4,488 | 69 |
+| `ValidateAccessToken` — jwtauth | 2,449 | 6,560 | 94 |
 
-jwtauth adds **1.4% overhead on signing** (57,471 vs 56,699 ns) and **14% on validation**
-(2,574 vs 2,255 ns) relative to raw `golang-jwt/jwt`. The extra cost covers:
+jwtauth adds **< 1% overhead on signing** and **13% on validation** relative to raw
+`golang-jwt/jwt`. The extra cost covers:
 
 - Key manager cache lookup (read lock on the key map)
 - Refresh token storage and correlation-ID propagation
 - Logging, metrics, and tracing dispatch (no-op in these runs)
 - Claims validation (issuer, audience, expiry enforcement)
 
-The validation overhead in absolute terms is 319 ns — well within single-digit microsecond
+The validation overhead in absolute terms is 275 ns — well within single-digit microsecond
 territory for any real-world workload.
 
 ---
@@ -255,10 +263,10 @@ Use `benchstat` to compare two benchmark runs before releasing:
 
 ```bash
 # Capture baseline (e.g., from current dev)
-go test -bench=. -benchmem -run=^$ -count=5 ./pkg/storage/ ./pkg/keys/ ./pkg/tokens/ > old.txt
+go test -bench=. -benchmem -run=^$ -count=3 ./pkg/storage/ ./pkg/keys/ ./pkg/tokens/ > old.txt
 
 # Make changes, then capture new run
-go test -bench=. -benchmem -run=^$ -count=5 ./pkg/storage/ ./pkg/keys/ ./pkg/tokens/ > new.txt
+go test -bench=. -benchmem -run=^$ -count=3 ./pkg/storage/ ./pkg/keys/ ./pkg/tokens/ > new.txt
 
 # Compare
 benchstat old.txt new.txt
@@ -269,11 +277,13 @@ Install `benchstat`:
 go install golang.org/x/perf/cmd/benchstat@latest
 ```
 
-`benchstat` reports statistically significant regressions with a p-value threshold. Any
-benchmark showing > 10% regression with p < 0.05 warrants investigation before merge.
+Thresholds — evaluated per operation against this document as the baseline:
 
-> The suite is designed to run with `-count=1` for quick smoke checks and `-count=5` for
-> release-gate comparisons.
+- **< 15% regression** — soft gate: document in the PR and proceed.
+- **≥ 15% regression** — hard stop: requires justification or optimization before merge.
+
+Per-operation thresholds apply — a single operation regressing ≥ 15% blocks the PR even if
+the geomean is flat.
 
 ---
 

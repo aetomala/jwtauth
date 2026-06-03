@@ -4,6 +4,36 @@ This document describes breaking changes and the mechanical steps required to up
 
 ---
 
+## v0.7.x → v1.0.0
+
+### Breaking: `keys.Manager` testing-only methods removed
+
+`Mu()`, `Keys()`, `CleanupExpiredKeysForTest()`, and `IsRotationSchedulerActive()` are removed
+from the `*keys.Manager` production type. They were always documented as testing-only and were
+never part of the `KeyManager` interface. They remain available inside test binaries via
+`pkg/keys/export_test.go`.
+
+**Action required:** Remove any non-test code that calls these methods. In test files, no
+change is needed — the methods are still accessible within the test binary.
+
+### Breaking: Span attribute keys renamed to snake_case
+
+All span attribute keys across all components are now snake_case. Update any span-based
+dashboards or alert rules that reference the old dotted-notation keys:
+
+| Old key | New key |
+|---|---|
+| `storage.backend` | `storage_backend` |
+| `token.namespace` / `key.namespace` / `storage.namespace` | `namespace` |
+| `token.audience` / `storage.audience` | `audience` |
+| `key.count` | `key_count` |
+| `storage.cursor` | `cursor` |
+| `storage.count` | `count` |
+| `storage.result_count` | `result_count` |
+| `storage.user_id` | `user_id` |
+
+---
+
 ## v0.6.x → v0.7.0
 
 ### `keys.KeyManager` gains `GetAllKeyInfo`

@@ -26,6 +26,7 @@ import (
 type RedisKeyStoreConfig struct {
 	Client    *redis.Client   // Required; must not be nil.
 	KeyPrefix string          // Optional; prepended to all Redis keys; empty preserves current behavior.
+	Namespace string          // Optional; scopes log fields, span attributes, and metric labels. Defaults to KeyPrefix when empty.
 	Logger    logging.Logger  // Optional; nil defaults to NoOpLogger.
 	Metrics   metrics.Metrics // Optional; nil defaults to NoOpMetrics.
 	Tracer    tracing.Tracer  // Optional; nil defaults to NoOpTracer.
@@ -52,7 +53,7 @@ type RedisKeyStore struct {
 	client *redis.Client // Thread-safe Redis client
 
 	// ===== Key Prefixes =====
-	namespace  string // = cfg.KeyPrefix; returned by Namespace()
+	namespace  string // observability label; cfg.Namespace when set, else cfg.KeyPrefix
 	pemPrefix  string // = cfg.KeyPrefix + keyPEMPrefix;  applied to all PEM keys
 	metaPrefix string // = cfg.KeyPrefix + keyMetaPrefix; applied to all metadata keys
 
@@ -82,14 +83,19 @@ func NewRedisKeyStore(cfg RedisKeyStoreConfig) (*RedisKeyStore, error) {
 	if cfg.Tracer == nil {
 		cfg.Tracer = defaults.Tracer
 	}
-	if cfg.KeyPrefix != "" {
-		cfg.Logger = cfg.Logger.With("namespace", cfg.KeyPrefix)
+	// ===== STEP 3: Resolve Observability Namespace =====
+	namespace := cfg.Namespace
+	if namespace == "" {
+		namespace = cfg.KeyPrefix
+	}
+	if namespace != "" {
+		cfg.Logger = cfg.Logger.With("namespace", namespace)
 	}
 
-	// ===== STEP 3: Return Initialized Store =====
+	// ===== STEP 4: Return Initialized Store =====
 	return &RedisKeyStore{
 		client:     cfg.Client,
-		namespace:  cfg.KeyPrefix,
+		namespace:  namespace,
 		pemPrefix:  cfg.KeyPrefix + keyPEMPrefix,
 		metaPrefix: cfg.KeyPrefix + keyMetaPrefix,
 		logger:     cfg.Logger,
@@ -99,8 +105,8 @@ func NewRedisKeyStore(cfg RedisKeyStoreConfig) (*RedisKeyStore, error) {
 	}, nil
 }
 
-// Namespace returns the KeyPrefix this store was configured with. An empty
-// string indicates an unscoped (single-tenant) deployment.
+// Namespace returns the observability namespace this store was configured with.
+// An empty string indicates an unscoped (single-tenant) deployment.
 func (r *RedisKeyStore) Namespace() string { return r.namespace }
 
 // startSpan starts a new span for the given operation name, pre-seeded with
@@ -108,8 +114,8 @@ func (r *RedisKeyStore) Namespace() string { return r.namespace }
 func (r *RedisKeyStore) startSpan(ctx context.Context, operation string) (context.Context, tracing.Span) {
 	ctx, span := r.tracer.Start(ctx, "RedisKeyStore."+operation)
 	span.SetAttributes(map[string]any{
-		"storage.backend":   r.backend,
-		"storage.namespace": r.namespace,
+		"storage_backend": r.backend,
+		"namespace":       r.namespace,
 	})
 	return ctx, span
 }
