@@ -38,3 +38,7 @@ go.work.sum
 code-sessions.md
 .DS_Store
 CLAUDE.local.md
+
+# Runtime-generated RSA key files from examples
+examples/*/keys/
+examples/telemetry/*/keys/
