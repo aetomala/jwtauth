@@ -9,7 +9,7 @@
 
 **You verify identity. jwtauth manages everything after:** zero-downtime key rotation, access token issuance, refresh token lifecycle, and instant revocation across horizontal scale.
 
-> **API Stability (pre-v1.0)**: All components are production-quality with comprehensive test coverage. The API surface is still evolving before v1.0.0. **v0.5.0 shipped:** `IssueOption` / `WithAudience` for per-call audience targeting (#124) — all six issuing methods accept `...tokens.IssueOption`; existing call sites compile unchanged. **v0.7.0 shipped:** Metrics set reduced from 34 → 18, `Tracer` interface simplified (SpanOption/SpanKind removed), `GetAllKeyInfo` added to `KeyManager`. See `doc/UPGRADING.md` for migration details.
+> **API Stability**: v1.0.0 is released. The public API is stable — semver enforced from here. See `doc/UPGRADING.md` for breaking changes from v0.7.x.
 
 ## Overview
 
@@ -385,11 +385,10 @@ logger := yourCustomAdapter{}                         // Your own logger
 ## Installation
 
 ```bash
-# Will be available as:
-go get github.com/aetomala/jwtauth
+go get github.com/aetomala/jwtauth@v1.0.0
 ```
 
-**Current Status**: v0.4.0 — production-quality, pre-v1.0. See the API Stability note above.
+**Current Status**: v1.0.0 — stable, production-ready.
 
 ## Quick Start
 
@@ -1206,92 +1205,17 @@ Tests follow **progressive phase-based development**:
 
 ## Roadmap
 
-### v0.1.0 (Current - Pre-Alpha)
-- ✅ KeyManager fully implemented
-- ✅ Logging abstraction and slog adapter
-- ✅ Metrics interface defined
-- ✅ Comprehensive test coverage with race detection
-- ✅ Architecture documentation
+### v1.0.0 (Current — Stable) ✅
+The full token lifecycle is implemented and the API is stable. Highlights:
 
-### v0.2.0 ✅ Complete
-- ✅ TokenManager: JWT creation with RS256 signing
-- ✅ TokenManager: Lifecycle management (Start/Shutdown/IsRunning)
-- ✅ TokenManager: Claims management with custom claims support and reserved claim protection
-- ✅ TokenManager: Access token validation with issuer/audience enforcement (ValidateAccessToken)
-- ✅ TokenManager: Refresh token rotation with expiration and revocation checks (RefreshAccessToken)
-- ✅ TokenManager: Token revocation — single and bulk (RevokeRefreshToken, RevokeAllUserTokens)
-- ✅ TokenManager: Token introspection per RFC 7662 (IntrospectToken)
-- ✅ TokenManager: Manual cleanup sweep (CleanupExpiredTokens)
-- ✅ RefreshStore: Shared test suite pattern (eliminates duplication, runs against all implementations)
-- ✅ RefreshStore: MemoryRefreshStore with defensive copying and concurrent safety
-- ✅ RefreshStore: RedisRefreshStore for distributed deployments with go-redis/v9
-- ✅ Prometheus metrics adapter (`metrics.NewPrometheusMetrics`) with 18 pre-registered jwtauth metrics
-- ✅ KeyStore interface extracted from KeyManager — `DiskKeyStore` for single-instance, `RedisKeyStore` for distributed deployments
+- Zero-downtime RSA key rotation with configurable overlap windows
+- Complete token lifecycle: issue, validate, refresh, revoke, introspect, list
+- Audience-scoped issuance and revocation across horizontal scale
+- Full observability stack: Prometheus metrics (18), OTLP traces, structured logging
+- `examples/telemetry/` — runnable Prometheus, OTLP, and structured-logging wiring examples
+- 956 specs (unit + integration), race-detection clean
 
-### v0.3.0
-- ✅ TokenManager: Clock skew tolerance (`ClockSkew` field, `jwt.WithLeeway()` integration)
-- ✅ TokenManager: `ValidateAccessTokenWithClaims` — registered and custom claims returned after validation
-- ✅ Wire metrics into all components — KeyStore, Manager, TokenManager, RefreshStore with `error_type` label and context propagation
-- ✅ Example middleware returns specific JSON error codes (`token_expired`, `token_revoked`, etc.) via sentinel error mapping
-- ✅ `KeyManager` interface extended with context on all read methods (`GetCurrentSigningKey`, `GetPublicKey`, `GetJWKS`)
-- ✅ Correlation ID logging — `CorrelationIDHandler`, `WithCorrelationID`/`GetCorrelationID` helpers, `NewCorrelationJSONLogger`/`NewCorrelationTextLogger`, context-aware `SlogAdapter`
-- ✅ All internal logging call sites forward `ctx` — correlation ID injection works across all component boundaries
-- ✅ Context cancellation guards in `GetJWKS` and `cleanupExpiredKeys`
-- ✅ Redis integration tests via miniredis covering distributed token operations end-to-end
-
-### v0.4.0
-- ✅ `pkg/tracing` interfaces scaffolded — `Tracer`, `Span`, `SpanOption`, `StatusCode`, `SpanKind`
-- ✅ `NoOpTracer` / `NoOpSpan` implementations (race-detection clean)
-- ✅ `MockTracer` / `MockSpan` generated for dependency injection in component tests
-- ✅ Tracing wired into all six components — `DiskKeyStore`, `RedisKeyStore`, `MemoryRefreshStore`, `RedisRefreshStore`, `KeyManager`, `TokenManager`
-- ✅ `OtelTracer` adapter (`pkg/tracing/otel`) bridging `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
-- ✅ `Namespace` field on `KeyManagerConfig` and `TokenManagerConfig` — propagates an opaque label through all logs, spans, and metrics
-- ✅ `KeyPrefix` field on `RedisKeyStoreConfig` and `RedisRefreshStoreConfig` — isolates Redis keys per instance for multi-tenant deployments
-- ✅ Cursor-based token enumeration: `ListTokens` and `ListTokensForUser` on `RefreshStore` and `TokenManager`
-
-### v0.5.0 ✅ Complete
-- ✅ Relicensed MIT → Apache 2.0 (effective v0.5.0; v0.4.0 and earlier remain MIT)
-- ✅ Apache 2.0 SPDX headers on all 66 `.go` source files; `goheader` linter added to CI
-- ✅ `IssueOption` / `WithAudience` — per-call audience targeting on all 6 issuing methods
-- ✅ `RefreshToken.Audience []string` — audience stored with token and propagated through refresh
-- ✅ `RevokeAllForAudience` + `RevokeAllForUserAndAudience` — audience-scoped instant revocation
-- ✅ `ListTokensForAudience` — audience-scoped cursor-based token enumeration
-- ✅ `TokenMetadata.Audience` and `TokenMetadata.TokenID` populated by `IntrospectToken` on all paths
-- ✅ Microbenchmark suite — library-level performance baselines for storage, key management, and token lifecycle
-- ✅ Hot-path alloc reduction — `ValidateAccessToken`: 109→102 allocs/op; `ValidateAccessTokenWithClaims`: 194→159 allocs/op
-- ✅ `SECURITY.md` — vulnerability disclosure policy, coordinated disclosure, in/out-of-scope matrix
-- ✅ Redis Security Hardening guide — TLS, ACL minimum command sets, network isolation in `doc/DEPLOYMENT.md`
-- ✅ Custom Claims Validation guidance — type-assert and range-check responsibility in `doc/DEPLOYMENT.md`
-- ✅ Rate Limiting recommended starting values table + gateway configuration references
-
-### v0.6.0
-- Standardize expiration boundary semantics across `MemoryRefreshStore` and `RedisRefreshStore` — eliminate `Before` vs `Before || Equal` divergence
-- Fix nil pointer dereference in `GetKeyInfo` when a key was loaded via `GetPublicKey` (public-only cached `KeyPair`)
-- Add `ErrTokenMissingKid` package-level sentinel — replace inline `errors.New` so callers can use `errors.Is`
-- Guard `cleanupExpiredKeys` from removing the current signing key — prevent token signing failures during rotation
-- Pin `Cleanup()` return value to deleted-token count across both `RefreshStore` implementations
-- Add missing duration histograms for `RevokeAllForAudience` and `RevokeAllForUserAndAudience` in `PrometheusMetrics`
-- ADR-009 — document multi-audience token revocation atomicity (why revoking by audience A fully revokes multi-audience tokens)
-
-### v0.7.0
-- `GetAllKeyInfo() ([]KeyInfo, error)` on `KeyManager` — enumerate all active keys for admin surfaces and health checks
-- Namespace field — wire through logs, spans, and metric labels across all six components; or formally demote and document as a v1.1 commitment
-- ADR-010 — JTI uniqueness and replay prevention stance (JTI is for audit correlation, not replay prevention)
-- ADR-011 — cursor semantics and pagination consistency contract (opaque cursors, best-effort ordering guarantees)
-- Example: `examples/audience-revocation/` — multi-audience issuance, `ListTokensForAudience`, `RevokeAllForAudience` round-trip
-- Example: `examples/redis-production/` — `RedisKeyStore` + `RedisRefreshStore` with `KeyPrefix` and `Namespace`
-- Example: `examples/custom-store/` — minimal `RefreshStore` implementation stub with compile-time assertion
-
-### v1.0.0 (Stable)
-- API stability guarantee across `KeyManager`, `TokenManager`, `RefreshStore`, `KeyStore`, and all observability interfaces
-- Production-ready documentation for all components
-- Example: `IntrospectToken` in framework middleware
-- Example: `GetJWKS` endpoint pattern
-- Example: `CleanupExpiredTokens` manual trigger
-- Span attribute naming convention enforced and documented
-- `PrometheusMetrics.MetricNames()` — programmatic enumeration of registered metric names
-
-### v1.1.0
+### v1.1.0 (Planned)
 - PostgreSQL `RefreshStore` implementation — durable, transactional token storage for deployments that already operate a PostgreSQL cluster and want to avoid a Redis dependency
 
 ## Architecture
@@ -1374,8 +1298,8 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 
 ---
 
-**Status**: v0.5.0-dev — production-quality, pre-v1.0 (see API Stability note at top)
-**Version**: v0.5.0 (active development; latest release: v0.4.0)
+**Status**: v1.0.0 — stable, production-ready
+**Version**: v1.0.0
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
-**Test Coverage**: 945 specs (885 unit + 60 integration) — KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
-**Last Updated**: May 7, 2026
+**Test Coverage**: 956 specs (896 unit + 60 integration) — KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
+**Last Updated**: June 3, 2026
