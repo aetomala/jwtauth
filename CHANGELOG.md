@@ -18,6 +18,11 @@ All notable changes to this project will be documented in this file.
   enforces example module isolation (every example directory must have its own `go.mod`) and
   asserts the root `go` directive does not exceed the `./pkg/...` floor (`1.25.0`) — closes #265
 
+### Documentation
+
+- Add `## Ecosystem` section to README linking token-engine, the official gRPC service
+  wrapper built on jwtauth — closes #266
+
 ---
 
 ## [v1.0.0] — 2026-06-03
