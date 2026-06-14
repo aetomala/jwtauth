@@ -1218,6 +1218,26 @@ The full token lifecycle is implemented and the API is stable. Highlights:
 ### v1.1.0 (Planned)
 - PostgreSQL `RefreshStore` implementation — durable, transactional token storage for deployments that already operate a PostgreSQL cluster and want to avoid a Redis dependency
 
+## Ecosystem
+
+### token-engine — Official gRPC Service Wrapper
+
+[**token-engine**](https://github.com/aetomala/token-engine) is a production-grade gRPC service built on top of jwtauth. It adds a network transport layer and operational infrastructure for teams that want token lifecycle management exposed as a standalone service rather than embedded in their Go application:
+
+- Six RPCs covering issuance, refresh, and revocation (including audience- and user-scoped bulk revocation)
+- mTLS (TLS 1.3 minimum) or API key authentication
+- Multi-tenant support with Redis-backed token and key stores
+- OpenTelemetry tracing, Prometheus metrics, and structured logging with correlation IDs
+- Health probes, JWKS endpoint, and Docker Hub images (`linux/amd64` + `linux/arm64`)
+
+**When to use token-engine vs. jwtauth directly:**
+
+| Scenario | Use |
+|---|---|
+| Embedding token management inside a Go application | `jwtauth` (this library) |
+| Exposing token management as a standalone service over gRPC | [token-engine](https://github.com/aetomala/token-engine) |
+| Polyglot environment — clients are not written in Go | [token-engine](https://github.com/aetomala/token-engine) |
+
 ## Architecture
 
 This library follows SOLID principles and clean architecture patterns. For detailed design decisions, dependency inversion patterns, and component architecture, see:
