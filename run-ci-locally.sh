@@ -36,6 +36,7 @@ run_test() {
 # Lint Job
 echo -e "\n${YELLOW}====== LINT JOB ======${NC}"
 run_test "go vet" "go vet ./..."
+run_test "go constraints" "bash scripts/check-go-constraints.sh"
 run_test "golangci-lint" "golangci-lint run ./..."
 run_test "govulncheck (library)" "govulncheck ./pkg/..."
 

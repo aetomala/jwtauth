@@ -12,6 +12,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Chore
+
+- Add `scripts/check-go-constraints.sh` and wire it into CI lint job and `run-ci-locally.sh`;
+  enforces example module isolation (every example directory must have its own `go.mod`) and
+  asserts the root `go` directive does not exceed the `./pkg/...` floor (`1.25.0`) — closes #265
+
 ---
 
 ## [v1.0.0] — 2026-06-03
