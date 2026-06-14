@@ -9,7 +9,7 @@
 
 **You verify identity. jwtauth manages everything after:** zero-downtime key rotation, access token issuance, refresh token lifecycle, and instant revocation across horizontal scale.
 
-> **API Stability**: v1.0.0 is released. The public API is stable — semver enforced from here. See `doc/UPGRADING.md` for breaking changes from v0.7.x.
+> **API Stability**: v1.0.1 is released. The public API is stable — semver enforced from here. See `doc/UPGRADING.md` for breaking changes from v0.7.x.
 
 ## Overview
 
@@ -385,10 +385,10 @@ logger := yourCustomAdapter{}                         // Your own logger
 ## Installation
 
 ```bash
-go get github.com/aetomala/jwtauth@v1.0.0
+go get github.com/aetomala/jwtauth@v1.0.1
 ```
 
-**Current Status**: v1.0.0 — stable, production-ready.
+**Current Status**: v1.0.1 — stable, production-ready.
 
 ## Quick Start
 
@@ -1318,8 +1318,8 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 
 ---
 
-**Status**: v1.0.0 — stable, production-ready
-**Version**: v1.0.0
+**Status**: v1.0.1 — stable, production-ready
+**Version**: v1.0.1
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
 **Test Coverage**: 956 specs (896 unit + 60 integration) — KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
-**Last Updated**: June 3, 2026
+**Last Updated**: June 13, 2026
