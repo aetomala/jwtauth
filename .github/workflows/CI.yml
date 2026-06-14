@@ -31,6 +31,9 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: Check Go constraints
+        run: bash scripts/check-go-constraints.sh
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
