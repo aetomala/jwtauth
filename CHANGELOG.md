@@ -14,6 +14,32 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [v1.0.1] — 2026-06-29
+
+### Chore
+
+- Add `scripts/check-go-constraints.sh` and wire it into CI lint job and `run-ci-locally.sh`;
+  enforces example module isolation (every example directory must have its own `go.mod`) and
+  asserts the root `go` directive does not exceed the `./pkg/...` floor (`1.25.0`) — closes #265
+
+### Documentation
+
+- Add `## Ecosystem` section to README linking token-engine, the official gRPC service
+  wrapper built on jwtauth — closes #266
+- Correct the README token error reference: document the exported `ErrTokenMissingKid`
+  sentinel (returned by `ValidateAccessToken`/`...WithClaims` when the JWT header has
+  no `kid`) and update the sentinel count from 10 to 11.
+- Reconcile README spec-count and coverage figures with measured output — 956 specs
+  (896 unit + 60 integration); KeyManager ~82%, TokenManager ~92%, RefreshStore ~87%,
+  Tracing ~84%; per-component counts (KeyManager 172, TokenManager 259, RefreshStore
+  225, Metrics 69).
+- List ADR-009, ADR-010, and ADR-011 in the README Architecture Decision Records table.
+- Clarify that reserved claims passed via `CustomClaims` are silently dropped and
+  `Warn`-logged (not rejected with an error), and that `IntrospectToken` populates
+  `TokenID`/`Audience` on the active, revoked, and expired paths.
+
+---
+
 ## [v1.0.0] — 2026-06-03
 
 ### Added
