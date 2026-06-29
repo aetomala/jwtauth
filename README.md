@@ -114,7 +114,7 @@ km, _ := keys.NewManager(keys.KeyManagerConfig{
 | Custom claims round-trip without re-parsing | `IssueAccessTokenWithClaims` + `ValidateAccessTokenWithClaims` |
 | Clock skew tolerance for distributed deployments | `TokenManagerConfig.ClockSkew` |
 | 18 Prometheus metrics across all operations | Pre-registered, zero config |
-| 10 typed sentinel errors for middleware logic | `ErrTokenExpired`, `ErrTokenRevoked`, `ErrInvalidAudience`, … |
+| 11 typed sentinel errors for middleware logic | `ErrTokenExpired`, `ErrTokenRevoked`, `ErrTokenMissingKid`, `ErrInvalidAudience`, … |
 
 **jwtauth is what you'd build on top of golang-jwt after a few months in production.**
 
@@ -150,9 +150,9 @@ If you need JWE (encrypted tokens), JWS detached payloads, or multi-algorithm JO
 
 1. **Algorithm confusion prevented unconditionally** — `ValidateAccessToken` asserts `*jwt.SigningMethodRSA` before any key lookup. HS256, ECDSA, and `none` are rejected — not configurably, unconditionally.
 
-2. **Reserved claim protection** — `IssueAccessTokenWithClaims` rejects custom claims that would overwrite `sub`, `exp`, `iat`, `nbf`, `jti`, `iss`, or `aud`. Application fields cannot collide with registered claims silently.
+2. **Reserved claim protection** — `IssueAccessTokenWithClaims` silently drops custom claims that would overwrite `sub`, `exp`, `iat`, `nbf`, `jti`, `iss`, or `aud`, logging each dropped key at `Warn`. Issuance still succeeds with the manager-controlled values intact — application fields can never collide with registered claims.
 
-3. **10 granular sentinel errors, all `errors.Is()`-compatible** — middleware can distinguish `ErrTokenExpired` from `ErrTokenRevoked` from `ErrInvalidAudience` and return specific JSON error codes (`token_expired`, `token_revoked`, `invalid_audience`) that clients can act on.
+3. **11 granular sentinel errors, all `errors.Is()`-compatible** — middleware can distinguish `ErrTokenExpired` from `ErrTokenRevoked` from `ErrTokenMissingKid` from `ErrInvalidAudience` and return specific JSON error codes (`token_expired`, `token_revoked`, `invalid_audience`) that clients can act on.
 
 4. **Instant revocation, not expiry-based** — `RevokeAllUserTokens` invalidates all sessions for a compromised account immediately. No waiting for short-lived tokens to expire.
 
@@ -284,7 +284,7 @@ You've already verified identity and need **production-grade token machinery** f
 - **Service state management** ensuring tokens only issue when service is running
 - **OpenTelemetry distributed tracing** — `Tracer` field wires spans into all token operations; defaults to `NoOpTracer` for zero-config use
 - **Namespace labeling** — `Namespace` field propagates an opaque label through all logs, spans, and metric labels for multi-tenant and multi-instance deployments
-- **Comprehensive BDD test coverage** (258 tests covering lifecycle, issuance, validation, clock skew, custom claims, refresh, revocation, and introspection; ~87% statement coverage)
+- **Comprehensive BDD test coverage** (259 tests covering lifecycle, issuance, validation, clock skew, custom claims, refresh, revocation, and introspection; ~92% statement coverage)
 
 **RefreshTokenStore** ✅
 - **Two implementations**: Memory (in-process) and Redis (distributed)
@@ -292,14 +292,14 @@ You've already verified identity and need **production-grade token machinery** f
   - Perfect for single-instance deployments and testing
   - Dual-index lookups (tokenID → token, userID → []tokenID) for O(1) retrieval
   - Defensive copying for isolation from caller mutations
-  - 111 comprehensive tests with 100% statement coverage
+  - Exercised by the shared RefreshStore test suite
 - **RedisRefreshStore**: Distributed storage for multi-instance deployments
   - Uses go-redis/v9 with pipeline support for atomic operations
   - Millisecond-precision timestamp storage
   - Efficient SCAN-based cleanup for expired tokens
   - Production-ready error handling and logging
-  - 111 comprehensive tests (identical test suite as Memory implementation)
-- **Shared test suite** pattern: Single suite (111 tests) runs against both implementations
+  - Runs the identical shared test suite as the Memory implementation
+- **Shared test suite** pattern: a single suite runs against both implementations
 - **Common features** (both implementations):
   - Token lifecycle management (Store, Retrieve, Revoke, RevokeAllForUser, Cleanup)
   - **Cursor-based enumeration**: `ListTokens` iterates all tokens globally; `ListTokensForUser` iterates a single user's tokens — pass `""` as cursor to start from the beginning
@@ -307,7 +307,7 @@ You've already verified identity and need **production-grade token machinery** f
   - Idempotent revocation (safe to call multiple times)
   - Comprehensive context handling with cancellation propagation
   - Structured logging for audit trail
-  - **222 total storage tests** (111 × 2 implementations)
+  - **225 total storage specs** — the shared suite run against both implementations, plus Redis-specific specs
 
 ## Architecture Highlights
 
@@ -802,6 +802,7 @@ All `TokenManager` errors are exported sentinels compatible with `errors.Is()`. 
 | `tokens.ErrInvalidIssuer` | `iss` claim does not match configured issuer | Do not retry — configuration mismatch |
 | `tokens.ErrInvalidAudience` | `aud` claim does not match configured audience | Do not retry — configuration mismatch |
 | `tokens.ErrInvalidToken` | Malformed, wrong signing algorithm, or unknown `kid` | Do not retry — request a new token |
+| `tokens.ErrTokenMissingKid` | JWT header has no `kid` field | Do not retry — request a new token |
 | `tokens.ErrTokenRevoked` | Refresh token explicitly revoked | Force re-login |
 | `tokens.ErrInvalidRefreshToken` | Refresh token not found in store | Force re-login |
 | `tokens.ErrRefreshTokenExpired` | Refresh token past its TTL | Force re-login |
@@ -1084,9 +1085,9 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 
 ### Test Coverage
 
-**Current**: 945 comprehensive specs (885 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100%)
+**Current**: 956 comprehensive specs (896 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~82%, TokenManager ~92%, RefreshStore ~87%, Metrics 100%, Logging 100%, Tracing ~84%)
 
-**KeyManager** (3 test suites — 168 total specs):
+**KeyManager** (3 test suites — 172 total specs):
 - **9-phase Manager tests** (MockKeyStore — no I/O):
   - Constructor validation, config defaults, ErrInvalidKeyStore
   - Start: loads from store, generates key on empty store, error paths
@@ -1104,7 +1105,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
   - Concurrency, metrics recording (storage_backend: "redis")
 
-**TokenManager** (7 test suites, 258 total specs):
+**TokenManager** (7 test suites, 259 total specs):
 - **Lifecycle Management Tests**:
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency, restart after clean shutdown
@@ -1120,13 +1121,13 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 - **Revocation & Introspection Tests**:
   - RevokeRefreshToken / RevokeAllUserTokens: single and bulk revocation flows
   - RevokeAllForAudience / RevokeAllForUserAndAudience: audience-scoped token revocation
-  - IntrospectToken: active/inactive/revoked/expired status per RFC 7662; `TokenID` and `Audience` populated on all paths
+  - IntrospectToken: active/inactive/revoked/expired status per RFC 7662; `TokenID` and `Audience` populated on the active, revoked, and expired paths
   - CleanupExpiredTokens: manual sweep with error handling
 - **Enumeration Tests**: ListTokens, ListTokensForUser, ListTokensForAudience — cursor-based pagination, audience isolation
 - **Concurrent Operations**: parallel token issuance and service state safety
 
-**RefreshStore** (222 total specs: 111 per implementation × 2):
-- **Shared Test Suite** (109 specs, runs against both Memory and Redis):
+**RefreshStore** (225 total specs across both implementations):
+- **Shared Test Suite** (runs against both Memory and Redis):
   - **Phase 1**: Constructor initialization
   - **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
   - **Phase 3**: Input validation (empty/whitespace tokenID/userID, expired tokens, metadata defensive copy)
@@ -1150,7 +1151,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 - `NewCorrelationJSONLogger` / `NewCorrelationTextLogger` — pre-wired production constructors
 - `NoOpLogger` — no-op implementation
 
-**Metrics** (66 specs):
+**Metrics** (69 specs):
 - `PrometheusMetrics` — 18 pre-registered metrics covering all six components
 - `IncrementCounter`, `AddCounter`, `SetGauge`, `RecordHistogram`, `RecordDuration` implementations
 - Label correctness: `error_type` label on all counters, `namespace` label propagation
@@ -1263,6 +1264,9 @@ This library follows SOLID principles and clean architecture patterns. For detai
 | [ADR-006](doc/adr/006-keyprefix-namespace-isolation.md) | `KeyPrefix` — optional namespace isolation for Redis backends; opaque separator for any multi-instance deployment | 2026-04-27 |
 | [ADR-007](doc/adr/007-namespace-consistency-contract.md) | Namespace field on `ManagerConfig` and `KeyManagerConfig` for observability consistency | 2026-04-27 |
 | [ADR-008](doc/adr/008-reserved-claims-at-issuance.md) | Reserved claims protection at issuance — `aud` and other manager-controlled claims cannot be overridden via `CustomClaims` | 2026-04-29 |
+| [ADR-009](doc/adr/009-multi-audience-token-revocation.md) | Multi-audience token revocation — a refresh token is a single session grant; audience-scoped revocation revokes the whole token when any audience matches | 2026-05-08 |
+| [ADR-010](doc/adr/010-jti-and-replay-prevention.md) | JTI uniqueness — every access token carries a UUID v4 `jti` for audit and correlation; jwtauth does not perform replay prevention | 2026-05-20 |
+| [ADR-011](doc/adr/011-cursor-semantics.md) | Cursor semantics — `ListTokens*` cursors are opaque, best-effort, and unordered; callers must not decode, compare, or persist them | 2026-05-20 |
 
 ## Rate Limiting
 
@@ -1321,5 +1325,5 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 **Status**: v1.0.1 — stable, production-ready
 **Version**: v1.0.1
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
-**Test Coverage**: 956 specs (896 unit + 60 integration) — KeyManager ~81%, TokenManager ~92%, RefreshStore 100%, Metrics 100%, Logging 100%, Tracing 100% — all passing, race-detection enabled
-**Last Updated**: June 13, 2026
+**Test Coverage**: 956 specs (896 unit + 60 integration) — KeyManager ~82%, TokenManager ~92%, RefreshStore ~87%, Metrics 100%, Logging 100%, Tracing ~84% — all passing, race-detection enabled
+**Last Updated**: June 29, 2026
