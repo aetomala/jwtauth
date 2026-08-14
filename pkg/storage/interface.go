@@ -111,6 +111,12 @@ type RefreshStore interface {
 	// tokens actually deleted. Implementations must return only the count of
 	// tokens removed — not keys scanned, keys skipped, or remaining tokens.
 	//
+	// Cost characteristics are implementation-defined and not guaranteed by
+	// this interface — callers integrating periodic cleanup should consult
+	// the specific RefreshStore implementation's Cleanup documentation (e.g.
+	// MemoryRefreshStore.Cleanup, RedisRefreshStore.Cleanup) before assuming
+	// a particular cost relative to total stored tokens vs. expired tokens.
+	//
 	// This should be called periodically to:
 	//   - Free storage space
 	//   - Improve query performance
