@@ -5,6 +5,7 @@
 package storage
 
 import (
+	"container/heap"
 	"context"
 	"sort"
 	"strconv"
@@ -51,6 +52,7 @@ type MemoryRefreshStore struct {
 	tokens         map[string]*RefreshToken // tokenID  -> token
 	userTokens     map[string][]string      // userID   -> []tokenID
 	audienceTokens map[string][]string      // audience -> []tokenID
+	expiryHeap     *tokenExpiryHeap          // min-heap of {tokenID, expiresAt}, ordered by expiresAt; lets Cleanup discover expired tokens without ranging tokens
 
 	// ===== Observability =====
 	logger  logging.Logger  // never nil; defaults to NoOpLogger
@@ -79,6 +81,7 @@ func NewMemoryRefreshStore(cfg MemoryRefreshStoreConfig) *MemoryRefreshStore {
 		tokens:         make(map[string]*RefreshToken),
 		userTokens:     make(map[string][]string),
 		audienceTokens: make(map[string][]string),
+		expiryHeap:     &tokenExpiryHeap{},
 		logger:         cfg.Logger,
 		metrics:        cfg.Metrics,
 		tracer:         cfg.Tracer,
@@ -217,6 +220,7 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	for _, aud := range token.Audience {
 		m.audienceTokens[aud] = append(m.audienceTokens[aud], tokenID)
 	}
+	heap.Push(m.expiryHeap, &expiryEntry{tokenID: tokenID, expiresAt: expiresAt})
 	tokenCount = len(m.tokens) // captured inside the lock for gauge accuracy
 
 	// ===== STEP 6: Log Success =====
@@ -507,8 +511,11 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 
 // Cleanup removes all expired tokens from the store and returns the count of
 // removed tokens. It is safe to call concurrently with other methods and is
-// typically invoked on a background ticker. Returns the context error if the
-// context is cancelled.
+// typically invoked on a background ticker. Cost is O(k log n), where n is
+// the total number of stored tokens and k is the number of expired tokens —
+// discovery uses an expiry-ordered min-heap populated at Store time rather
+// than ranging the full token map. Returns the context error if the context
+// is cancelled.
 func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	ctx, span := m.startSpan(ctx, "Cleanup")
 	defer span.End()
@@ -559,17 +566,26 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// ===== STEP 3: Sweep and Remove Expired Tokens =====
-	for tokenID, token := range m.tokens {
-		if !token.ExpiresAt.After(now) {
-			m.logger.Debug("removing expired token", ctx,
-				"tokenID", token.TokenID,
-				"expiredAt", token.ExpiresAt)
-			delete(m.tokens, token.TokenID)
-			m.removeFromUserTokens(token.UserID, tokenID)
-			m.removeFromAudienceTokens(token.Audience, tokenID)
-			count++
+	// ===== STEP 3: Sweep and Remove Expired Tokens via Expiry Heap =====
+	for m.expiryHeap.Len() > 0 && !(*m.expiryHeap)[0].expiresAt.After(now) {
+		entry := heap.Pop(m.expiryHeap).(*expiryEntry)
+
+		token, exists := m.tokens[entry.tokenID]
+		if !exists || !token.ExpiresAt.Equal(entry.expiresAt) {
+			// Stale entry: the token was already removed, or was
+			// re-stored under the same tokenID with a different expiry —
+			// the newer heap entry for that tokenID will be handled on
+			// its own turn.
+			continue
 		}
+
+		m.logger.Debug("removing expired token", ctx,
+			"tokenID", token.TokenID,
+			"expiredAt", token.ExpiresAt)
+		delete(m.tokens, entry.tokenID)
+		m.removeFromUserTokens(token.UserID, entry.tokenID)
+		m.removeFromAudienceTokens(token.Audience, entry.tokenID)
+		count++
 	}
 	removed = count
 	remaining = len(m.tokens)
@@ -925,6 +941,36 @@ func (m *MemoryRefreshStore) removeFromAudienceTokens(audiences []string, tokenI
 			delete(m.audienceTokens, aud)
 		}
 	}
+}
+
+// expiryEntry pairs a tokenID with the expiresAt it was pushed onto the
+// expiry heap under, so Cleanup can detect a stale entry left behind when a
+// tokenID was later re-stored with a different expiry.
+type expiryEntry struct {
+	tokenID   string
+	expiresAt time.Time
+}
+
+// tokenExpiryHeap is a min-heap of *expiryEntry ordered by expiresAt.
+// Cleanup pops entries while the top of the heap is expired instead of
+// ranging the full token map.
+type tokenExpiryHeap []*expiryEntry
+
+func (h tokenExpiryHeap) Len() int            { return len(h) }
+func (h tokenExpiryHeap) Less(i, j int) bool  { return h[i].expiresAt.Before(h[j].expiresAt) }
+func (h tokenExpiryHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+
+func (h *tokenExpiryHeap) Push(x any) {
+	*h = append(*h, x.(*expiryEntry))
+}
+
+func (h *tokenExpiryHeap) Pop() any {
+	old := *h
+	n := len(old)
+	entry := old[n-1]
+	old[n-1] = nil
+	*h = old[:n-1]
+	return entry
 }
 
 // RevokeAllForAudience marks every refresh token issued with the given audience

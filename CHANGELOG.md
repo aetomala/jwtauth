@@ -12,6 +12,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- `MemoryRefreshStore.Cleanup` now discovers expired tokens via an
+  expiry-ordered min-heap populated at `Store` time instead of a full map
+  scan, reducing cost from O(n) to O(k log n) where k is the number of
+  expired tokens — part of #271
+
 ### Chore
 
 - Add `check-latest: true` to both `actions/setup-go` steps in CI — without it,
