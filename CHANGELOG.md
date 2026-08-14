@@ -12,6 +12,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Chore
+
+- Add `check-latest: true` to both `actions/setup-go` steps in CI — without it,
+  the floating `1.26.x` version spec preferred whatever Go 1.26 build was
+  already cached on the runner image (1.26.5) over the actual latest patch
+  release, causing `govulncheck` to fail on stdlib CVEs already fixed in
+  1.26.6
+
 ---
 
 ## [v1.0.1] — 2026-06-29
