@@ -6,6 +6,7 @@ package storage_test
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -173,7 +174,7 @@ var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix and Namespace Isolat
 			storedKeys, err := client.Keys(ctx, "*").Result()
 			Expect(err).NotTo(HaveOccurred())
 			for _, k := range storedKeys {
-				Expect(k).To(Or(HavePrefix("tokens:"), HavePrefix("user_tokens:")))
+				Expect(k).To(Or(HavePrefix("tokens:"), HavePrefix("user_tokens:"), Equal("token_expiry_index")))
 			}
 		})
 	})
@@ -247,6 +248,179 @@ var _ = Describe("RedisRefreshStore — Phase 11: KeyPrefix and Namespace Isolat
 				Expect(k).To(HavePrefix("tokens:tenant-a:"))
 			}
 		})
+	})
+})
+
+var _ = Describe("RedisRefreshStore — Cleanup Expiry Index", func() {
+	var (
+		mr     *miniredis.Miniredis
+		client *redis.Client
+		store  *storage.RedisRefreshStore
+		ctx    context.Context
+	)
+
+	BeforeEach(func() {
+		var err error
+		mr, err = miniredis.Run()
+		Expect(err).NotTo(HaveOccurred())
+		client = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		store, err = storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+		Expect(err).NotTo(HaveOccurred())
+		ctx = context.Background()
+	})
+
+	AfterEach(func() {
+		_ = client.Close()
+		mr.Close()
+	})
+
+	It("should discover and remove a token whose hash already naturally TTL-evicted", func() {
+		// go-redis's Expire command rounds sub-second durations up to a
+		// 1-second minimum (it uses the whole-seconds EXPIRE command), so
+		// the real Redis TTL applied here is ~1s regardless of expiresAt.
+		// miniredis's own TTL countdown only advances via FastForward, not
+		// real time, so both a real sleep (to clear the logical expiresAt
+		// used by Cleanup's own comparisons) and a FastForward (to clear
+		// miniredis's internal TTL and trigger native eviction) are needed.
+		shortLived := time.Now().Add(50 * time.Millisecond)
+		err := store.Store(ctx, "ttl-evict-token", "user1", nil, shortLived, nil)
+		if err != nil {
+			Skip("Store rejected short-lived token")
+		}
+
+		time.Sleep(100 * time.Millisecond)
+		mr.FastForward(2 * time.Second)
+
+		// The hash should have naturally TTL-evicted by now (Store sets a
+		// native Redis Expire matching expiresAt), while the expiry-index
+		// entry -- which carries no TTL of its own -- still references it.
+		Expect(client.Exists(ctx, "tokens:ttl-evict-token").Val()).To(Equal(int64(0)))
+		_, err = client.ZScore(ctx, "token_expiry_index", "ttl-evict-token").Result()
+		Expect(err).NotTo(HaveOccurred())
+
+		removed, err := store.Cleanup(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(removed).To(Equal(1))
+
+		_, err = client.ZScore(ctx, "token_expiry_index", "ttl-evict-token").Result()
+		Expect(err).To(MatchError(redis.Nil))
+	})
+
+	It("should paginate across multiple batches when more than 100 tokens are expired", func() {
+		const tokenCount = 150
+		shortLived := time.Now().Add(50 * time.Millisecond)
+		for i := 0; i < tokenCount; i++ {
+			tokenID := fmt.Sprintf("page-token-%d", i)
+			err := store.Store(ctx, tokenID, "page-user", nil, shortLived, nil)
+			if err != nil {
+				Skip("Store rejected short-lived token")
+			}
+		}
+
+		time.Sleep(150 * time.Millisecond)
+
+		removed, err := store.Cleanup(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(removed).To(Equal(tokenCount))
+	})
+})
+
+var _ = Describe("RedisRefreshStore — BackfillExpiryIndex", func() {
+	var (
+		mr     *miniredis.Miniredis
+		client *redis.Client
+		store  *storage.RedisRefreshStore
+		ctx    context.Context
+	)
+
+	BeforeEach(func() {
+		var err error
+		mr, err = miniredis.Run()
+		Expect(err).NotTo(HaveOccurred())
+		client = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		store, err = storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client})
+		Expect(err).NotTo(HaveOccurred())
+		ctx = context.Background()
+	})
+
+	AfterEach(func() {
+		_ = client.Close()
+		mr.Close()
+	})
+
+	It("should sweep already-expired pre-migration tokens and index still-live ones", func() {
+		// Simulate pre-migration data: written directly via raw Redis
+		// commands, bypassing Store, so no expiry-index entry exists --
+		// mirroring what a deployment upgrading in place would have.
+		liveExpiry := time.Now().Add(time.Hour)
+		Expect(client.HSet(ctx, "tokens:live-legacy", map[string]interface{}{
+			"userID":    "legacy-user",
+			"expiresAt": liveExpiry.UnixMilli(),
+			"createdAt": time.Now().UnixMilli(),
+			"revoked":   "false",
+			"metadata":  "",
+			"audience":  "",
+		}).Err()).To(Succeed())
+		Expect(client.SAdd(ctx, "user_tokens:legacy-user", "live-legacy").Err()).To(Succeed())
+
+		expiredExpiry := time.Now().Add(-time.Hour)
+		Expect(client.HSet(ctx, "tokens:expired-legacy", map[string]interface{}{
+			"userID":    "legacy-user",
+			"expiresAt": expiredExpiry.UnixMilli(),
+			"createdAt": time.Now().UnixMilli(),
+			"revoked":   "false",
+			"metadata":  "",
+			"audience":  "",
+		}).Err()).To(Succeed())
+		Expect(client.SAdd(ctx, "user_tokens:legacy-user", "expired-legacy").Err()).To(Succeed())
+
+		// Neither token has an expiry-index entry yet.
+		card, err := client.ZCard(ctx, "token_expiry_index").Result()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(card).To(Equal(int64(0)))
+
+		removed, indexed, err := store.BackfillExpiryIndex(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(removed).To(Equal(1))
+		Expect(indexed).To(Equal(1))
+
+		// The expired legacy token is gone, and its userID index entry pruned.
+		Expect(client.Exists(ctx, "tokens:expired-legacy").Val()).To(Equal(int64(0)))
+		members, err := client.SMembers(ctx, "user_tokens:legacy-user").Result()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(members).To(ConsistOf("live-legacy"))
+
+		// The live legacy token is now indexed and discoverable by Cleanup.
+		score, err := client.ZScore(ctx, "token_expiry_index", "live-legacy").Result()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(score).To(BeNumerically("~", float64(liveExpiry.UnixMilli()), 1))
+
+		_, err = store.Retrieve(ctx, "live-legacy")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("should be idempotent — a second call finds nothing left to do", func() {
+		Expect(store.Store(ctx, "already-migrated", "user1", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
+
+		removed1, indexed1, err := store.BackfillExpiryIndex(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(removed1).To(Equal(0))
+		Expect(indexed1).To(Equal(1)) // Store already indexed it; ZAdd just refreshes the same score
+
+		removed2, indexed2, err := store.BackfillExpiryIndex(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(removed2).To(Equal(0))
+		Expect(indexed2).To(Equal(1))
+	})
+
+	It("should return the context error when the context is cancelled", func() {
+		cancelledCtx, cancel := context.WithCancel(ctx)
+		cancel()
+
+		removed, indexed, err := store.BackfillExpiryIndex(cancelledCtx)
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(removed).To(Equal(0))
+		Expect(indexed).To(Equal(0))
 	})
 })
 

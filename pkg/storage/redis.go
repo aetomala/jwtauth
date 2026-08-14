@@ -57,6 +57,7 @@ type RedisRefreshStore struct {
 	userSetPrefix        string // = cfg.KeyPrefix + userSetKeyPrefix;        applied to all user-set keys
 	audienceSetPrefix    string // = cfg.KeyPrefix + audienceSetKeyPrefix;    applied to audience-scoped index sets
 	audienceUserSetPrefix string // = cfg.KeyPrefix + audienceUserSetKeyPrefix; applied to per-user audience index sets
+	expiryIndexKey        string // = cfg.KeyPrefix + tokenExpiryIndexKey;    sorted set of tokenIDs scored by expiry
 
 	// ===== Observability =====
 	logger  logging.Logger  // never nil; defaults to NoOpLogger
@@ -100,6 +101,7 @@ func NewRedisRefreshStore(cfg RedisRefreshStoreConfig) (*RedisRefreshStore, erro
 		userSetPrefix:        cfg.KeyPrefix + userSetKeyPrefix,
 		audienceSetPrefix:    cfg.KeyPrefix + audienceSetKeyPrefix,
 		audienceUserSetPrefix: cfg.KeyPrefix + audienceUserSetKeyPrefix,
+		expiryIndexKey:       cfg.KeyPrefix + tokenExpiryIndexKey,
 		logger:               cfg.Logger,
 		metrics:              cfg.Metrics,
 		tracer:               cfg.Tracer,
@@ -254,6 +256,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, a
 		pipe.SAdd(ctx, r.audienceSetPrefix+aud, tokenID)
 		pipe.SAdd(ctx, r.audienceUserSetPrefix+aud+":"+userID, tokenID)
 	}
+	pipe.ZAdd(ctx, r.expiryIndexKey, redis.Z{Score: float64(expiresAt.UnixMilli()), Member: tokenID})
 	pipe.Expire(ctx, tokenKey, duration)
 
 	r.logger.Debug("executing redis pipeline for token store", ctx,
@@ -649,8 +652,13 @@ func (r *RedisRefreshStore) RevokeAllForUser(ctx context.Context, userID string)
 
 // Cleanup removes all expired tokens from the store and returns the count of
 // removed tokens. It is safe to call concurrently with other methods and is
-// typically invoked on a background ticker. Returns the context error if the
-// context is cancelled.
+// typically invoked on a background ticker. Cost is O(log n + k), where n is
+// the total number of entries in the expiry index and k is the number of
+// expired tokens — discovery uses a namespace-scoped Redis sorted set keyed
+// by expiry (ZAdd at Store time) instead of a full SCAN of the token
+// keyspace. Tokens stored before this expiry index existed are not present
+// in it; see RedisRefreshStore.BackfillExpiryIndex for one-time migration.
+// Returns the context error if the context is cancelled.
 func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	ctx, span := r.startSpan(ctx, "Cleanup")
 	defer span.End()
@@ -695,43 +703,202 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
-	// ===== STEP 2: Scan for Expired Tokens =====
+	// ===== STEP 2: Discover and Remove Expired Tokens via Expiry Index =====
 	count := 0
 	now := time.Now()
-	totalScanned := 0
-	nonExpired := 0
+	maxScore := strconv.FormatInt(now.UnixMilli(), 10)
 
+	for {
+		if err := ctx.Err(); err != nil {
+			status = "cancelled"
+			errorType = "cancelled"
+			r.logger.Warn("cleanup aborted: context cancelled", ctx)
+			span.RecordError(err)
+			span.SetStatus(tracing.StatusError, err.Error())
+			return count, err
+		}
+
+		page, err := r.client.ZRangeArgs(ctx, redis.ZRangeArgs{
+			Key:     r.expiryIndexKey,
+			Start:   "-inf",
+			Stop:    maxScore,
+			ByScore: true,
+			Count:   cleanupBatchSize,
+		}).Result()
+		if err != nil {
+			r.logger.Error("cleanup failed: redis zrangebyscore error", ctx,
+				"error", err)
+			wrapped := fmt.Errorf("failed to scan expiry index: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return count, wrapped
+		}
+		if len(page) == 0 {
+			break
+		}
+
+		batch := r.client.Pipeline()
+		var expiredKeys []string
+		for _, tokenID := range page {
+			tokenKey := r.tokenPrefix + tokenID
+
+			hash, err := r.client.HGetAll(ctx, tokenKey).Result()
+			if err != nil {
+				r.logger.Error("cleanup failed: redis hgetall error", ctx,
+					"key", tokenKey,
+					"error", err)
+				continue
+			}
+			if len(hash) == 0 {
+				// Hash already naturally TTL-evicted — nothing to SRem or
+				// Del, but the expiry-index entry itself still gets ZRem'd
+				// below.
+				continue
+			}
+
+			expiredKeys = append(expiredKeys, tokenKey)
+			userID := hash["userID"]
+			batch.SRem(ctx, r.userSetPrefix+userID, tokenID)
+
+			var tokenAudiences []string
+			if audJSON := hash["audience"]; audJSON != "" {
+				_ = json.Unmarshal([]byte(audJSON), &tokenAudiences)
+			}
+			for _, aud := range tokenAudiences {
+				batch.SRem(ctx, r.audienceSetPrefix+aud, tokenID)
+				batch.SRem(ctx, r.audienceUserSetPrefix+aud+":"+userID, tokenID)
+			}
+		}
+		if len(expiredKeys) > 0 {
+			batch.Del(ctx, expiredKeys...)
+		}
+
+		members := make([]interface{}, len(page))
+		for i, tokenID := range page {
+			members[i] = tokenID
+		}
+		batch.ZRem(ctx, r.expiryIndexKey, members...)
+
+		if _, err := batch.Exec(ctx); err != nil {
+			r.logger.Error("cleanup failed: redis pipeline error", ctx,
+				"error", err)
+			wrapped := fmt.Errorf("failed to remove expired tokens: %w", err)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return count, wrapped
+		}
+
+		count += len(page)
+
+		if len(page) < cleanupBatchSize {
+			break
+		}
+	}
+
+	// ===== STEP 3: Count Remaining Entries in the Expiry Index =====
+	remainingCount, err := r.client.ZCard(ctx, r.expiryIndexKey).Result()
+	if err != nil {
+		r.logger.Error("cleanup failed: redis zcard error", ctx,
+			"error", err)
+		wrapped := fmt.Errorf("failed to count expiry index: %w", err)
+		span.RecordError(wrapped)
+		span.SetStatus(tracing.StatusError, wrapped.Error())
+		return count, wrapped
+	}
+	removed = count
+	remaining = int(remainingCount)
+
+	// ===== STEP 4: Log Success =====
+	status = "success"
+	errorType = ""
+	r.logger.Info("cleanup: successful", ctx,
+		"count", count)
+	span.SetAttribute("removed_count", count)
+	span.SetStatus(tracing.StatusOK, "")
+
+	return count, nil
+}
+
+// BackfillExpiryIndex is a one-time migration helper for operators upgrading
+// from a version of RedisRefreshStore that predates the expiry index Cleanup
+// now relies on. It performs a single full SCAN of the token keyspace — the
+// same discovery mechanism the pre-expiry-index Cleanup used — and for each
+// token found: deletes it and prunes the three membership sets if it is
+// already expired, or ZAdds it into the expiry index if it is still live so
+// future Cleanup calls can discover it once it does expire. Returns the
+// count of expired tokens removed and the count of live tokens indexed.
+//
+// It is idempotent — ZAdd on an already-indexed tokenID simply refreshes its
+// score to the same value — and safe to run concurrently with live traffic.
+// Tokens stored after the expiry index was introduced are already indexed by
+// Store and do not need backfilling; running this against a fully-migrated
+// store is a harmless no-op scan. Returns the context error if the context
+// is cancelled.
+func (r *RedisRefreshStore) BackfillExpiryIndex(ctx context.Context) (removed, indexed int, err error) {
+	ctx, span := r.startSpan(ctx, "BackfillExpiryIndex")
+	defer span.End()
+
+	start := time.Now()
+	status := "error"
+	errorType := "error"
+	defer func() {
+		r.metrics.IncrementCounter(metricStorageOpsTotal, map[string]string{
+			"operation":       "backfill_expiry_index",
+			"status":          status,
+			"error_type":      errorType,
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+		})
+		r.metrics.RecordDuration(metricStorageOpDuration, time.Since(start), map[string]string{
+			"operation":       "backfill_expiry_index",
+			"storage_backend": r.backend,
+			"namespace":       r.namespace,
+		})
+	}()
+
+	// ===== STEP 1: Check Context =====
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		status = "cancelled"
+		errorType = "cancelled"
+		r.logger.Warn("backfillExpiryIndex aborted: context cancelled", ctx)
+		span.RecordError(ctxErr)
+		span.SetStatus(tracing.StatusError, ctxErr.Error())
+		return 0, 0, ctxErr
+	}
+
+	// ===== STEP 2: Scan Full Token Keyspace =====
+	now := time.Now()
 	iter := r.client.Scan(ctx, 0, r.tokenPrefix+"*", 0).Iterator()
 
 	var expiredKeys []string
+	var liveEntries []redis.Z
 	for iter.Next(ctx) {
-		totalScanned++
 		key := iter.Val()
 
-		hash, err := r.client.HGetAll(ctx, key).Result()
-		if err != nil {
-			r.logger.Error("cleanup failed: redis hgetall error", ctx,
+		hash, hashErr := r.client.HGetAll(ctx, key).Result()
+		if hashErr != nil {
+			r.logger.Error("backfillExpiryIndex failed: redis hgetall error", ctx,
 				"key", key,
-				"error", err)
+				"error", hashErr)
 			continue
 		}
 
-		expiresAtMillis, err := strconv.ParseInt(hash["expiresAt"], 10, 64)
-		if err != nil {
-			r.logger.Error("cleanup failed: invalid expiration timestamp", ctx,
+		expiresAtMillis, parseErr := strconv.ParseInt(hash["expiresAt"], 10, 64)
+		if parseErr != nil {
+			r.logger.Error("backfillExpiryIndex failed: invalid expiration timestamp", ctx,
 				"key", key,
-				"error", err)
+				"error", parseErr)
 			continue
 		}
 
 		expiresAt := time.UnixMilli(expiresAtMillis)
+		tokenID := strings.TrimPrefix(key, r.tokenPrefix)
+
 		if !expiresAt.After(now) {
 			expiredKeys = append(expiredKeys, key)
 
 			userID := hash["userID"]
-			tokenID := strings.TrimPrefix(key, r.tokenPrefix)
 			userSetKey := r.userSetPrefix + userID
-
 			_ = r.client.SRem(ctx, userSetKey, tokenID).Err()
 
 			var tokenAudiences []string
@@ -743,47 +910,56 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 				_ = r.client.SRem(ctx, r.audienceUserSetPrefix+aud+":"+userID, tokenID).Err()
 			}
 		} else {
-			nonExpired++
+			liveEntries = append(liveEntries, redis.Z{Score: float64(expiresAtMillis), Member: tokenID})
 		}
 	}
 
-	if err := iter.Err(); err != nil {
-		r.logger.Error("cleanup failed: redis scan error", ctx,
-			"error", err)
-		wrapped := fmt.Errorf("failed to scan tokens: %w", err)
+	if iterErr := iter.Err(); iterErr != nil {
+		r.logger.Error("backfillExpiryIndex failed: redis scan error", ctx,
+			"error", iterErr)
+		wrapped := fmt.Errorf("failed to scan tokens: %w", iterErr)
 		span.RecordError(wrapped)
 		span.SetStatus(tracing.StatusError, wrapped.Error())
-		return 0, wrapped
+		return 0, 0, wrapped
 	}
 
 	// ===== STEP 3: Delete Expired Tokens =====
-	if len(expiredKeys) == 0 {
-		r.logger.Debug("cleanup: no expired tokens found", ctx)
-	} else {
-		err := r.client.Del(ctx, expiredKeys...).Err()
-		if err != nil {
-			r.logger.Error("cleanup failed: redis delete error", ctx,
+	if len(expiredKeys) > 0 {
+		if delErr := r.client.Del(ctx, expiredKeys...).Err(); delErr != nil {
+			r.logger.Error("backfillExpiryIndex failed: redis delete error", ctx,
 				"count", len(expiredKeys),
-				"error", err)
-			wrapped := fmt.Errorf("failed to delete expired tokens: %w", err)
+				"error", delErr)
+			wrapped := fmt.Errorf("failed to delete expired tokens: %w", delErr)
 			span.RecordError(wrapped)
 			span.SetStatus(tracing.StatusError, wrapped.Error())
-			return 0, wrapped
+			return 0, 0, wrapped
 		}
-		count = len(expiredKeys)
 	}
-	removed = count
-	remaining = nonExpired
 
-	// ===== STEP 4: Log Success =====
+	// ===== STEP 4: Index Live Tokens =====
+	if len(liveEntries) > 0 {
+		if zaddErr := r.client.ZAdd(ctx, r.expiryIndexKey, liveEntries...).Err(); zaddErr != nil {
+			r.logger.Error("backfillExpiryIndex failed: redis zadd error", ctx,
+				"count", len(liveEntries),
+				"error", zaddErr)
+			wrapped := fmt.Errorf("failed to index live tokens: %w", zaddErr)
+			span.RecordError(wrapped)
+			span.SetStatus(tracing.StatusError, wrapped.Error())
+			return len(expiredKeys), 0, wrapped
+		}
+	}
+
+	// ===== STEP 5: Log Success =====
 	status = "success"
 	errorType = ""
-	r.logger.Info("cleanup: successful", ctx,
-		"count", count)
-	span.SetAttribute("removed_count", count)
+	r.logger.Info("backfillExpiryIndex: successful", ctx,
+		"removed", len(expiredKeys),
+		"indexed", len(liveEntries))
+	span.SetAttribute("removed_count", len(expiredKeys))
+	span.SetAttribute("indexed_count", len(liveEntries))
 	span.SetStatus(tracing.StatusOK, "")
 
-	return count, nil
+	return len(expiredKeys), len(liveEntries), nil
 }
 
 // ListTokens returns a page of refresh tokens starting from cursor. Pass an
@@ -1338,4 +1514,9 @@ const (
 	userSetKeyPrefix        = "user_tokens:"
 	audienceSetKeyPrefix    = "audience_tokens:"
 	audienceUserSetKeyPrefix = "audience_user_tokens:"
+	tokenExpiryIndexKey      = "token_expiry_index"
 )
+
+// cleanupBatchSize is the page size for Cleanup's ZRangeByScore sweep of the
+// expiry index — matches RevokeAllForAudience's hardcoded SSCAN count.
+const cleanupBatchSize = 100

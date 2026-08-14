@@ -18,6 +18,11 @@ All notable changes to this project will be documented in this file.
   expiry-ordered min-heap populated at `Store` time instead of a full map
   scan, reducing cost from O(n) to O(k log n) where k is the number of
   expired tokens — part of #271
+- `RedisRefreshStore.Cleanup` now discovers expired tokens via a
+  namespace-scoped Redis sorted set keyed by expiry instead of a full `SCAN`
+  of the token keyspace, reducing discovery cost from O(n) to O(log n + k).
+  Adds `RedisRefreshStore.BackfillExpiryIndex` for one-time migration of
+  tokens stored before this change — see UPGRADING.md — closes #271
 
 ### Chore
 
