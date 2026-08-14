@@ -307,7 +307,7 @@ You've already verified identity and need **production-grade token machinery** f
   - Idempotent revocation (safe to call multiple times)
   - Comprehensive context handling with cancellation propagation
   - Structured logging for audit trail
-  - **225 total storage specs** — the shared suite run against both implementations, plus Redis-specific specs
+  - **226 total storage specs** — the shared suite run against both implementations, plus Redis-specific specs
 
 ## Architecture Highlights
 
@@ -1085,7 +1085,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 
 ### Test Coverage
 
-**Current**: 956 comprehensive specs (896 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~82%, TokenManager ~92%, RefreshStore ~87%, Metrics 100%, Logging 100%, Tracing ~84%)
+**Current**: 957 comprehensive specs (897 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~82%, TokenManager ~92%, RefreshStore ~87%, Metrics 100%, Logging 100%, Tracing ~84%)
 
 **KeyManager** (3 test suites — 172 total specs):
 - **9-phase Manager tests** (MockKeyStore — no I/O):
@@ -1126,7 +1126,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 - **Enumeration Tests**: ListTokens, ListTokensForUser, ListTokensForAudience — cursor-based pagination, audience isolation
 - **Concurrent Operations**: parallel token issuance and service state safety
 
-**RefreshStore** (225 total specs across both implementations):
+**RefreshStore** (226 total specs across both implementations):
 - **Shared Test Suite** (runs against both Memory and Redis):
   - **Phase 1**: Constructor initialization
   - **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
