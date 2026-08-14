@@ -37,6 +37,9 @@ All notable changes to this project will be documented in this file.
 - Document that `RefreshStore.Cleanup`'s cost characteristic is
   implementation-defined and not guaranteed by the interface; callers should
   consult the backend-specific `Cleanup` docs — part of #271
+- Reconcile README spec counts/coverage across all sections; document the
+  expiry-indexed `Cleanup` mechanism and `BackfillExpiryIndex`; update Roadmap
+  and `SECURITY.md` supported-versions table for v1.1.0
 
 ---
 
