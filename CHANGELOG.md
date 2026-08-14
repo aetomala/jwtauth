@@ -20,6 +20,12 @@ All notable changes to this project will be documented in this file.
   release, causing `govulncheck` to fail on stdlib CVEs already fixed in
   1.26.6
 
+### Documentation
+
+- Document that `RefreshStore.Cleanup`'s cost characteristic is
+  implementation-defined and not guaranteed by the interface; callers should
+  consult the backend-specific `Cleanup` docs — part of #271
+
 ---
 
 ## [v1.0.1] — 2026-06-29
