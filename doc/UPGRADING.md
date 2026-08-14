@@ -4,6 +4,41 @@ This document describes breaking changes and the mechanical steps required to up
 
 ---
 
+## v1.0.1 → v1.1.0
+
+### `RedisRefreshStore.Cleanup` now uses an expiry index — one-time backfill recommended
+
+`RedisRefreshStore.Cleanup` no longer scans the full token keyspace to discover expired
+tokens. It now uses a namespace-scoped Redis sorted set (`token_expiry_index`, prefixed
+by `KeyPrefix` like every other key) populated at `Store` time, reducing discovery cost
+from O(n) to O(log n + k). This is not a breaking change — `Cleanup`'s signature and
+return semantics are unchanged — but it does change what `Cleanup` can see.
+
+Tokens stored under a prior version are **not present** in the new expiry index, because
+it is only populated going forward by `Store`. Operators upgrading in place should call
+the new `RedisRefreshStore.BackfillExpiryIndex(ctx)` once, before or shortly after
+upgrading:
+
+```go
+removed, indexed, err := store.BackfillExpiryIndex(ctx)
+```
+
+This runs a single legacy-style full scan of the token keyspace — the same mechanism
+the pre-upgrade `Cleanup` used — and for each token found: removes it (and prunes the
+three membership sets) if it is already expired, or adds it to the new expiry index if
+it is still live, so future `Cleanup` calls can discover it once it does expire. It is
+idempotent and safe to run concurrently with live traffic; running it against a store
+that has no pre-upgrade data is a harmless no-op scan.
+
+**Skipping this step is not automatically corrected.** Tokens stored before the upgrade
+are never discovered by the new `Cleanup` path — it no longer scans the primary token
+keyspace at all — and their stale entries in `user_tokens:`, `audience_tokens:`, and
+`audience_user_tokens:` persist indefinitely until backfilled. `MemoryRefreshStore` is
+unaffected by this — its equivalent expiry-index optimization (v1.1.0, see #271) is
+populated by an in-process heap with no persistence or migration concern.
+
+---
+
 ## v0.7.x → v1.0.0
 
 ### Breaking: `keys.Manager` testing-only methods removed
