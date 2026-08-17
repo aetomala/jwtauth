@@ -1069,8 +1069,8 @@ Measured on Apple M4 Max, Go 1.26.2, `GOMAXPROCS=16`. Redis numbers use in-proce
 | `ValidateAccessToken` | 4,184 | 6,352 | 96 |
 | `IssueTokenPair` | 58,485 | 8,347 | 83 |
 | `RefreshAccessToken` | 702,740 | 10,414 | 111 |
-| `Store` (Memory) | 746 | 1,988 | 21 |
-| `Store` (Redis/miniredis) | 34,670 | 6,016 | 135 |
+| `Store` (Memory) | 797 | 2,094 | 22 |
+| `Store` (Redis/miniredis) | 36,330 | 7,004 | 159 |
 
 The rotation-under-load benchmark (`BenchmarkValidateAccessToken_DuringRotation`) runs parallel validators against a key manager rotating every 50 ms — quantifying validation latency variance during the key overlap window. This is the library's primary differentiator: zero-downtime key rotation cannot be reproduced by single-key JWT libraries.
 
