@@ -4,9 +4,9 @@
 
 | Version | Support |
 |---------|---------|
-| v1.0.x | Full — features and security fixes |
-| v0.7.x | Security fixes only |
-| < v0.7.0 | None |
+| v1.1.x | Full — features and security fixes |
+| v1.0.x | Security fixes only |
+| < v1.0.0 | None |
 
 ---
 

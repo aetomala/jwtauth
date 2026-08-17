@@ -42,10 +42,15 @@ All operations measured on `MemoryRefreshStore` and `RedisRefreshStore` (minired
 
 | Benchmark | Memory ns/op | Memory B/op | Memory allocs | Redis ns/op | Redis B/op | Redis allocs |
 |---|---|---|---|---|---|---|
-| `Store` | 746 | 1,988 | 21 | 34,670 | 6,016 | 135 |
-| `Store` (WithAudience) | 799 | 2,107 | 22 | 42,384 | 7,396 | 179 |
+| `Store` | 797 | 2,094 | 22 | 36,330 | 7,004 | 159 |
+| `Store` (WithAudience) | 844 | 2,211 | 23 | 43,520 | 8,169 | 203 |
 | `Retrieve` | 413 | 1,328 | 14 | 24,956 | 2,859 | 72 |
 | `Revoke` | 977 | 1,136 | 11 | 51,180 | 2,091 | 52 |
+
+As of v1.1.0, `Store` performs one additional `ZAdd` per call to populate the expiry index
+`Cleanup` reads from (see below) — a small, deterministic allocation increase (Redis: 135 → 159
+allocs/op) that trades off against `Cleanup`'s complexity improvement. See
+`doc/benchmarks/v1.1.0-report.md` for the full analysis.
 
 ### Bulk revocation (N tokens per call)
 
@@ -75,17 +80,31 @@ All operations measured on `MemoryRefreshStore` and `RedisRefreshStore` (minired
 | `ListTokensForAudience` | 1,000 | 58,487 | 7,255,995 |
 | `ListTokensForAudience` | 10,000 | 599,470 | 231,709,417 |
 
-### Cleanup (scan and delete, N expired tokens)
+### Cleanup (expiry-indexed discovery, N stored tokens, zero expired)
+
+As of v1.1.0 (#271), `Cleanup` no longer scans the full token keyspace on either backend.
+`MemoryRefreshStore` discovers expired tokens via an expiry-ordered `container/heap` min-heap
+populated at `Store` time — O(k log n), where k is the number of expired tokens, not N.
+`RedisRefreshStore` discovers them via a namespace-scoped Redis sorted set (`token_expiry_index`)
+populated at `Store` time, swept with paginated `ZRangeByScore`/`ZRem` — O(log n + k). Both
+figures below measure the zero-expired-token case (N stored, 0 to discover), isolating pure
+discovery cost from removal cost.
 
 | N | Memory ns/op | Redis ns/op |
 |---|---|---|
-| 100 | 1,056 | 2,543,289 |
-| 1,000 | 6,934 | 25,609,035 |
-| 10,000 | 59,640 | 261,540,490 |
+| 100 | 574.7 | 49,820 |
+| 1,000 | 602.6 | 128,900 |
+| 10,000 | 536.2 | 1,143,000 |
 
-Memory cleanup is O(N) with 13 allocations regardless of N — allocations do not scale because
-the store reuses internal iteration state. Redis cleanup issues a `DEL` per expired entry via
-a pipeline, so cost scales linearly.
+Memory cleanup allocations are flat at 13 allocs/op regardless of N (unchanged from the
+pre-rewrite baseline — the heap traversal itself was already allocation-free per entry; the
+complexity change is in comparisons, not allocations). Redis cleanup allocations drop from
+scaling linearly with N (600,150 allocs/op at N=10,000 pre-rewrite) to a flat 70 allocs/op —
+paginated `ZRangeByScore` calls replace the old per-token `SCAN` cursor walk. See
+`doc/benchmarks/v1.1.0-report.md` for the full before/after comparison, including the
+`~209x` improvement at N=10,000/Redis and the corresponding `Store` cost increase (`Store`
+now performs one additional `ZAdd` to populate the index — within the 15% latency gate, see
+that report for the allocation-count tradeoff analysis).
 
 ---
 

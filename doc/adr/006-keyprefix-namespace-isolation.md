@@ -20,6 +20,7 @@ The full key schema for `RedisRefreshStore` under a given `KeyPrefix` is:
 [KeyPrefix]user_tokens:<userID>              — set of tokenIDs for that user (SAdd)
 [KeyPrefix]audience_tokens:<aud>             — set of tokenIDs for that audience (SAdd)
 [KeyPrefix]audience_user_tokens:<aud>:<uid>  — set of tokenIDs for that user+audience (SAdd)
+[KeyPrefix]token_expiry_index                — sorted set of tokenIDs scored by expiry (ZAdd)
 ```
 
 For `RedisKeyStore`:
@@ -39,4 +40,4 @@ The other two implementations are out of scope for distinct reasons. `DiskKeySto
 - `DiskKeyStore` is unaffected — the directory path already provides structural filesystem-level isolation
 - `MemoryRefreshStore` is unaffected — it is designed for development use only; the shared-Redis multi-instance namespace problem is a production concern that does not apply
 - Consumers using the empty default need no migration
-- `SCAN`-based and `SSCAN`-based operations (`LoadAll`, `Cleanup`, `ListTokens`, `ListTokensForUser`, `ListTokensForAudience`, `RevokeAllForAudience`) scan only within the configured namespace — operations in one namespace do not observe or affect keys in another
+- `SCAN`-based and `SSCAN`-based operations (`LoadAll`, `ListTokens`, `ListTokensForUser`, `ListTokensForAudience`, `RevokeAllForAudience`) scan only within the configured namespace — operations in one namespace do not observe or affect keys in another. `RedisRefreshStore.Cleanup` no longer scans the token keyspace directly — as of the expiry-indexed rewrite (see #271) it discovers expired tokens via `ZRangeByScore`/`ZRem` against the namespace-scoped `token_expiry_index` key above — but the isolation guarantee is unchanged, since that key is itself `KeyPrefix`-prefixed like every other key in the schema

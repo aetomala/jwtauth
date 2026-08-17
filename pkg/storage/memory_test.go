@@ -58,6 +58,40 @@ var _ = Describe("MemoryRefreshStore — Constructor", func() {
 	})
 })
 
+var _ = Describe("MemoryRefreshStore — Cleanup Expiry Heap Edge Cases", func() {
+	ctx := context.Background()
+
+	It("should not remove a token whose tokenID was re-stored under a later expiry", func() {
+		store := storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{})
+		tokenID := "reused-token-id"
+		userID := "reuse-user"
+
+		shortLived := time.Now().Add(50 * time.Millisecond)
+		err := store.Store(ctx, tokenID, userID, nil, shortLived, nil)
+		if err != nil {
+			Skip("Store rejected short-lived token")
+		}
+
+		// Re-store the same tokenID with a much later expiry before the
+		// first entry's expiry has passed. The heap now holds two entries
+		// for this tokenID — the earlier (stale) one and the live one.
+		laterExpiry := time.Now().Add(1 * time.Hour)
+		Expect(store.Store(ctx, tokenID, userID, nil, laterExpiry, nil)).To(Succeed())
+
+		// Wait past the first (stale) entry's expiry, but well before the
+		// second (live) one.
+		time.Sleep(100 * time.Millisecond)
+
+		count, err := store.Cleanup(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(count).To(Equal(0))
+
+		token, err := store.Retrieve(ctx, tokenID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(token.ExpiresAt).To(BeTemporally("~", laterExpiry, time.Second))
+	})
+})
+
 // ===== PHASE 10: Tracing =====
 var _ = Describe("MemoryRefreshStore — Phase 10: Tracing", func() {
 	var (

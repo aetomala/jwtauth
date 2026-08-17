@@ -9,7 +9,7 @@
 
 **You verify identity. jwtauth manages everything after:** zero-downtime key rotation, access token issuance, refresh token lifecycle, and instant revocation across horizontal scale.
 
-> **API Stability**: v1.0.1 is released. The public API is stable — semver enforced from here. See `doc/UPGRADING.md` for breaking changes from v0.7.x.
+> **API Stability**: v1.1.0 is released. The public API is stable — semver enforced from here. See `doc/UPGRADING.md` for breaking changes from v0.7.x.
 
 ## Overview
 
@@ -291,12 +291,17 @@ You've already verified identity and need **production-grade token machinery** f
 - **MemoryRefreshStore**: In-memory storage with thread-safe RWMutex locking
   - Perfect for single-instance deployments and testing
   - Dual-index lookups (tokenID → token, userID → []tokenID) for O(1) retrieval
+  - Expiry-ordered min-heap (`container/heap`) drives `Cleanup` — discovers expired
+    tokens in O(k log n) instead of ranging the full token map
   - Defensive copying for isolation from caller mutations
   - Exercised by the shared RefreshStore test suite
 - **RedisRefreshStore**: Distributed storage for multi-instance deployments
   - Uses go-redis/v9 with pipeline support for atomic operations
   - Millisecond-precision timestamp storage
-  - Efficient SCAN-based cleanup for expired tokens
+  - `Cleanup` discovers expired tokens via a namespace-scoped Redis sorted-set expiry
+    index (`ZRangeByScore` + `ZRem`) — O(log n + k) instead of a full keyspace `SCAN`
+  - `BackfillExpiryIndex` — one-time, idempotent migration helper that indexes tokens
+    stored before the expiry index existed (see `doc/UPGRADING.md`)
   - Production-ready error handling and logging
   - Runs the identical shared test suite as the Memory implementation
 - **Shared test suite** pattern: a single suite runs against both implementations
@@ -307,7 +312,7 @@ You've already verified identity and need **production-grade token machinery** f
   - Idempotent revocation (safe to call multiple times)
   - Comprehensive context handling with cancellation propagation
   - Structured logging for audit trail
-  - **225 total storage specs** — the shared suite run against both implementations, plus Redis-specific specs
+  - **231 total storage specs** — the shared suite run against both implementations, plus Redis-specific specs
 
 ## Architecture Highlights
 
@@ -385,10 +390,10 @@ logger := yourCustomAdapter{}                         // Your own logger
 ## Installation
 
 ```bash
-go get github.com/aetomala/jwtauth@v1.0.1
+go get github.com/aetomala/jwtauth@v1.1.0
 ```
 
-**Current Status**: v1.0.1 — stable, production-ready.
+**Current Status**: v1.1.0 — stable, production-ready.
 
 ## Quick Start
 
@@ -1064,8 +1069,8 @@ Measured on Apple M4 Max, Go 1.26.2, `GOMAXPROCS=16`. Redis numbers use in-proce
 | `ValidateAccessToken` | 4,184 | 6,352 | 96 |
 | `IssueTokenPair` | 58,485 | 8,347 | 83 |
 | `RefreshAccessToken` | 702,740 | 10,414 | 111 |
-| `Store` (Memory) | 746 | 1,988 | 21 |
-| `Store` (Redis/miniredis) | 34,670 | 6,016 | 135 |
+| `Store` (Memory) | 797 | 2,094 | 22 |
+| `Store` (Redis/miniredis) | 36,330 | 7,004 | 159 |
 
 The rotation-under-load benchmark (`BenchmarkValidateAccessToken_DuringRotation`) runs parallel validators against a key manager rotating every 50 ms — quantifying validation latency variance during the key overlap window. This is the library's primary differentiator: zero-downtime key rotation cannot be reproduced by single-key JWT libraries.
 
@@ -1085,7 +1090,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 
 ### Test Coverage
 
-**Current**: 956 comprehensive specs (896 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~82%, TokenManager ~92%, RefreshStore ~87%, Metrics 100%, Logging 100%, Tracing ~84%)
+**Current**: 962 comprehensive specs (902 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~82%, TokenManager ~92%, RefreshStore ~85%, Metrics 100%, Logging 100%, Tracing ~84%)
 
 **KeyManager** (3 test suites — 172 total specs):
 - **9-phase Manager tests** (MockKeyStore — no I/O):
@@ -1126,7 +1131,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 - **Enumeration Tests**: ListTokens, ListTokensForUser, ListTokensForAudience — cursor-based pagination, audience isolation
 - **Concurrent Operations**: parallel token issuance and service state safety
 
-**RefreshStore** (225 total specs across both implementations):
+**RefreshStore** (231 total specs across both implementations):
 - **Shared Test Suite** (runs against both Memory and Redis):
   - **Phase 1**: Constructor initialization
   - **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
@@ -1206,7 +1211,7 @@ Tests follow **progressive phase-based development**:
 
 ## Roadmap
 
-### v1.0.0 (Current — Stable) ✅
+### v1.0.0
 The full token lifecycle is implemented and the API is stable. Highlights:
 
 - Zero-downtime RSA key rotation with configurable overlap windows
@@ -1216,7 +1221,21 @@ The full token lifecycle is implemented and the API is stable. Highlights:
 - `examples/telemetry/` — runnable Prometheus, OTLP, and structured-logging wiring examples
 - 956 specs (unit + integration), race-detection clean
 
-### v1.1.0 (Planned)
+### v1.1.0 (Current — Stable) ✅
+`RefreshStore.Cleanup` rewritten to an expiry-indexed sweep on both backends, replacing
+the prior full-store scan:
+
+- `MemoryRefreshStore.Cleanup` — expiry-ordered min-heap (`container/heap`), O(n) → O(k log n)
+- `RedisRefreshStore.Cleanup` — namespace-scoped Redis sorted-set expiry index, paginated
+  `ZRangeByScore`/`ZRem` sweep, O(n) → O(log n + k); ~209x faster at N=10,000 with zero
+  expired tokens (243.5ms/op → 1.16ms/op)
+- `RedisRefreshStore.BackfillExpiryIndex` — one-time, idempotent migration helper for
+  tokens stored before the expiry index existed (see `doc/UPGRADING.md`)
+- `RefreshStore.Cleanup` interface godoc now discloses that cost characteristics are
+  implementation-defined
+- 962 specs (902 unit + 60 integration), race-detection clean
+
+### v1.2.0 (Planned)
 - PostgreSQL `RefreshStore` implementation — durable, transactional token storage for deployments that already operate a PostgreSQL cluster and want to avoid a Redis dependency
 
 ## Ecosystem
@@ -1322,8 +1341,8 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 
 ---
 
-**Status**: v1.0.1 — stable, production-ready
-**Version**: v1.0.1
+**Status**: v1.1.0 — stable, production-ready
+**Version**: v1.1.0
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
-**Test Coverage**: 956 specs (896 unit + 60 integration) — KeyManager ~82%, TokenManager ~92%, RefreshStore ~87%, Metrics 100%, Logging 100%, Tracing ~84% — all passing, race-detection enabled
+**Test Coverage**: 962 specs (902 unit + 60 integration) — KeyManager ~82%, TokenManager ~92%, RefreshStore ~85%, Metrics 100%, Logging 100%, Tracing ~84% — all passing, race-detection enabled
 **Last Updated**: June 29, 2026
