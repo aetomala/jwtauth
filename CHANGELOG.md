@@ -12,6 +12,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.1.0] — 2026-08-17
+
 ### Changed
 
 - `MemoryRefreshStore.Cleanup` now discovers expired tokens via an
@@ -40,6 +42,16 @@ All notable changes to this project will be documented in this file.
 - Reconcile README spec counts/coverage across all sections; document the
   expiry-indexed `Cleanup` mechanism and `BackfillExpiryIndex`; update Roadmap
   and `SECURITY.md` supported-versions table for v1.1.0
+
+### Performance
+
+- **`RefreshStore.Cleanup` expiry-indexed rewrite** — confirmed via
+  `benchstat` (v1.0.1 baseline vs. dev, `-count=3`): `MemoryRefreshStore`
+  improves ~110× at N=10,000 (59,158 ns/op → 536.2 ns/op); `RedisRefreshStore`
+  improves ~210× at N=10,000 (240.39 ms/op → 1.143 ms/op). `RedisRefreshStore.Store`
+  gains one additional `ZAdd` to populate the index, increasing allocation
+  count by ~24 allocs/op (+17.8%); latency impact stays under the 15% gate
+  (+9.0% sec/op). See `doc/benchmarks/v1.1.0-report.md` — part of #271
 
 ---
 
