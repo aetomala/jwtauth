@@ -223,6 +223,22 @@ func tamperPayload(tok string) string {
 	return strings.Join(parts, ".")
 }
 
+// leakWindow is the substring length used to detect partial credential leaks:
+// 12 base64url characters carry 72 bits, well beyond chance collision with
+// unrelated output.
+const leakWindow = 12
+
+// secretFragments returns the parts of a credential that must never appear in
+// output. For a JWT — three dot-separated segments — only the payload and
+// signature segments are returned: the encoded header is identical across JWTs
+// signed the same way and is not secret. Any other secret is returned whole.
+func secretFragments(secret string) []string {
+	if parts := strings.Split(secret, "."); len(parts) == 3 {
+		return parts[1:]
+	}
+	return []string{secret}
+}
+
 // leakBackend describes a RefreshStore implementation under test.
 type leakBackend struct {
 	name     string
@@ -277,6 +293,10 @@ var _ = Describe("Refresh token leak regression", func() {
 				mgr      *tokens.Manager
 				shortMgr *tokens.Manager // issues refresh tokens that expire almost immediately
 				secrets  []string        // every refresh or access token issued or presented during the spec
+
+				// ===== Partial-Leak Index — rebuilt per spec =====
+				leakWindows    map[string]struct{} // every leakWindow-length substring of every secret fragment
+				shortFragments []string            // secret fragments shorter than leakWindow, matched whole
 			)
 
 			newManagerWith := func(s storage.RefreshStore, refreshTTL time.Duration) *tokens.Manager {
@@ -307,15 +327,31 @@ var _ = Describe("Refresh token leak regression", func() {
 				return newManagerWith(store, refreshTTL)
 			}
 
+			// track records tok as a secret and indexes every leakWindow-length
+			// substring of its fragments, so findLeak detects partial leaks
+			// without recomputing windows per recorded value.
 			track := func(tok string) string {
 				Expect(tok).NotTo(BeEmpty())
 				secrets = append(secrets, tok)
+				for _, f := range secretFragments(tok) {
+					if len(f) < leakWindow {
+						if f != "" {
+							shortFragments = append(shortFragments, f)
+						}
+						continue
+					}
+					for i := 0; i+leakWindow <= len(f); i++ {
+						leakWindows[f[i:i+leakWindow]] = struct{}{}
+					}
+				}
 				return tok
 			}
 
 			// findLeak returns the first recorded value, or formatted error,
-			// that contains a tracked credential.
-			findLeak := func(errs ...error) (string, bool) {
+			// that contains any leakWindow-length substring of a tracked
+			// credential — or a whole fragment shorter than the window —
+			// together with the matched fragment.
+			findLeak := func(errs ...error) (value, match string, leaked bool) {
 				values := rec.snapshot()
 				for _, err := range errs {
 					if err != nil {
@@ -323,22 +359,28 @@ var _ = Describe("Refresh token leak regression", func() {
 					}
 				}
 				for _, v := range values {
-					for _, s := range secrets {
-						if strings.Contains(v, s) {
-							return v, true
+					for i := 0; i+leakWindow <= len(v); i++ {
+						if _, ok := leakWindows[v[i:i+leakWindow]]; ok {
+							return v, v[i : i+leakWindow], true
+						}
+					}
+					for _, f := range shortFragments {
+						if strings.Contains(v, f) {
+							return v, f, true
 						}
 					}
 				}
-				return "", false
+				return "", "", false
 			}
 
 			// expectNoLeak fails if any recorded value, or any of the given
-			// errors, contains a tracked refresh or access token.
+			// errors, contains a tracked refresh or access token or any part
+			// of one.
 			expectNoLeak := func(errs ...error) {
 				GinkgoHelper()
 				Expect(secrets).NotTo(BeEmpty())
-				if v, leaked := findLeak(errs...); leaked {
-					Fail(fmt.Sprintf("credential leaked into observability output: %q", v))
+				if v, match, leaked := findLeak(errs...); leaked {
+					Fail(fmt.Sprintf("credential leaked into observability output: %q (matched fragment %q)", v, match))
 				}
 			}
 
@@ -367,6 +409,8 @@ var _ = Describe("Refresh token leak regression", func() {
 
 				rec = &leakRecorder{}
 				secrets = nil
+				leakWindows = make(map[string]struct{})
+				shortFragments = nil
 				store, mr = backend.newStore(rec)
 				mgr = newManager(time.Hour)
 				shortMgr = newManager(50 * time.Millisecond)
@@ -784,7 +828,9 @@ var _ = Describe("Refresh token leak regression", func() {
 					})
 				}
 
-				It("IntrospectToken — valid and expired access tokens", func() {
+				// IntrospectToken accepts only refresh tokens, so an access token
+				// is looked up as an unknown refresh-store key.
+				It("IntrospectToken — access tokens are treated as unknown refresh tokens (inactive) and no part of them is emitted", func() {
 					valid := track(must(mgr.IssueAccessToken(ctx, "user-1")))
 					expired := track(signAccessToken(leakKey, "leak-test-kid",
 						leakAccessClaims(time.Now().Add(-time.Minute))))
@@ -812,7 +858,7 @@ var _ = Describe("Refresh token leak regression", func() {
 					Expect(err).To(MatchError(tokens.ErrInvalidRefreshToken))
 					Expect(err.Error()).NotTo(ContainSubstring(tok), "the Manager returns its own sentinel, not the store error")
 
-					v, leaked := findLeak()
+					v, _, leaked := findLeak()
 					Expect(leaked).To(BeTrue(), "a contract-violating store error is expected to reach observability output")
 					Expect(v).To(ContainSubstring(tok))
 				})
