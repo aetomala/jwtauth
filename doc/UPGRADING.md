@@ -4,6 +4,42 @@ This document describes breaking changes and the mechanical steps required to up
 
 ---
 
+## v1.1.0 → v1.1.1
+
+### Security: refresh tokens no longer appear in logs or traces — log keys and span attributes renamed
+
+Refresh tokens are bearer credentials and are also their own storage keys. v1.1.1 stops
+emitting them in observability output (advisory GHSA-hwqw-6hv9-q5v6, ADR-012). Wherever a
+refresh token or refresh-store key was emitted, the library now emits a non-reversible
+reference instead — the first 16 hex characters of the SHA-256 digest of the token —
+under a new key. No Go API changes; no stored data changes.
+
+| Where | Old key (raw token) | New key (reference) |
+|---|---|---|
+| Structured logs — refresh-token sites in `tokens.Manager`, `MemoryRefreshStore`, `RedisRefreshStore` | `tokenID` | `tokenRef` |
+| `tokens.Manager.IntrospectToken` logs (expired token) | `token` | `tokenRef` |
+| `RedisRefreshStore.Cleanup` / `BackfillExpiryIndex` error logs | `key` (full Redis key) | `tokenRef` |
+| Span attributes — `IssueRefreshToken*`, `IssueTokenPair*`, `RefreshAccessToken*`, `RevokeRefreshToken`, `IntrospectToken`, `*RefreshStore.Store` / `Retrieve` / `Revoke` | `token_id` | `token_ref` |
+| Span attribute — `TokenManager.ListTokens*`, `MemoryRefreshStore.ListTokens` | `cursor` | `cursor_ref` |
+| Logs — `TokenManager.ListTokens*`, `MemoryRefreshStore.ListTokens` | `next_cursor` | `next_cursor_ref` |
+
+`tokenID` / `token_id` remain on access-token operations (`IssueAccessToken*`,
+`ValidateAccessToken*`) and now always mean the access token's `jti`. `RedisRefreshStore`
+still emits its numeric `SCAN` cursor under `cursor` / `next_cursor` at the store layer.
+
+**Action required:**
+
+1. Update log queries, alert rules, and trace dashboards that filter or group on the old
+   keys at refresh-token sites.
+2. To find a known token in new logs, compute its reference:
+   `printf %s "$TOKEN" | sha256sum | cut -c1-16`.
+3. Logs and traces written by earlier versions may contain raw refresh tokens. Restrict
+   access to them, shorten their retention where possible, and consider revoking
+   outstanding refresh tokens (for example with `RevokeAllUserTokens`) if that data may
+   have been exposed.
+
+---
+
 ## v1.0.1 → v1.1.0
 
 ### `RedisRefreshStore.Cleanup` now uses an expiry index — one-time backfill recommended

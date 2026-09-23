@@ -15,6 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/aetomala/jwtauth/internal/tokenref"
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/tracing"
@@ -134,7 +135,8 @@ func (r *RedisRefreshStore) startSpan(ctx context.Context, operation string) (co
 func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]interface{}) error {
 	ctx, span := r.startSpan(ctx, "Store")
 	defer span.End()
-	span.SetAttribute("token_id", tokenID)
+	tokenRef := tokenref.Ref(tokenID)
+	span.SetAttribute("token_ref", tokenRef)
 
 	start := time.Now()
 	status := "error"
@@ -180,7 +182,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, a
 		status = "validation_error"
 		errorType = "validation_error"
 		r.logger.Warn("store rejected: userID is empty or whitespace", ctx,
-			"tokenID", tokenID)
+			"tokenRef", tokenRef)
 		span.RecordError(ErrInvalidUserID)
 		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
 		return ErrInvalidUserID
@@ -190,7 +192,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, a
 		status = "validation_error"
 		errorType = "validation_error"
 		r.logger.Warn("store rejected: token is already expired", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"userID", userID,
 			"expiresAt", expiresAt)
 		span.RecordError(ErrTokenExpired)
@@ -209,7 +211,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, a
 		jsonBytes, err := json.Marshal(metadataCopy)
 		if err != nil {
 			r.logger.Error("store failed: metadata marshal error", ctx,
-				"tokenID", tokenID,
+				"tokenRef", tokenRef,
 				"error", err)
 			wrapped := fmt.Errorf("failed to marshal metadata: %w", err)
 			span.RecordError(wrapped)
@@ -225,7 +227,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, a
 		ab, err := json.Marshal(audience)
 		if err != nil {
 			r.logger.Error("store failed: audience marshal error", ctx,
-				"tokenID", tokenID, "error", err)
+				"tokenRef", tokenRef, "error", err)
 			wrapped := fmt.Errorf("failed to marshal audience: %w", err)
 			span.RecordError(wrapped)
 			span.SetStatus(tracing.StatusError, wrapped.Error())
@@ -260,13 +262,13 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, a
 	pipe.Expire(ctx, tokenKey, duration)
 
 	r.logger.Debug("executing redis pipeline for token store", ctx,
-		"tokenID", tokenID,
+		"tokenRef", tokenRef,
 		"userID", userID)
 
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		r.logger.Error("store failed: redis pipeline error", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"error", err)
 		wrapped := fmt.Errorf("failed to store token: %w", err)
 		span.RecordError(wrapped)
@@ -278,7 +280,7 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, a
 	status = "success"
 	errorType = ""
 	r.logger.Info("refresh token stored", ctx,
-		"tokenID", tokenID,
+		"tokenRef", tokenRef,
 		"userID", userID,
 		"expiresAt", expiresAt)
 	span.SetStatus(tracing.StatusOK, "")
@@ -296,7 +298,8 @@ func (r *RedisRefreshStore) Store(ctx context.Context, tokenID, userID string, a
 func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*RefreshToken, error) {
 	ctx, span := r.startSpan(ctx, "Retrieve")
 	defer span.End()
-	span.SetAttribute("token_id", tokenID)
+	tokenRef := tokenref.Ref(tokenID)
+	span.SetAttribute("token_ref", tokenRef)
 
 	start := time.Now()
 	status := "error"
@@ -321,7 +324,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		status = "cancelled"
 		errorType = "cancelled"
 		r.logger.Warn("retrieve aborted: context cancelled", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"reason", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -343,7 +346,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	hash, err := r.client.HGetAll(ctx, tokenKey).Result()
 	if err != nil {
 		r.logger.Error("retrieve failed: redis error", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"error", err)
 		wrapped := fmt.Errorf("failed to retrieve token: %w", err)
 		span.RecordError(wrapped)
@@ -352,7 +355,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	}
 
 	r.logger.Debug("redis hash retrieved", ctx,
-		"tokenID", tokenID,
+		"tokenRef", tokenRef,
 		"fieldCount", len(hash))
 
 	// ===== STEP 4: Check if Token Exists =====
@@ -360,7 +363,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		status = "not_found"
 		errorType = "not_found"
 		r.logger.Warn("retrieve: token not found", ctx,
-			"tokenID", tokenID)
+			"tokenRef", tokenRef)
 		span.RecordError(ErrTokenNotFound)
 		span.SetStatus(tracing.StatusError, ErrTokenNotFound.Error())
 		return nil, ErrTokenNotFound
@@ -372,7 +375,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		status = "revoked"
 		errorType = "revoked"
 		r.logger.Warn("retrieve: token has been revoked", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"userID", hash["userID"])
 		span.RecordError(ErrTokenRevoked)
 		span.SetStatus(tracing.StatusError, ErrTokenRevoked.Error())
@@ -383,7 +386,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	expiresAtMillis, err := strconv.ParseInt(hash["expiresAt"], 10, 64)
 	if err != nil {
 		r.logger.Error("retrieve failed: invalid expiration timestamp", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"error", err)
 		wrapped := fmt.Errorf("invalid expiration timestamp: %w", err)
 		span.RecordError(wrapped)
@@ -396,7 +399,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		status = "expired"
 		errorType = "expired"
 		r.logger.Warn("retrieve: token has expired", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"expiredAt", expiresAt)
 		span.RecordError(ErrTokenExpired)
 		span.SetStatus(tracing.StatusError, ErrTokenExpired.Error())
@@ -407,7 +410,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	createdAtMillis, err := strconv.ParseInt(hash["createdAt"], 10, 64)
 	if err != nil {
 		r.logger.Error("retrieve failed: invalid creation timestamp", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"error", err)
 		wrapped := fmt.Errorf("invalid creation timestamp: %w", err)
 		span.RecordError(wrapped)
@@ -429,7 +432,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		var aud []string
 		if err := json.Unmarshal([]byte(audJSON), &aud); err != nil {
 			r.logger.Error("retrieve failed: audience unmarshal error", ctx,
-				"tokenID", tokenID, "error", err)
+				"tokenRef", tokenRef, "error", err)
 			wrapped := fmt.Errorf("failed to unmarshal audience: %w", err)
 			span.RecordError(wrapped)
 			span.SetStatus(tracing.StatusError, wrapped.Error())
@@ -442,7 +445,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 		var metadata map[string]interface{}
 		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 			r.logger.Error("retrieve failed: metadata unmarshal error", ctx,
-				"tokenID", tokenID,
+				"tokenRef", tokenRef,
 				"error", err)
 			wrapped := fmt.Errorf("failed to unmarshal metadata: %w", err)
 			span.RecordError(wrapped)
@@ -456,7 +459,7 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 	status = "success"
 	errorType = ""
 	r.logger.Info("retrieve: token retrieved successfully", ctx,
-		"tokenID", tokenID)
+		"tokenRef", tokenRef)
 	span.SetStatus(tracing.StatusOK, "")
 
 	return safeToken, nil
@@ -468,7 +471,8 @@ func (r *RedisRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Refr
 func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	ctx, span := r.startSpan(ctx, "Revoke")
 	defer span.End()
-	span.SetAttribute("token_id", tokenID)
+	tokenRef := tokenref.Ref(tokenID)
+	span.SetAttribute("token_ref", tokenRef)
 
 	start := time.Now()
 	status := "error"
@@ -493,7 +497,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 		status = "cancelled"
 		errorType = "cancelled"
 		r.logger.Warn("revoke aborted: context cancelled", ctx,
-			"tokenID", tokenID)
+			"tokenRef", tokenRef)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return ctx.Err()
@@ -515,7 +519,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	exists, err := r.client.Exists(ctx, tokenKey).Result()
 	if err != nil {
 		r.logger.Error("revoke failed: redis error", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"error", err)
 		wrapped := fmt.Errorf("failed to revoke token: %w", err)
 		span.RecordError(wrapped)
@@ -527,7 +531,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 		status = "success"
 		errorType = ""
 		r.logger.Warn("revoke: token not found", ctx,
-			"tokenID", tokenID)
+			"tokenRef", tokenRef)
 		span.SetStatus(tracing.StatusOK, "")
 		return nil
 	}
@@ -536,7 +540,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	err = r.client.HSet(ctx, tokenKey, "revoked", "true").Err()
 	if err != nil {
 		r.logger.Error("revoke failed: redis hset error", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"error", err)
 		wrapped := fmt.Errorf("failed to revoke token: %w", err)
 		span.RecordError(wrapped)
@@ -548,7 +552,7 @@ func (r *RedisRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	status = "success"
 	errorType = ""
 	r.logger.Info("revoke: successfully revoked", ctx,
-		"tokenID", tokenID)
+		"tokenRef", tokenRef)
 	span.SetStatus(tracing.StatusOK, "")
 
 	return nil
@@ -745,7 +749,7 @@ func (r *RedisRefreshStore) Cleanup(ctx context.Context) (int, error) {
 			hash, err := r.client.HGetAll(ctx, tokenKey).Result()
 			if err != nil {
 				r.logger.Error("cleanup failed: redis hgetall error", ctx,
-					"key", tokenKey,
+					"tokenRef", tokenref.Ref(tokenID),
 					"error", err)
 				continue
 			}
@@ -874,11 +878,12 @@ func (r *RedisRefreshStore) BackfillExpiryIndex(ctx context.Context) (removed, i
 	var liveEntries []redis.Z
 	for iter.Next(ctx) {
 		key := iter.Val()
+		tokenID := strings.TrimPrefix(key, r.tokenPrefix)
 
 		hash, hashErr := r.client.HGetAll(ctx, key).Result()
 		if hashErr != nil {
 			r.logger.Error("backfillExpiryIndex failed: redis hgetall error", ctx,
-				"key", key,
+				"tokenRef", tokenref.Ref(tokenID),
 				"error", hashErr)
 			continue
 		}
@@ -886,13 +891,12 @@ func (r *RedisRefreshStore) BackfillExpiryIndex(ctx context.Context) (removed, i
 		expiresAtMillis, parseErr := strconv.ParseInt(hash["expiresAt"], 10, 64)
 		if parseErr != nil {
 			r.logger.Error("backfillExpiryIndex failed: invalid expiration timestamp", ctx,
-				"key", key,
+				"tokenRef", tokenref.Ref(tokenID),
 				"error", parseErr)
 			continue
 		}
 
 		expiresAt := time.UnixMilli(expiresAtMillis)
-		tokenID := strings.TrimPrefix(key, r.tokenPrefix)
 
 		if !expiresAt.After(now) {
 			expiredKeys = append(expiredKeys, key)
@@ -1153,13 +1157,13 @@ func (r *RedisRefreshStore) fetchTokensByIDs(ctx context.Context, tokenIDs []str
 		expiresAtMillis, err := strconv.ParseInt(hash["expiresAt"], 10, 64)
 		if err != nil {
 			r.logger.Warn("fetchTokensByIDs: skipping token with invalid expiresAt", ctx,
-				"tokenID", tokenIDs[i], "error", err)
+				"tokenRef", tokenref.Ref(tokenIDs[i]), "error", err)
 			continue
 		}
 		createdAtMillis, err := strconv.ParseInt(hash["createdAt"], 10, 64)
 		if err != nil {
 			r.logger.Warn("fetchTokensByIDs: skipping token with invalid createdAt", ctx,
-				"tokenID", tokenIDs[i], "error", err)
+				"tokenRef", tokenref.Ref(tokenIDs[i]), "error", err)
 			continue
 		}
 
@@ -1174,7 +1178,7 @@ func (r *RedisRefreshStore) fetchTokensByIDs(ctx context.Context, tokenIDs []str
 			var aud []string
 			if err := json.Unmarshal([]byte(audJSON), &aud); err != nil {
 				r.logger.Warn("fetchTokensByIDs: skipping audience for token", ctx,
-					"tokenID", tokenIDs[i], "error", err)
+					"tokenRef", tokenref.Ref(tokenIDs[i]), "error", err)
 			} else {
 				t.Audience = aud
 			}
@@ -1183,7 +1187,7 @@ func (r *RedisRefreshStore) fetchTokensByIDs(ctx context.Context, tokenIDs []str
 			var meta map[string]interface{}
 			if err := json.Unmarshal([]byte(metadataJSON), &meta); err != nil {
 				r.logger.Warn("fetchTokensByIDs: skipping metadata for token", ctx,
-					"tokenID", tokenIDs[i], "error", err)
+					"tokenRef", tokenref.Ref(tokenIDs[i]), "error", err)
 			} else {
 				t.Metadata = meta
 			}

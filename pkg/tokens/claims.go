@@ -166,7 +166,10 @@ type TokenMetadata struct {
 	// Scope contains OAuth2 scopes if present
 	Scope string `json:"scope,omitempty"`
 
-	// TokenID is the unique identifier for this token (jti claim), per RFC 7662.
+	// TokenID is the unique identifier for this token, serialized as "jti" per
+	// RFC 7662. For refresh tokens — the only type IntrospectToken supports — it
+	// is the refresh token itself, a bearer credential that callers must not log
+	// or expose; use a one-way digest when a reference is needed.
 	TokenID string `json:"jti,omitempty"`
 
 	// Custom contains any custom claims
