@@ -27,3 +27,4 @@ Each ADR includes:
 - [ADR-009: Multi-Audience Token Revocation Semantics](009-multi-audience-token-revocation.md)
 - [ADR-010: JTI Uniqueness and Replay Prevention Stance](010-jti-and-replay-prevention.md)
 - [ADR-011: Cursor Semantics and Pagination Consistency Contract](011-cursor-semantics.md)
+- [ADR-012: Credentials Never Enter Observability Output](012-credentials-never-in-observability.md)

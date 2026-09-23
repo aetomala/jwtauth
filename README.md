@@ -1051,10 +1051,12 @@ mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
 
 | Component | Attributes |
 |-----------|-----------|
-| `DiskKeyStore` / `RedisKeyStore` | `storage.backend` (`"disk"` / `"redis"`), `key_id` |
-| `MemoryRefreshStore` / `RedisRefreshStore` | `storage.backend` (`"memory"` / `"redis"`), `token_id` |
-| `KeyManager` | `key_id` |
-| `TokenManager` | `user_id`, `token_id`, `active` (IntrospectToken), `deleted_count` (CleanupExpiredTokens) |
+| `DiskKeyStore` / `RedisKeyStore` | `storage_backend` (`"disk"` / `"redis"`), `namespace`, `key_id` |
+| `MemoryRefreshStore` / `RedisRefreshStore` | `storage_backend` (`"memory"` / `"redis"`), `namespace` (Redis only), `token_ref` (Store, Retrieve, Revoke), `user_id`, `audience`, `count`, `result_count`, `cursor_ref` (Memory `ListTokens`) or `cursor` (other list calls), `removed_count` / `indexed_count` (Redis Cleanup, BackfillExpiryIndex) |
+| `KeyManager` | `namespace`, `key_id`, `key_count` |
+| `TokenManager` | `namespace`, `user_id`, `audience`, `token_id` — access-token `jti` (IssueAccessToken\*, ValidateAccessToken\*), `token_ref` — refresh-token operations (IssueRefreshToken\*, IssueTokenPair\*, RefreshAccessToken\*, RevokeRefreshToken, IntrospectToken), `active` (IntrospectToken), `deleted_count` (CleanupExpiredTokens), `cursor_ref`, `count`, `result_count` (ListTokens\*) |
+
+Refresh tokens never appear in spans or logs — only their `token_ref` / `tokenRef` digest (see [ADR-012](doc/adr/012-credentials-never-in-observability.md)).
 
 All spans set `StatusOK` on success and `RecordError` + `StatusError` on failure. For deployment setup and `TracerProvider` configuration, see [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md).
 

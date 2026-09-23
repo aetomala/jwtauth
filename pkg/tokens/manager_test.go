@@ -20,6 +20,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/aetomala/jwtauth/internal/testutil"
+	"github.com/aetomala/jwtauth/internal/tokenref"
 	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/storage"
 	"github.com/aetomala/jwtauth/pkg/tokens"
@@ -2793,7 +2794,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 	})
 
 	Context("RefreshAccessToken — success path", func() {
-		It("should start a span with token_id attribute and StatusOK", func() {
+		It("should start a span with token_ref attribute and StatusOK", func() {
 			newTracingManager()
 
 			refreshTok := "refresh-token-xyz"
@@ -2811,7 +2812,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			// IssueAccessToken is called internally — route to setupSpan to avoid expectation conflicts.
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueAccessToken")).Return(ctx, setupSpan)
 			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
-			testSpan.EXPECT().SetAttribute("token_id", refreshTok)
+			testSpan.EXPECT().SetAttribute("token_ref", tokenref.Ref(refreshTok))
 			testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 			testSpan.EXPECT().End()
 
@@ -2836,13 +2837,13 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 	})
 
 	Context("IssueTokenPairWithClaims — success path", func() {
-		It("should start a span with user_id and token_id attributes and StatusOK", func() {
+		It("should start a span with user_id and token_ref attributes and StatusOK", func() {
 			newTracingManager()
 
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueTokenPairWithClaims")).Return(ctx, testSpan)
 			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
 			testSpan.EXPECT().SetAttribute("user_id", "tracing-user")
-			testSpan.EXPECT().SetAttribute("token_id", gomock.Any())
+			testSpan.EXPECT().SetAttribute("token_ref", gomock.Any())
 			testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 			testSpan.EXPECT().End()
 
@@ -2876,7 +2877,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 	})
 
 	Context("RefreshAccessTokenWithClaims — success path", func() {
-		It("should start a span with token_id attribute and StatusOK", func() {
+		It("should start a span with token_ref attribute and StatusOK", func() {
 			newTracingManager()
 
 			refreshTok := "refresh-claims-xyz"
@@ -2894,7 +2895,7 @@ var _ = Describe("TokenManager — Phase N: Tracing", func() {
 			// IssueAccessTokenWithClaims is called internally — route to setupSpan to avoid expectation conflicts.
 			mockTracer.EXPECT().Start(gomock.Any(), gomock.Eq("TokenManager.IssueAccessTokenWithClaims")).Return(ctx, setupSpan)
 			testSpan.EXPECT().SetAttributes(map[string]any{"namespace": ""})
-			testSpan.EXPECT().SetAttribute("token_id", refreshTok)
+			testSpan.EXPECT().SetAttribute("token_ref", tokenref.Ref(refreshTok))
 			testSpan.EXPECT().SetStatus(tracing.StatusOK, "")
 			testSpan.EXPECT().End()
 
