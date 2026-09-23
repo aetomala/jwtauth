@@ -29,9 +29,12 @@ name made it impossible to tell from a log line whether the value was safe.
 
 **Credentials never enter logs, traces, metrics, or error messages.**
 
-1. A refresh token — or any value that is, or may be, a refresh token, a refresh-store
-   key, or a cursor derived from one — is emitted only as a reference produced by
-   `internal/tokenref.Ref`: the first 16 hex characters of its SHA-256 digest.
+1. No credential is emitted. Credentials are refresh tokens and access-token strings
+   (signed JWTs, valid or not). An access-token string is never emitted in any form;
+   its `jti` is the correlation identifier. A refresh token — or any value that is, or
+   may be, a refresh token, a refresh-store key, or a cursor derived from one — is
+   emitted only as a reference produced by `internal/tokenref.Ref`: the first 16 hex
+   characters of its SHA-256 digest.
 2. The reference appears under dedicated keys: `"tokenRef"` in structured logs and
    `"token_ref"` in span attributes. Pagination cursors that may encode a token use
    `"cursor_ref"` / `"next_cursor_ref"`.
@@ -79,7 +82,16 @@ backend. `RedisRefreshStore` still emits its numeric `SCAN` cursor under `cursor
 store layer.
 
 **Stored data is unchanged.** Tokens are still stored and keyed as-is; hashing tokens at
-rest is a separate decision outside this ADR.
+rest is a separate decision outside this ADR. Because stored keys remain raw tokens,
+command-level Redis instrumentation — go-redis tracing hooks that record
+`db.statement`, `MONITOR`, `SLOWLOG` — still exposes them until tokens are hashed at
+rest.
+
+**The rule extends to `RefreshStore` implementations.** The `RefreshStore` interface
+contract forbids a `tokenID`, or any value derived from it other than a `tokenref`-style
+digest, in returned errors, logs, span attributes, or metric labels. The Manager logs
+store errors verbatim, so a custom store that embeds the token in its error text leaks
+it; the library cannot redact third-party error text.
 
 **Enforced by test.** `pkg/tokens/leak_regression_test.go` wires recording
 implementations of `logging.Logger`, `tracing.Tracer`, and `metrics.Metrics` into

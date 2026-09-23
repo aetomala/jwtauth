@@ -25,6 +25,12 @@ All notable changes to this project will be documented in this file.
   access-token `jti`. Operators with log queries or alerts on the old keys should
   update them — see UPGRADING.md. Advisory
   [GHSA-hwqw-6hv9-q5v6](https://github.com/aetomala/jwtauth/security/advisories/GHSA-hwqw-6hv9-q5v6)
+- The `RefreshStore` interface contract now states that custom implementations must
+  not include the `tokenID` in returned errors, logs, span attributes, or metric labels —
+  the Manager logs store errors verbatim. The built-in stores comply.
+- Redis keys still contain raw refresh tokens: do not enable command-level Redis
+  tracing or logging (`db.statement` hooks, `MONITOR`, `SLOWLOG` exports) for the
+  refresh-token instance — see UPGRADING.md and DEPLOYMENT.md
 
 ### Documentation
 

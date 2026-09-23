@@ -9,12 +9,14 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/golang-jwt/jwt/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
@@ -121,8 +123,9 @@ func (m *recordingMetrics) RecordDuration(name string, _ time.Duration, l map[st
 // ===== Stub Key Manager =====
 
 var (
-	leakKeyOnce sync.Once
-	leakKey     *rsa.PrivateKey
+	leakKeyOnce  sync.Once
+	leakKey      *rsa.PrivateKey // signing key served by stubKeyManager
+	leakOtherKey *rsa.PrivateKey // unrelated key used to forge access tokens
 )
 
 // stubKeyManager is a keys.KeyManager backed by a single in-memory RSA key.
@@ -165,6 +168,59 @@ func (s *lenientStore) Retrieve(ctx context.Context, tokenID string) (*storage.R
 		return r, nil
 	}
 	return s.RefreshStore.Retrieve(ctx, tokenID)
+}
+
+// errorLeakingStore models a third-party RefreshStore that violates the
+// RefreshStore contract by embedding the tokenID in its error text.
+type errorLeakingStore struct {
+	storage.RefreshStore
+}
+
+func (s *errorLeakingStore) Retrieve(_ context.Context, tokenID string) (*storage.RefreshToken, error) {
+	return nil, fmt.Errorf("refresh token %s not found", tokenID)
+}
+
+// ===== Access Token Fixtures =====
+
+// leakAccessClaims returns registered claims accepted by the manager under
+// test, expiring at exp.
+func leakAccessClaims(exp time.Time) jwt.RegisteredClaims {
+	return jwt.RegisteredClaims{
+		Subject:   "user-1",
+		Issuer:    "leak-test",
+		Audience:  jwt.ClaimStrings{"leak-aud"},
+		ExpiresAt: jwt.NewNumericDate(exp),
+		IssuedAt:  jwt.NewNumericDate(exp.Add(-10 * time.Minute)),
+		NotBefore: jwt.NewNumericDate(exp.Add(-10 * time.Minute)),
+		ID:        randomOpaqueToken(),
+	}
+}
+
+// signAccessToken signs claims with key using RS256. An empty kid omits the
+// kid header.
+func signAccessToken(key *rsa.PrivateKey, kid string, claims jwt.RegisteredClaims) string {
+	t := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	if kid != "" {
+		t.Header["kid"] = kid
+	}
+	s, err := t.SignedString(key)
+	Expect(err).NotTo(HaveOccurred())
+	return s
+}
+
+// tamperPayload rewrites the sub claim of a signed JWT without re-signing it.
+func tamperPayload(tok string) string {
+	parts := strings.Split(tok, ".")
+	Expect(parts).To(HaveLen(3))
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	Expect(err).NotTo(HaveOccurred())
+	var payload map[string]interface{}
+	Expect(json.Unmarshal(raw, &payload)).To(Succeed())
+	payload["sub"] = "attacker"
+	raw, err = json.Marshal(payload)
+	Expect(err).NotTo(HaveOccurred())
+	parts[1] = base64.RawURLEncoding.EncodeToString(raw)
+	return strings.Join(parts, ".")
 }
 
 // leakBackend describes a RefreshStore implementation under test.
@@ -220,7 +276,7 @@ var _ = Describe("Refresh token leak regression", func() {
 				mr       *miniredis.Miniredis
 				mgr      *tokens.Manager
 				shortMgr *tokens.Manager // issues refresh tokens that expire almost immediately
-				secrets  []string        // every refresh token issued or presented during the spec
+				secrets  []string        // every refresh or access token issued or presented during the spec
 			)
 
 			newManagerWith := func(s storage.RefreshStore, refreshTTL time.Duration) *tokens.Manager {
@@ -257,23 +313,32 @@ var _ = Describe("Refresh token leak regression", func() {
 				return tok
 			}
 
-			// expectNoLeak fails if any recorded value, or any of the given
-			// errors, contains a tracked refresh token.
-			expectNoLeak := func(errs ...error) {
-				GinkgoHelper()
+			// findLeak returns the first recorded value, or formatted error,
+			// that contains a tracked credential.
+			findLeak := func(errs ...error) (string, bool) {
 				values := rec.snapshot()
 				for _, err := range errs {
 					if err != nil {
 						values = append(values, fmt.Sprint(err))
 					}
 				}
-				Expect(secrets).NotTo(BeEmpty())
 				for _, v := range values {
 					for _, s := range secrets {
 						if strings.Contains(v, s) {
-							Fail(fmt.Sprintf("refresh token leaked into observability output: %q", v))
+							return v, true
 						}
 					}
+				}
+				return "", false
+			}
+
+			// expectNoLeak fails if any recorded value, or any of the given
+			// errors, contains a tracked refresh or access token.
+			expectNoLeak := func(errs ...error) {
+				GinkgoHelper()
+				Expect(secrets).NotTo(BeEmpty())
+				if v, leaked := findLeak(errs...); leaked {
+					Fail(fmt.Sprintf("credential leaked into observability output: %q", v))
 				}
 			}
 
@@ -293,6 +358,8 @@ var _ = Describe("Refresh token leak regression", func() {
 				leakKeyOnce.Do(func() {
 					var err error
 					leakKey, err = rsa.GenerateKey(rand.Reader, 2048)
+					Expect(err).NotTo(HaveOccurred())
+					leakOtherKey, err = rsa.GenerateKey(rand.Reader, 2048)
 					Expect(err).NotTo(HaveOccurred())
 				})
 				ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
@@ -320,18 +387,31 @@ var _ = Describe("Refresh token leak regression", func() {
 					expectRef(tok)
 				})
 
+				It("IssueAccessToken", func() {
+					track(must(mgr.IssueAccessToken(ctx, "user-1")))
+					expectNoLeak()
+				})
+
+				It("IssueAccessTokenWithClaims", func() {
+					track(must(mgr.IssueAccessTokenWithClaims(ctx, "user-1",
+						tokens.CustomClaims{"role": "admin"}, tokens.WithAudience("other-aud"))))
+					expectNoLeak()
+				})
+
 				It("IssueTokenPair", func() {
-					_, tok, err := mgr.IssueTokenPair(ctx, "user-1")
+					access, tok, err := mgr.IssueTokenPair(ctx, "user-1")
 					Expect(err).NotTo(HaveOccurred())
+					track(access)
 					track(tok)
 					expectNoLeak()
 					expectRef(tok)
 				})
 
 				It("IssueTokenPairWithClaims", func() {
-					_, tok, err := mgr.IssueTokenPairWithClaims(ctx, "user-1",
+					access, tok, err := mgr.IssueTokenPairWithClaims(ctx, "user-1",
 						tokens.CustomClaims{"role": "admin"}, tokens.CustomClaims{"device": "d1"})
 					Expect(err).NotTo(HaveOccurred())
+					track(access)
 					track(tok)
 					expectNoLeak()
 					expectRef(tok)
@@ -360,8 +440,9 @@ var _ = Describe("Refresh token leak regression", func() {
 					Describe(r.name, func() {
 						It("success", func() {
 							tok := track(must(mgr.IssueRefreshToken(ctx, "user-1")))
-							_, err := get()(ctx, tok)
+							access, err := get()(ctx, tok)
 							Expect(err).NotTo(HaveOccurred())
+							track(access)
 							expectNoLeak(err)
 							expectRef(tok)
 						})
@@ -642,6 +723,98 @@ var _ = Describe("Refresh token leak regression", func() {
 					Expect(errMgr).To(HaveOccurred())
 					Expect(errRefresh).To(HaveOccurred())
 					expectNoLeak(errStore, errRetrieve, errRevoke, errMgr, errRefresh)
+				})
+			})
+
+			// ===== PHASE 8: Access Token Validation and Introspection =====
+			Describe("Phase 8: Access Token Validation and Introspection", func() {
+				// Ordered slices — Ginkgo requires a deterministic spec tree.
+				// Tokens are built lazily; mgr and keys are set in BeforeEach.
+				inputs := []struct {
+					name    string
+					build   func() string
+					wantErr error // nil means the token must validate
+				}{
+					{"valid", func() string { return must(mgr.IssueAccessToken(ctx, "user-1")) }, nil},
+					{"expired", func() string {
+						return signAccessToken(leakKey, "leak-test-kid", leakAccessClaims(time.Now().Add(-time.Minute)))
+					}, tokens.ErrTokenExpired},
+					{"signed by a different key", func() string {
+						return signAccessToken(leakOtherKey, "leak-test-kid", leakAccessClaims(time.Now().Add(5*time.Minute)))
+					}, tokens.ErrInvalidToken},
+					{"tampered payload", func() string {
+						return tamperPayload(must(mgr.IssueAccessToken(ctx, "user-1")))
+					}, tokens.ErrInvalidToken},
+					{"missing kid header", func() string {
+						return signAccessToken(leakKey, "", leakAccessClaims(time.Now().Add(5*time.Minute)))
+					}, tokens.ErrTokenMissingKid},
+					{"non-JWT garbage", func() string { return "not-a-jwt." + randomOpaqueToken() }, tokens.ErrInvalidToken},
+				}
+
+				validators := []struct {
+					name     string
+					validate func(ctx context.Context, tok string) error
+				}{
+					{"ValidateAccessToken", func(ctx context.Context, tok string) error {
+						_, err := mgr.ValidateAccessToken(ctx, tok)
+						return err
+					}},
+					{"ValidateAccessTokenWithClaims", func(ctx context.Context, tok string) error {
+						_, _, err := mgr.ValidateAccessTokenWithClaims(ctx, tok)
+						return err
+					}},
+				}
+
+				for _, v := range validators {
+					validate := v.validate
+					Describe(v.name, func() {
+						for _, in := range inputs {
+							build, wantErr := in.build, in.wantErr
+							It(in.name, func() {
+								tok := track(build())
+								err := validate(ctx, tok)
+								if wantErr == nil {
+									Expect(err).NotTo(HaveOccurred())
+								} else {
+									Expect(err).To(MatchError(wantErr))
+								}
+								expectNoLeak(err)
+							})
+						}
+					})
+				}
+
+				It("IntrospectToken — valid and expired access tokens", func() {
+					valid := track(must(mgr.IssueAccessToken(ctx, "user-1")))
+					expired := track(signAccessToken(leakKey, "leak-test-kid",
+						leakAccessClaims(time.Now().Add(-time.Minute))))
+					for _, tok := range []string{valid, expired} {
+						md, err := mgr.IntrospectToken(ctx, tok)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(md.Active).To(BeFalse())
+					}
+					expectNoLeak()
+				})
+			})
+
+			// ===== PHASE 9: RefreshStore Error Contract Boundary =====
+			Describe("Phase 9: RefreshStore Error Contract Boundary", func() {
+				// Contract demonstration, not a regression: the RefreshStore
+				// contract forbids a tokenID in returned errors, and the Manager
+				// logs store errors verbatim. A store that breaks the contract
+				// therefore leaks the token — the library cannot redact
+				// third-party error text. This spec pins that boundary.
+				It("contract demonstration — a store error containing the token appears verbatim in logs", func() {
+					tok := track(must(mgr.IssueRefreshToken(ctx, "user-1")))
+					leakyMgr := newManagerWith(&errorLeakingStore{RefreshStore: store}, time.Hour)
+
+					_, err := leakyMgr.RefreshAccessToken(ctx, tok)
+					Expect(err).To(MatchError(tokens.ErrInvalidRefreshToken))
+					Expect(err.Error()).NotTo(ContainSubstring(tok), "the Manager returns its own sentinel, not the store error")
+
+					v, leaked := findLeak()
+					Expect(leaked).To(BeTrue(), "a contract-violating store error is expected to reach observability output")
+					Expect(v).To(ContainSubstring(tok))
 				})
 			})
 		})

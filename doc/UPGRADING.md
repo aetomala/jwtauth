@@ -37,6 +37,11 @@ still emits its numeric `SCAN` cursor under `cursor` / `next_cursor` at the stor
    access to them, shorten their retention where possible, and consider revoking
    outstanding refresh tokens (for example with `RevokeAllUserTokens`) if that data may
    have been exposed.
+4. Do not enable command-level Redis tracing or logging for the refresh-token Redis
+   instance — for example go-redis tracing hooks that record `db.statement`, `MONITOR`,
+   or `SLOWLOG` exports. `RedisRefreshStore` keys and set members contain raw refresh
+   tokens, and this release does not change stored data. Review any such
+   instrumentation already enabled and treat its output as sensitive.
 
 ---
 

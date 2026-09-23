@@ -25,6 +25,12 @@ import (
 //   - PostgresStore: PostgreSQL-backed storage
 //   - MemoryStore: In-memory storage (testing only)
 //   - MockRefreshStore (testutil): Auto-generated testing implementation
+//
+// The tokenID argument is the refresh token itself — a bearer credential.
+// Implementations must not include it, or any value derived from it other than
+// a tokenref-style digest (see ADR-012), in returned error messages, logs, span
+// attributes, or metric labels. The Manager logs store errors verbatim, so a
+// token in an error message reaches observability output.
 type RefreshStore interface {
 	// Store saves a refresh token with its metadata.
 	//
