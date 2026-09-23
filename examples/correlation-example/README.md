@@ -68,7 +68,7 @@ Every log line the server emits while handling this request includes `"correlati
 
 ```json
 {"time":"...","level":"INFO","msg":"token pair issued","userID":"alice","correlation_id":"req-001"}
-{"time":"...","level":"DEBUG","msg":"refresh token stored","tokenID":"tok-xyz","correlation_id":"req-001"}
+{"time":"...","level":"DEBUG","msg":"refresh token stored","tokenRef":"5d699dd34a86ef68","correlation_id":"req-001"}
 ```
 
 ### 2. Login — no correlation ID supplied

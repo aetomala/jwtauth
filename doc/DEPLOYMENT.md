@@ -376,6 +376,12 @@ myapp:audience_tokens:<aud>             — set of tokenIDs for that audience (S
 myapp:audience_user_tokens:<aud>:<uid>  — set of tokenIDs for that user+audience (SAdd)
 ```
 
+> **Warning — keys contain refresh tokens.** A `tokenID` is the refresh token itself, a
+> bearer credential, so these keys and set members are credentials. Do not enable
+> command-level Redis tracing or logging for this instance — for example go-redis tracing
+> hooks that record `db.statement`, `MONITOR`, or `SLOWLOG` exports — and review any such
+> instrumentation already enabled. See [ADR-012](adr/012-credentials-never-in-observability.md).
+
 **`RedisKeyStore`**:
 ```
 myapp:ks:pem:<keyID>   — PKCS#1 PEM private key (string)

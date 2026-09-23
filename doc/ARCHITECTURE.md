@@ -151,7 +151,7 @@ m.config.Logger.Debug("public key cache hit", "keyID", keyID)
 
 // Intermediate steps in loops (per-token operations)
 m.logger.Debug("revoking token for user",
-    "tokenID", tokenID,
+    "tokenRef", tokenref.Ref(tokenID), // never the raw refresh token — see ADR-012
     "userID", userID)
 
 // No-op outcomes (nothing to do during cleanup)
@@ -325,7 +325,7 @@ type Span interface {
 
 **Span naming convention**: `<TypeName>.<MethodName>` — e.g., `TokenManager.IssueAccessToken`, `DiskKeyStore.Save`
 
-**Attribute naming convention**: all attribute keys use `snake_case` — e.g., `user_id`, `token_id`, `storage_backend`. See the per-component tables below for the canonical names.
+**Attribute naming convention**: all attribute keys use `snake_case` — e.g., `user_id`, `token_id`, `storage_backend`. `token_id` carries an access-token `jti` only; refresh tokens appear solely as a `token_ref` digest (ADR-012). See the per-component tables below for the canonical names.
 
 **Span attributes — KeyManager**:
 
@@ -355,36 +355,36 @@ type Span interface {
 | All spans (pre-set) | `namespace` |
 | `TokenManager.IssueAccessToken` | `user_id`, `token_id`, `audience` (if non-empty) |
 | `TokenManager.IssueAccessTokenWithClaims` | `user_id`, `token_id`, `audience` (if non-empty) |
-| `TokenManager.IssueRefreshToken` | `user_id`, `token_id`, `audience` (if non-empty) |
-| `TokenManager.IssueRefreshTokenWithClaims` | `user_id`, `token_id`, `audience` (if non-empty) |
-| `TokenManager.IssueTokenPair` | `user_id`, `token_id`, `audience` (if non-empty) |
-| `TokenManager.IssueTokenPairWithClaims` | `user_id`, `token_id`, `audience` (if non-empty) |
+| `TokenManager.IssueRefreshToken` | `user_id`, `token_ref`, `audience` (if non-empty) |
+| `TokenManager.IssueRefreshTokenWithClaims` | `user_id`, `token_ref`, `audience` (if non-empty) |
+| `TokenManager.IssueTokenPair` | `user_id`, `token_ref`, `audience` (if non-empty) |
+| `TokenManager.IssueTokenPairWithClaims` | `user_id`, `token_ref`, `audience` (if non-empty) |
 | `TokenManager.ValidateAccessToken` | `user_id`, `token_id` |
 | `TokenManager.ValidateAccessTokenWithClaims` | `user_id`, `token_id` |
-| `TokenManager.RefreshAccessToken` | `token_id` |
-| `TokenManager.RefreshAccessTokenWithClaims` | `token_id` |
-| `TokenManager.RevokeRefreshToken` | `token_id` |
+| `TokenManager.RefreshAccessToken` | `token_ref` |
+| `TokenManager.RefreshAccessTokenWithClaims` | `token_ref` |
+| `TokenManager.RevokeRefreshToken` | `token_ref` |
 | `TokenManager.RevokeAllUserTokens` | `user_id` |
 | `TokenManager.RevokeAllForAudience` | `audience` |
 | `TokenManager.RevokeAllForUserAndAudience` | `user_id`, `audience` |
-| `TokenManager.IntrospectToken` | `token_id` |
-| `TokenManager.ListTokens` | `namespace`, `cursor`, `count`, `result_count` |
-| `TokenManager.ListTokensForUser` | `namespace`, `user_id`, `cursor`, `count`, `result_count` |
-| `TokenManager.ListTokensForAudience` | `namespace`, `audience`, `cursor`, `count`, `result_count` |
+| `TokenManager.IntrospectToken` | `token_ref` |
+| `TokenManager.ListTokens` | `namespace`, `cursor_ref`, `count`, `result_count` |
+| `TokenManager.ListTokensForUser` | `namespace`, `user_id`, `cursor_ref`, `count`, `result_count` |
+| `TokenManager.ListTokensForAudience` | `namespace`, `audience`, `cursor_ref`, `count`, `result_count` |
 
 **Span attributes — MemoryRefreshStore / RedisRefreshStore**:
 
 | Span | Attributes |
 |------|-----------|
 | All spans (pre-set) | `storage_backend` (`"memory"` / `"redis"`), `namespace` (RedisRefreshStore only) |
-| `*.Store` | `token_id` |
-| `*.Retrieve` | `token_id` |
-| `*.Revoke` | `token_id` |
+| `*.Store` | `token_ref` |
+| `*.Retrieve` | `token_ref` |
+| `*.Revoke` | `token_ref` |
 | `*.RevokeAllForUser` | `user_id` |
 | `*.RevokeAllForAudience` | `audience` |
 | `*.RevokeAllForUserAndAudience` | `user_id`, `audience` |
 | `*.Cleanup` | `removed_count` |
-| `*.ListTokens` | `cursor`, `count`, `result_count` |
+| `*.ListTokens` | `cursor_ref` (MemoryRefreshStore) or `cursor` (RedisRefreshStore), `count`, `result_count` |
 | `*.ListTokensForUser` | `user_id`, `cursor`, `count`, `result_count` |
 | `*.ListTokensForAudience` | `audience`, `cursor`, `count`, `result_count` |
 
@@ -1129,8 +1129,9 @@ func (c *Component) Operation() error {
 1. Identify what to log/measure
 2. Assign `NoOpLogger` / `NoOpMetrics` / `NoOpTracer` at construction when caller passes `nil`
 3. Add unconditional calls at appropriate points — no nil guards at call sites
-4. Write tests verifying logs/metrics
-5. Update documentation
+4. Never emit a credential — see [ADR-012](adr/012-credentials-never-in-observability.md). A refresh token is also its own store key, so any value that is, or may be, a refresh token, a refresh-store key, or a cursor derived from one is logged as `"tokenRef"` / traced as `"token_ref"` (or `cursor_ref` / `next_cursor_ref`) using `tokenref.Ref(value)`, computed once per function. `"tokenID"` / `"token_id"` are reserved for an access-token `jti`. Credentials never appear in metric labels or error messages.
+5. Write tests verifying logs/metrics — new refresh-token code paths belong in the leak-regression suite (`pkg/tokens/leak_regression_test.go`)
+6. Update documentation
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for full testing requirements and development workflow.
 
@@ -1153,6 +1154,7 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 | [009](adr/009-multi-audience-token-revocation.md) | Multi-Audience Token Revocation Semantics | 2026-05-09 |
 | [010](adr/010-jti-and-replay-prevention.md) | JTI Uniqueness — No Replay Prevention | 2026-05-20 |
 | [011](adr/011-cursor-semantics.md) | Cursor Semantics — Opaque, Best-Effort, Unordered | 2026-05-20 |
+| [012](adr/012-credentials-never-in-observability.md) | Credentials Never Enter Observability Output | 2026-09-23 |
 
 ---
 

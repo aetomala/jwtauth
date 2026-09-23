@@ -86,7 +86,7 @@ jobs:
             --randomize-all \
             --fail-on-pending \
             --skip-package=integration \
-            pkg/keys pkg/tokens pkg/storage pkg/logging pkg/metrics pkg/tracing
+            pkg/keys pkg/tokens pkg/storage pkg/logging pkg/metrics pkg/tracing internal/tokenref
 
       - name: Generate HTML coverage report
         run: go tool cover -html=coverage.out -o coverage.html

@@ -84,6 +84,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/aetomala/jwtauth/internal/tokenref"
 	"github.com/aetomala/jwtauth/pkg/keys"
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
@@ -831,7 +832,8 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string, opts ...
 	m.logger.Debug("refresh token generated", ctx,
 		"userID", userID)
 
-	span.SetAttribute("token_id", refreshToken)
+	tokenRef := tokenref.Ref(refreshToken)
+	span.SetAttribute("token_ref", tokenRef)
 
 	// ===== STEP 5: Calculate Expiration =====
 	now := time.Now()
@@ -870,7 +872,7 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string, opts ...
 	errorType = ""
 	m.logger.Info("refresh token issued", ctx,
 		"userID", userID,
-		"tokenID", refreshToken,
+		"tokenRef", tokenRef,
 		"expiresAt", expiresAt)
 	span.SetStatus(tracing.StatusOK, "")
 	return refreshToken, nil
@@ -960,7 +962,8 @@ func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string
 	m.logger.Debug("refresh token generated", ctx,
 		"userID", userID)
 
-	span.SetAttribute("token_id", refreshToken)
+	tokenRef := tokenref.Ref(refreshToken)
+	span.SetAttribute("token_ref", tokenRef)
 
 	// ===== STEP 5: Calculate Expiration =====
 	now := time.Now()
@@ -1000,7 +1003,7 @@ func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string
 	errorType = ""
 	m.logger.Info("refresh token with claims issued", ctx,
 		"userID", userID,
-		"tokenID", refreshToken,
+		"tokenRef", tokenRef,
 		"expiresAt", expiresAt,
 		"claimsKeys", getMapKeys(claims))
 	span.SetStatus(tracing.StatusOK, "")
@@ -1148,7 +1151,8 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string, opts ...Iss
 		return "", "", wrapped
 	}
 
-	span.SetAttribute("token_id", refreshToken)
+	tokenRef := tokenref.Ref(refreshToken)
+	span.SetAttribute("token_ref", tokenRef)
 
 	// ===== STEP 9: Calculate Refresh Token Expiration =====
 	now = time.Now()
@@ -1184,7 +1188,7 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string, opts ...Iss
 	errorType = ""
 	m.logger.Info("token pair issued", ctx,
 		"userID", userID,
-		"tokenID", refreshToken,
+		"tokenRef", tokenRef,
 		"expiresAt", expiresAt)
 	span.SetStatus(tracing.StatusOK, "")
 	return signedToken, refreshToken, nil
@@ -1343,7 +1347,8 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 		return "", "", wrapped
 	}
 
-	span.SetAttribute("token_id", refreshToken)
+	tokenRef := tokenref.Ref(refreshToken)
+	span.SetAttribute("token_ref", tokenRef)
 
 	// ===== STEP 9: Calculate Refresh Token Expiration =====
 	now = time.Now()
@@ -1373,7 +1378,7 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 	errorType = ""
 	m.logger.Info("token pair with claims issued", ctx,
 		"userID", userID,
-		"tokenID", refreshToken,
+		"tokenRef", tokenRef,
 		"expiresAt", expiresAt,
 		"customClaimsCount", customClaimsCount)
 	span.SetStatus(tracing.StatusOK, "")
@@ -1712,7 +1717,8 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 		return "", ErrInvalidRefreshToken
 	}
 
-	span.SetAttribute("token_id", refreshToken)
+	tokenRef := tokenref.Ref(refreshToken)
+	span.SetAttribute("token_ref", tokenRef)
 
 	// ===== STEP 4: Lookup Refresh Token =====
 	token, err := m.refreshStore.Retrieve(ctx, refreshToken)
@@ -1738,14 +1744,14 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 
 	m.logger.Debug("refresh token retrieved from store", ctx,
 		"userID", token.UserID,
-		"tokenID", token.TokenID)
+		"tokenRef", tokenRef)
 
 	// ===== STEP 5: Check Expiration =====
 	if !token.ExpiresAt.After(time.Now()) {
 		status = "expired"
 		errorType = "expired"
 		m.logger.Warn("refresh token has expired", ctx,
-			"tokenID", refreshToken,
+			"tokenRef", tokenRef,
 			"expiredAt", token.ExpiresAt)
 
 		// Clean up expired token (ignore error — we're returning ErrRefreshTokenExpired anyway)
@@ -1771,7 +1777,7 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	// ===== STEP 8: Revoke Old Refresh Token =====
 	if rErr := m.refreshStore.Revoke(ctx, refreshToken); rErr != nil {
 		m.logger.Warn("failed to revoke old refresh token after successful refresh", ctx,
-			"tokenID", refreshToken,
+			"tokenRef", tokenRef,
 			"error", rErr)
 		m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
 			"revocation_scope": "rotation",
@@ -1785,7 +1791,7 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	errorType = ""
 	m.logger.Info("access token refreshed", ctx,
 		"userID", token.UserID,
-		"tokenID", refreshToken)
+		"tokenRef", tokenRef)
 	span.SetStatus(tracing.StatusOK, "")
 	return newAccessToken, nil
 }
@@ -1853,7 +1859,8 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 		return "", ErrInvalidRefreshToken
 	}
 
-	span.SetAttribute("token_id", refreshToken)
+	tokenRef := tokenref.Ref(refreshToken)
+	span.SetAttribute("token_ref", tokenRef)
 
 	// ===== STEP 4: Lookup Refresh Token =====
 	token, err := m.refreshStore.Retrieve(ctx, refreshToken)
@@ -1879,14 +1886,14 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 
 	m.logger.Debug("refresh token retrieved from store", ctx,
 		"userID", token.UserID,
-		"tokenID", token.TokenID)
+		"tokenRef", tokenRef)
 
 	// ===== STEP 5: Check Expiration =====
 	if !token.ExpiresAt.After(time.Now()) {
 		status = "expired"
 		errorType = "expired"
 		m.logger.Warn("refresh token has expired", ctx,
-			"tokenID", refreshToken,
+			"tokenRef", tokenRef,
 			"expiredAt", token.ExpiresAt)
 
 		// Clean up expired token (ignore error — we're returning ErrRefreshTokenExpired anyway)
@@ -1912,7 +1919,7 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 	// ===== STEP 8: Revoke Old Refresh Token =====
 	if rErr := m.refreshStore.Revoke(ctx, refreshToken); rErr != nil {
 		m.logger.Warn("failed to revoke old refresh token after successful refresh", ctx,
-			"tokenID", refreshToken,
+			"tokenRef", tokenRef,
 			"error", rErr)
 		m.metrics.IncrementCounter(metricTokensRevokedTotal, map[string]string{
 			"revocation_scope": "rotation",
@@ -1926,7 +1933,7 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 	errorType = ""
 	m.logger.Info("access token refreshed with claims", ctx,
 		"userID", token.UserID,
-		"tokenID", refreshToken)
+		"tokenRef", tokenRef)
 	span.SetStatus(tracing.StatusOK, "")
 	return newAccessToken, nil
 }
@@ -1982,13 +1989,14 @@ func (m *Manager) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 		return ErrInvalidRefreshToken
 	}
 
-	span.SetAttribute("token_id", tokenID)
+	tokenRef := tokenref.Ref(tokenID)
+	span.SetAttribute("token_ref", tokenRef)
 
 	// ===== STEP 4: Revoke Token =====
 	err := m.refreshStore.Revoke(ctx, tokenID)
 	if err != nil {
 		m.logger.Error("failed to revoke refresh token", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"error", err)
 		wrapped := fmt.Errorf("failed to revoke token: %w", err)
 		span.RecordError(wrapped)
@@ -1999,7 +2007,7 @@ func (m *Manager) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	// ===== STEP 5: Record Success and Log =====
 	status = "success"
 	m.logger.Info("refresh token revoked", ctx,
-		"tokenID", tokenID)
+		"tokenRef", tokenRef)
 	span.SetStatus(tracing.StatusOK, "")
 	return nil
 }
@@ -2294,7 +2302,8 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 		return nil, ErrInvalidRefreshToken
 	}
 
-	span.SetAttribute("token_id", token)
+	tokenRef := tokenref.Ref(token)
+	span.SetAttribute("token_ref", tokenRef)
 
 	// ===== STEP 4: Retrieve Token From Storage =====
 	refreshToken, err := m.refreshStore.Retrieve(ctx, token)
@@ -2320,7 +2329,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	// Check if expired
 	if !refreshToken.ExpiresAt.After(now) {
 		m.logger.Info("introspect token is expired", ctx,
-			"token", token,
+			"tokenRef", tokenRef,
 			"expiredAt", refreshToken.ExpiresAt)
 		span.SetAttribute("active", false)
 		span.SetStatus(tracing.StatusOK, "")
@@ -2338,7 +2347,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	// Check if revoked
 	if refreshToken.Revoked {
 		m.logger.Info("introspected token is revoked", ctx,
-			"tokenID", token)
+			"tokenRef", tokenRef)
 		span.SetAttribute("active", false)
 		span.SetStatus(tracing.StatusOK, "")
 		return &TokenMetadata{
@@ -2354,7 +2363,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 
 	// ===== STEP 6: Return Active Token Metadata =====
 	m.logger.Info("token introspected", ctx,
-		"tokenID", token,
+		"tokenRef", tokenRef,
 		"userID", refreshToken.UserID,
 		"active", true)
 	span.SetAttribute("active", true)
@@ -2438,7 +2447,7 @@ func (m *Manager) ListTokens(ctx context.Context, cursor string, count int) ([]*
 	ctx, span := m.startSpan(ctx, "ListTokens")
 	defer span.End()
 	span.SetAttribute("namespace", m.namespace)
-	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("cursor_ref", tokenref.Ref(cursor))
 	span.SetAttribute("count", count)
 
 	start := time.Now()
@@ -2489,7 +2498,7 @@ func (m *Manager) ListTokens(ctx context.Context, cursor string, count int) ([]*
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("tokens listed", ctx,
 		"result_count", len(tokens),
-		"next_cursor", nextCursor)
+		"next_cursor_ref", tokenref.Ref(nextCursor))
 	return tokens, nextCursor, nil
 }
 
@@ -2502,7 +2511,7 @@ func (m *Manager) ListTokensForUser(ctx context.Context, userID string, cursor s
 	defer span.End()
 	span.SetAttribute("namespace", m.namespace)
 	span.SetAttribute("user_id", userID)
-	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("cursor_ref", tokenref.Ref(cursor))
 	span.SetAttribute("count", count)
 
 	start := time.Now()
@@ -2554,7 +2563,7 @@ func (m *Manager) ListTokensForUser(ctx context.Context, userID string, cursor s
 	m.logger.Info("tokens listed for user", ctx,
 		"user_id", userID,
 		"result_count", len(tokens),
-		"next_cursor", nextCursor)
+		"next_cursor_ref", tokenref.Ref(nextCursor))
 	return tokens, nextCursor, nil
 }
 
@@ -2568,7 +2577,7 @@ func (m *Manager) ListTokensForAudience(ctx context.Context, audience string, cu
 	defer span.End()
 	span.SetAttribute("namespace", m.namespace)
 	span.SetAttribute("audience", audience)
-	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("cursor_ref", tokenref.Ref(cursor))
 	span.SetAttribute("count", count)
 
 	start := time.Now()
@@ -2620,7 +2629,7 @@ func (m *Manager) ListTokensForAudience(ctx context.Context, audience string, cu
 	m.logger.Info("tokens listed for audience", ctx,
 		"audience", audience,
 		"result_count", len(tokens),
-		"next_cursor", nextCursor)
+		"next_cursor_ref", tokenref.Ref(nextCursor))
 	return tokens, nextCursor, nil
 }
 

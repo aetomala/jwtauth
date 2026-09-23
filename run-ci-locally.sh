@@ -55,7 +55,7 @@ run_test "unit tests (race + coverage)" \
       --covermode=atomic \
       --coverpkg=./... \
       --skip-package=integration \
-      pkg/keys pkg/tokens pkg/storage pkg/logging pkg/metrics pkg/tracing"
+      pkg/keys pkg/tokens pkg/storage pkg/logging pkg/metrics pkg/tracing internal/tokenref"
 
 run_test "integration tests — disk + memory + Redis distributed (miniredis)" \
     "ginkgo -r --race --timeout=180s --randomize-all --fail-on-pending --tags=integration ./pkg/tokens/integration/..."

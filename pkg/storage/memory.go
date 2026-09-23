@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aetomala/jwtauth/internal/tokenref"
 	"github.com/aetomala/jwtauth/pkg/logging"
 	"github.com/aetomala/jwtauth/pkg/metrics"
 	"github.com/aetomala/jwtauth/pkg/tracing"
@@ -111,7 +112,8 @@ func (m *MemoryRefreshStore) startSpan(ctx context.Context, operation string) (c
 func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]interface{}) error {
 	ctx, span := m.startSpan(ctx, "Store")
 	defer span.End()
-	span.SetAttribute("token_id", tokenID)
+	tokenRef := tokenref.Ref(tokenID)
+	span.SetAttribute("token_ref", tokenRef)
 
 	start := time.Now()
 	status := "error"
@@ -164,7 +166,7 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 		status = "validation_error"
 		errorType = "validation_error"
 		m.logger.Warn("store rejected: userID is empty or whitespace", ctx,
-			"tokenID", tokenID)
+			"tokenRef", tokenRef)
 		span.RecordError(ErrInvalidUserID)
 		span.SetStatus(tracing.StatusError, ErrInvalidUserID.Error())
 		return ErrInvalidUserID
@@ -174,7 +176,7 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 		status = "validation_error"
 		errorType = "validation_error"
 		m.logger.Warn("store rejected: token is already expired", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"userID", userID,
 			"expiresAt", expiresAt)
 		span.RecordError(ErrTokenExpired)
@@ -202,7 +204,7 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	defer m.mu.Unlock()
 
 	m.logger.Debug("storing token in memory", ctx,
-		"tokenID", tokenID,
+		"tokenRef", tokenRef,
 		"userID", userID)
 
 	// ===== STEP 5: Build and Store Token =====
@@ -227,7 +229,7 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 	status = "success"
 	errorType = ""
 	m.logger.Info("refresh token stored", ctx,
-		"tokenID", tokenID,
+		"tokenRef", tokenRef,
 		"userID", userID,
 		"expiresAt", expiresAt)
 	span.SetStatus(tracing.StatusOK, "")
@@ -244,7 +246,8 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*RefreshToken, error) {
 	ctx, span := m.startSpan(ctx, "Retrieve")
 	defer span.End()
-	span.SetAttribute("token_id", tokenID)
+	tokenRef := tokenref.Ref(tokenID)
+	span.SetAttribute("token_ref", tokenRef)
 
 	start := time.Now()
 	status := "error"
@@ -269,7 +272,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		status = "cancelled"
 		errorType = "cancelled"
 		m.logger.Warn("retrieve aborted: context cancelled", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"reason", err)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
@@ -291,7 +294,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	defer m.mu.RUnlock()
 
 	m.logger.Debug("looking up token in memory", ctx,
-		"tokenID", tokenID)
+		"tokenRef", tokenRef)
 
 	// ===== STEP 4: Look Up Token =====
 	token, found := m.tokens[tokenID]
@@ -299,7 +302,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		status = "not_found"
 		errorType = "not_found"
 		m.logger.Warn("retrieve: token not found", ctx,
-			"tokenID", tokenID)
+			"tokenRef", tokenRef)
 		span.RecordError(ErrTokenNotFound)
 		span.SetStatus(tracing.StatusError, ErrTokenNotFound.Error())
 		return nil, ErrTokenNotFound
@@ -310,7 +313,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		status = "revoked"
 		errorType = "revoked"
 		m.logger.Warn("retrieve: token has been revoked", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"userID", token.UserID)
 		span.RecordError(ErrTokenRevoked)
 		span.SetStatus(tracing.StatusError, ErrTokenRevoked.Error())
@@ -322,7 +325,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		status = "expired"
 		errorType = "expired"
 		m.logger.Warn("retrieve: token has expired", ctx,
-			"tokenID", tokenID,
+			"tokenRef", tokenRef,
 			"expiredAt", token.ExpiresAt)
 		span.RecordError(ErrTokenExpired)
 		span.SetStatus(tracing.StatusError, ErrTokenExpired.Error())
@@ -354,7 +357,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 	status = "success"
 	errorType = ""
 	m.logger.Info("retrieve: token retrieved successfully", ctx,
-		"tokenID", tokenID)
+		"tokenRef", tokenRef)
 	span.SetStatus(tracing.StatusOK, "")
 
 	return safeToken, nil
@@ -366,7 +369,8 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	ctx, span := m.startSpan(ctx, "Revoke")
 	defer span.End()
-	span.SetAttribute("token_id", tokenID)
+	tokenRef := tokenref.Ref(tokenID)
+	span.SetAttribute("token_ref", tokenRef)
 
 	start := time.Now()
 	status := "error"
@@ -391,7 +395,7 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 		status = "cancelled"
 		errorType = "cancelled"
 		m.logger.Warn("revoke aborted: context cancelled", ctx,
-			"tokenID", tokenID)
+			"tokenRef", tokenRef)
 		span.RecordError(err)
 		span.SetStatus(tracing.StatusError, err.Error())
 		return ctx.Err()
@@ -417,7 +421,7 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 		status = "success" // idempotent: not-found is not an error
 		errorType = ""
 		m.logger.Warn("revoke: token not found", ctx,
-			"tokenID", tokenID)
+			"tokenRef", tokenRef)
 		span.SetStatus(tracing.StatusOK, "")
 		return nil
 	}
@@ -429,7 +433,7 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	status = "success"
 	errorType = ""
 	m.logger.Info("revoke: successfully revoked", ctx,
-		"tokenID", tokenID)
+		"tokenRef", tokenRef)
 	span.SetStatus(tracing.StatusOK, "")
 
 	return nil
@@ -492,7 +496,7 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 	for _, tokenID := range tokensIDs {
 		if token, exists := m.tokens[tokenID]; exists {
 			m.logger.Debug("revoking token for user", ctx,
-				"tokenID", tokenID,
+				"tokenRef", tokenref.Ref(tokenID),
 				"userID", userID)
 			token.Revoked = true
 		}
@@ -580,7 +584,7 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 		}
 
 		m.logger.Debug("removing expired token", ctx,
-			"tokenID", token.TokenID,
+			"tokenRef", tokenref.Ref(token.TokenID),
 			"expiredAt", token.ExpiresAt)
 		delete(m.tokens, entry.tokenID)
 		m.removeFromUserTokens(token.UserID, entry.tokenID)
@@ -612,7 +616,7 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, count int) ([]*RefreshToken, string, error) {
 	ctx, span := m.startSpan(ctx, "ListTokens")
 	defer span.End()
-	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("cursor_ref", tokenref.Ref(cursor))
 	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
@@ -689,7 +693,7 @@ func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, coun
 	span.SetStatus(tracing.StatusOK, "")
 	m.logger.Info("listTokens: page returned", ctx,
 		"result_count", resultCount,
-		"next_cursor", nextCursor)
+		"next_cursor_ref", tokenref.Ref(nextCursor))
 
 	return tokens, nextCursor, nil
 }
@@ -1035,7 +1039,7 @@ func (m *MemoryRefreshStore) RevokeAllForAudience(ctx context.Context, audience 
 	for _, tokenID := range m.audienceTokens[audience] {
 		if token, exists := m.tokens[tokenID]; exists {
 			m.logger.Debug("revoking token for audience", ctx,
-				"tokenID", tokenID,
+				"tokenRef", tokenref.Ref(tokenID),
 				"audience", audience)
 			token.Revoked = true
 			count++
@@ -1123,7 +1127,7 @@ func (m *MemoryRefreshStore) RevokeAllForUserAndAudience(ctx context.Context, us
 	for _, tokenID := range m.audienceTokens[audience] {
 		if token, exists := m.tokens[tokenID]; exists && token.UserID == userID {
 			m.logger.Debug("revoking token for user and audience", ctx,
-				"tokenID", tokenID,
+				"tokenRef", tokenref.Ref(tokenID),
 				"userID", userID,
 				"audience", audience)
 			token.Revoked = true

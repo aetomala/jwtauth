@@ -12,6 +12,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.1.1] — 2026-09-23
+
+### Security
+
+- Refresh tokens no longer appear in logs, trace spans, or other observability output.
+  `tokens.Manager`, `MemoryRefreshStore`, and `RedisRefreshStore` now emit a
+  non-reversible SHA-256-derived reference in place of the token wherever a refresh
+  token or refresh-store key was previously emitted: log key `tokenID` → `tokenRef`,
+  span attribute `token_id` → `token_ref`, and list cursors `cursor` / `next_cursor` →
+  `cursor_ref` / `next_cursor_ref`. `tokenID` / `token_id` now refer only to an
+  access-token `jti`. Operators with log queries or alerts on the old keys should
+  update them — see UPGRADING.md. Advisory
+  [GHSA-hwqw-6hv9-q5v6](https://github.com/aetomala/jwtauth/security/advisories/GHSA-hwqw-6hv9-q5v6)
+- The `RefreshStore` interface contract now states that custom implementations must
+  not include the `tokenID` in returned errors, logs, span attributes, or metric labels —
+  the Manager logs store errors verbatim. The built-in stores comply.
+- Redis keys still contain raw refresh tokens: do not enable command-level Redis
+  tracing or logging (`db.statement` hooks, `MONITOR`, `SLOWLOG` exports) for the
+  refresh-token instance — see UPGRADING.md and DEPLOYMENT.md
+
+### Documentation
+
+- ADR-012: credentials never enter logs, traces, metrics, or error messages; refresh
+  tokens appear only as `tokenref.Ref` digests under `tokenRef` / `token_ref`
+- Clarify that `TokenMetadata.TokenID` holds the refresh token itself for introspected
+  refresh tokens and must not be logged
+
+---
+
 ## [v1.1.0] — 2026-08-17
 
 ### Changed
