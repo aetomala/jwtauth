@@ -5,8 +5,12 @@
 | Version | Support |
 |---------|---------|
 | v1.1.x | Full — features and security fixes |
-| v1.0.x | Security fixes only |
-| < v1.0.0 | None |
+| < v1.1.0 | None |
+
+> **v1.0.x support ended with [GHSA-hwqw-6hv9-q5v6](https://github.com/aetomala/jwtauth/security/advisories/GHSA-hwqw-6hv9-q5v6).**
+> The fix shipped only in v1.1.1; no v1.0.x release will be issued. Upgrade to the latest
+> v1.1.x. Deployments using `RedisRefreshStore` should also run the one-time expiry-index
+> backfill introduced in v1.1.0 — see [UPGRADING.md](doc/UPGRADING.md), "v1.0.1 → v1.1.0".
 
 ---
 
@@ -65,3 +69,4 @@ The following Architecture Decision Records document the security-relevant desig
 | [ADR-004](doc/adr/004-kid-validation.md) | `kid` UUID v4 validation — path traversal via `kid` is structurally impossible |
 | [ADR-005](doc/adr/005-security-boundaries.md) | Attacker-controlled token field trust model — every field is untrusted until its validation gate |
 | [ADR-008](doc/adr/008-reserved-claims-at-issuance.md) | Reserved claims protection at issuance — `sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, `jti` cannot be overridden via `CustomClaims` |
+| [ADR-012](doc/adr/012-credentials-never-in-observability.md) | Credentials never enter logs, traces, metrics, or error messages — refresh tokens appear only as a non-reversible `tokenref` digest |

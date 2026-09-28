@@ -12,6 +12,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+
+- SECURITY.md: v1.0.x is no longer supported — support ended with
+  GHSA-hwqw-6hv9-q5v6, which was fixed only in v1.1.1; v1.0.x users should upgrade
+  to v1.1.x (#280)
+- SECURITY.md: list ADR-012 among the security design decisions (#280)
+
 ## [v1.1.1] — 2026-09-23
 
 ### Security
