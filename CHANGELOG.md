@@ -12,6 +12,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- `tokens.Manager` now replaces the refresh token with its `tokenref` digest in
+  `RefreshStore` errors before logging them, recording them on spans, or returning
+  them. A custom store that violates the `RefreshStore` contract by embedding the
+  token in its error text no longer leaks it. `errors.Is` / `errors.As` on the
+  returned error are unchanged. Only exact occurrences are replaced; the contract
+  still applies (#281)
+
 ### Documentation
 
 - SECURITY.md: v1.0.x is no longer supported — support ended with
