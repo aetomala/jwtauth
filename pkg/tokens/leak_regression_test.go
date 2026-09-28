@@ -171,13 +171,66 @@ func (s *lenientStore) Retrieve(ctx context.Context, tokenID string) (*storage.R
 }
 
 // errorLeakingStore models a third-party RefreshStore that violates the
-// RefreshStore contract by embedding the tokenID in its error text.
+// RefreshStore contract by embedding the tokenID in the error text of the
+// operations selected by its leak flags. It records every tokenID it receives
+// so specs can track tokens the Manager generated but never returned. All
+// methods are safe for concurrent use.
 type errorLeakingStore struct {
 	storage.RefreshStore
+
+	// ===== Leak Selection =====
+	leakStore    bool // Store fails with the tokenID in its error text
+	leakRetrieve bool // Retrieve fails with the tokenID in its error text
+	leakRevoke   bool // Revoke fails with the tokenID in its error text
+
+	// ===== State =====
+	mu   sync.Mutex
+	seen []string // every tokenID passed to Store, Retrieve, or Revoke, in call order
 }
 
-func (s *errorLeakingStore) Retrieve(_ context.Context, tokenID string) (*storage.RefreshToken, error) {
-	return nil, fmt.Errorf("refresh token %s not found", tokenID)
+// leakingStoreError returns a contract-violating store error that embeds
+// tokenID and wraps storage.ErrTokenNotFound.
+func leakingStoreError(tokenID string) error {
+	return fmt.Errorf("refresh token %s not found: %w", tokenID, storage.ErrTokenNotFound)
+}
+
+func (s *errorLeakingStore) see(tokenID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seen = append(s.seen, tokenID)
+}
+
+// seenTokenIDs returns a copy of every tokenID the store has received.
+func (s *errorLeakingStore) seenTokenIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.seen))
+	copy(out, s.seen)
+	return out
+}
+
+func (s *errorLeakingStore) Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]interface{}) error {
+	s.see(tokenID)
+	if s.leakStore {
+		return leakingStoreError(tokenID)
+	}
+	return s.RefreshStore.Store(ctx, tokenID, userID, audience, expiresAt, metadata)
+}
+
+func (s *errorLeakingStore) Retrieve(ctx context.Context, tokenID string) (*storage.RefreshToken, error) {
+	s.see(tokenID)
+	if s.leakRetrieve {
+		return nil, leakingStoreError(tokenID)
+	}
+	return s.RefreshStore.Retrieve(ctx, tokenID)
+}
+
+func (s *errorLeakingStore) Revoke(ctx context.Context, tokenID string) error {
+	s.see(tokenID)
+	if s.leakRevoke {
+		return leakingStoreError(tokenID)
+	}
+	return s.RefreshStore.Revoke(ctx, tokenID)
 }
 
 // ===== Access Token Fixtures =====
@@ -388,6 +441,16 @@ var _ = Describe("Refresh token leak regression", func() {
 			expectRef := func(tok string) {
 				GinkgoHelper()
 				Expect(rec.snapshot()).To(ContainElement(tokenref.Ref(tok)))
+			}
+
+			// expectScrubbed asserts that an errorLeakingStore error for tok was
+			// emitted with the token replaced by its non-reversible reference.
+			// The reference is also emitted under token_ref on these paths, so
+			// this matches the scrubbed error text, not the bare reference.
+			expectScrubbed := func(tok string) {
+				GinkgoHelper()
+				Expect(rec.snapshot()).To(ContainElement(
+					ContainSubstring("refresh token " + tokenref.Ref(tok) + " not found")))
 			}
 
 			issueExpired := func() string {
@@ -843,24 +906,80 @@ var _ = Describe("Refresh token leak regression", func() {
 				})
 			})
 
-			// ===== PHASE 9: RefreshStore Error Contract Boundary =====
-			Describe("Phase 9: RefreshStore Error Contract Boundary", func() {
-				// Contract demonstration, not a regression: the RefreshStore
-				// contract forbids a tokenID in returned errors, and the Manager
-				// logs store errors verbatim. A store that breaks the contract
-				// therefore leaks the token — the library cannot redact
-				// third-party error text. This spec pins that boundary.
-				It("contract demonstration — a store error containing the token appears verbatim in logs", func() {
+			// ===== PHASE 9: RefreshStore Error Scrubbing =====
+			Describe("Phase 9: RefreshStore Error Scrubbing", func() {
+				// A custom store that violates the RefreshStore contract embeds
+				// the tokenID in its error text. The Manager replaces the token
+				// with its tokenref digest before logging, tracing, or returning
+				// the error, and errors.Is still reaches the store's sentinel.
+
+				It("RefreshAccessToken, RefreshAccessTokenWithClaims — Retrieve error", func() {
 					tok := track(must(mgr.IssueRefreshToken(ctx, "user-1")))
-					leakyMgr := newManagerWith(&errorLeakingStore{RefreshStore: store}, time.Hour)
+					leakyMgr := newManagerWith(&errorLeakingStore{RefreshStore: store, leakRetrieve: true}, time.Hour)
 
-					_, err := leakyMgr.RefreshAccessToken(ctx, tok)
-					Expect(err).To(MatchError(tokens.ErrInvalidRefreshToken))
-					Expect(err.Error()).NotTo(ContainSubstring(tok), "the Manager returns its own sentinel, not the store error")
+					_, err1 := leakyMgr.RefreshAccessToken(ctx, tok)
+					_, err2 := leakyMgr.RefreshAccessTokenWithClaims(ctx, tok, tokens.CustomClaims{"k": "v"})
+					Expect(err1).To(MatchError(tokens.ErrInvalidRefreshToken))
+					Expect(err2).To(MatchError(tokens.ErrInvalidRefreshToken))
+					expectNoLeak(err1, err2)
+					expectScrubbed(tok)
+				})
 
-					v, _, leaked := findLeak()
-					Expect(leaked).To(BeTrue(), "a contract-violating store error is expected to reach observability output")
-					Expect(v).To(ContainSubstring(tok))
+				It("IntrospectToken — Retrieve error", func() {
+					tok := track(must(mgr.IssueRefreshToken(ctx, "user-1")))
+					leakyMgr := newManagerWith(&errorLeakingStore{RefreshStore: store, leakRetrieve: true}, time.Hour)
+
+					md, err := leakyMgr.IntrospectToken(ctx, tok)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(md.Active).To(BeFalse())
+					expectNoLeak()
+					expectScrubbed(tok)
+				})
+
+				It("IssueRefreshToken, IssueRefreshTokenWithClaims, IssueTokenPair, IssueTokenPairWithClaims — Store error", func() {
+					leaky := &errorLeakingStore{RefreshStore: store, leakStore: true}
+					leakyMgr := newManagerWith(leaky, time.Hour)
+
+					_, err1 := leakyMgr.IssueRefreshToken(ctx, "user-1")
+					_, err2 := leakyMgr.IssueRefreshTokenWithClaims(ctx, "user-1", tokens.CustomClaims{"device": "d1"})
+					_, _, err3 := leakyMgr.IssueTokenPair(ctx, "user-1")
+					_, _, err4 := leakyMgr.IssueTokenPairWithClaims(ctx, "user-1",
+						tokens.CustomClaims{"role": "admin"}, tokens.CustomClaims{"device": "d1"})
+					errs := []error{err1, err2, err3, err4}
+
+					// The Manager generated these tokens but returned none of them.
+					generated := leaky.seenTokenIDs()
+					Expect(generated).To(HaveLen(len(errs)))
+					for i, tok := range generated {
+						track(tok)
+						Expect(errs[i]).To(MatchError(storage.ErrTokenNotFound), "errors.Is reaches the store's sentinel")
+						Expect(errs[i].Error()).To(ContainSubstring("refresh token " + tokenref.Ref(tok) + " not found"))
+						expectScrubbed(tok)
+					}
+					expectNoLeak(errs...)
+				})
+
+				It("RevokeRefreshToken — Revoke error", func() {
+					tok := track(must(mgr.IssueRefreshToken(ctx, "user-1")))
+					leakyMgr := newManagerWith(&errorLeakingStore{RefreshStore: store, leakRevoke: true}, time.Hour)
+
+					err := leakyMgr.RevokeRefreshToken(ctx, tok)
+					Expect(err).To(MatchError(storage.ErrTokenNotFound), "errors.Is reaches the store's sentinel")
+					Expect(err.Error()).To(ContainSubstring("refresh token " + tokenref.Ref(tok) + " not found"))
+					expectNoLeak(err)
+					expectScrubbed(tok)
+				})
+
+				It("RefreshAccessToken, RefreshAccessTokenWithClaims — rotation Revoke error", func() {
+					tok1 := track(must(mgr.IssueRefreshToken(ctx, "user-1")))
+					tok2 := track(must(mgr.IssueRefreshToken(ctx, "user-1")))
+					leakyMgr := newManagerWith(&errorLeakingStore{RefreshStore: store, leakRevoke: true}, time.Hour)
+
+					track(must(leakyMgr.RefreshAccessToken(ctx, tok1)))
+					track(must(leakyMgr.RefreshAccessTokenWithClaims(ctx, tok2, tokens.CustomClaims{"k": "v"})))
+					expectNoLeak()
+					expectScrubbed(tok1)
+					expectScrubbed(tok2)
 				})
 			})
 		})

@@ -1129,7 +1129,7 @@ func (c *Component) Operation() error {
 1. Identify what to log/measure
 2. Assign `NoOpLogger` / `NoOpMetrics` / `NoOpTracer` at construction when caller passes `nil`
 3. Add unconditional calls at appropriate points — no nil guards at call sites
-4. Never emit a credential — see [ADR-012](adr/012-credentials-never-in-observability.md). A refresh token is also its own store key, so any value that is, or may be, a refresh token, a refresh-store key, or a cursor derived from one is logged as `"tokenRef"` / traced as `"token_ref"` (or `cursor_ref` / `next_cursor_ref`) using `tokenref.Ref(value)`, computed once per function. `"tokenID"` / `"token_id"` are reserved for an access-token `jti`. Credentials never appear in metric labels or error messages.
+4. Never emit a credential — see [ADR-012](adr/012-credentials-never-in-observability.md). A refresh token is also its own store key, so any value that is, or may be, a refresh token, a refresh-store key, or a cursor derived from one is logged as `"tokenRef"` / traced as `"token_ref"` (or `cursor_ref` / `next_cursor_ref`) using `tokenref.Ref(value)`, computed once per function. `"tokenID"` / `"token_id"` are reserved for an access-token `jti`. Credentials never appear in metric labels or error messages. An error from a `RefreshStore` call that was given the token passes through `scrubStoreError` first, as the first statement of the error branch, before it is logged, traced, or returned.
 5. Write tests verifying logs/metrics — new refresh-token code paths belong in the leak-regression suite (`pkg/tokens/leak_regression_test.go`)
 6. Update documentation
 

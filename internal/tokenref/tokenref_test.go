@@ -47,3 +47,25 @@ var _ = Describe("Ref", func() {
 		Expect(tokenref.Ref(token)).NotTo(ContainSubstring(token))
 	})
 })
+
+var _ = Describe("Scrub", func() {
+	const token = "xF7hN2kP9mQ8rT4vL6wY3gAaBbCcDdEeFfGgHhIiJjK"
+
+	It("should replace every occurrence of the token with its reference", func() {
+		text := "token " + token + " not found; retry " + token
+		Expect(tokenref.Scrub(text, token)).To(Equal(
+			"token " + tokenref.Ref(token) + " not found; retry " + tokenref.Ref(token)))
+	})
+
+	It("should never return text containing the token", func() {
+		Expect(tokenref.Scrub(token+token, token)).NotTo(ContainSubstring(token))
+	})
+
+	It("should return text without the token unchanged", func() {
+		Expect(tokenref.Scrub("connection refused", token)).To(Equal("connection refused"))
+	})
+
+	It("should return text unchanged for an empty token", func() {
+		Expect(tokenref.Scrub("connection refused", "")).To(Equal("connection refused"))
+	})
+})

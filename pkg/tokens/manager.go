@@ -855,6 +855,7 @@ func (m *Manager) IssueRefreshToken(ctx context.Context, userID string, opts ...
 		nil,          // No claims (use IssueRefreshTokenWithClaims to attach claims)
 	)
 	if err != nil {
+		err = scrubStoreError(err, refreshToken)
 		m.logger.Error("failed to store refresh token", ctx,
 			"userID", userID,
 			"error", err)
@@ -985,6 +986,7 @@ func (m *Manager) IssueRefreshTokenWithClaims(ctx context.Context, userID string
 		claims,       // Custom claims
 	)
 	if err != nil {
+		err = scrubStoreError(err, refreshToken)
 		m.logger.Error("failed to store refresh token with claims", ctx,
 			"userID", userID,
 			"error", err)
@@ -1174,6 +1176,7 @@ func (m *Manager) IssueTokenPair(ctx context.Context, userID string, opts ...Iss
 		nil,          // No claims (use IssueRefreshTokenWithClaims to attach claims)
 	)
 	if err != nil {
+		err = scrubStoreError(err, refreshToken)
 		m.logger.Error("failed to store refresh token", ctx,
 			"userID", userID,
 			"error", err)
@@ -1364,6 +1367,7 @@ func (m *Manager) IssueTokenPairWithClaims(ctx context.Context, userID string, a
 		refreshClaims,
 	)
 	if err != nil {
+		err = scrubStoreError(err, refreshToken)
 		m.logger.Error("failed to store refresh token", ctx,
 			"userID", userID,
 			"error", err)
@@ -1723,6 +1727,7 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 	// ===== STEP 4: Lookup Refresh Token =====
 	token, err := m.refreshStore.Retrieve(ctx, refreshToken)
 	if err != nil {
+		err = scrubStoreError(err, refreshToken)
 		m.logger.Warn("refresh token not found in store", ctx,
 			"error", err)
 		// storage.ErrTokenRevoked is translated to tokens.ErrTokenRevoked so that
@@ -1776,6 +1781,7 @@ func (m *Manager) RefreshAccessToken(ctx context.Context, refreshToken string) (
 
 	// ===== STEP 8: Revoke Old Refresh Token =====
 	if rErr := m.refreshStore.Revoke(ctx, refreshToken); rErr != nil {
+		rErr = scrubStoreError(rErr, refreshToken)
 		m.logger.Warn("failed to revoke old refresh token after successful refresh", ctx,
 			"tokenRef", tokenRef,
 			"error", rErr)
@@ -1865,6 +1871,7 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 	// ===== STEP 4: Lookup Refresh Token =====
 	token, err := m.refreshStore.Retrieve(ctx, refreshToken)
 	if err != nil {
+		err = scrubStoreError(err, refreshToken)
 		m.logger.Warn("refresh token not found in store", ctx,
 			"error", err)
 		// storage.ErrTokenRevoked is translated to tokens.ErrTokenRevoked so that
@@ -1918,6 +1925,7 @@ func (m *Manager) RefreshAccessTokenWithClaims(ctx context.Context, refreshToken
 
 	// ===== STEP 8: Revoke Old Refresh Token =====
 	if rErr := m.refreshStore.Revoke(ctx, refreshToken); rErr != nil {
+		rErr = scrubStoreError(rErr, refreshToken)
 		m.logger.Warn("failed to revoke old refresh token after successful refresh", ctx,
 			"tokenRef", tokenRef,
 			"error", rErr)
@@ -1995,6 +2003,7 @@ func (m *Manager) RevokeRefreshToken(ctx context.Context, tokenID string) error 
 	// ===== STEP 4: Revoke Token =====
 	err := m.refreshStore.Revoke(ctx, tokenID)
 	if err != nil {
+		err = scrubStoreError(err, tokenID)
 		m.logger.Error("failed to revoke refresh token", ctx,
 			"tokenRef", tokenRef,
 			"error", err)
@@ -2308,6 +2317,7 @@ func (m *Manager) IntrospectToken(ctx context.Context, token string) (*TokenMeta
 	// ===== STEP 4: Retrieve Token From Storage =====
 	refreshToken, err := m.refreshStore.Retrieve(ctx, token)
 	if err != nil {
+		err = scrubStoreError(err, token)
 		// Return inactive metadata instead of error — introspect never errors on unknown tokens
 		m.logger.Info("token not found during introspection", ctx,
 			"error", err)
