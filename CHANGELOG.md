@@ -46,6 +46,18 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+- Reconcile documentation with the code (#285):
+  - README spec counts and per-suite breakdown (1087 specs: 1027 unit + 60
+    integration), with the TokenRef suite and the credential leak-regression,
+    digest-index, and invalid-cursor specs added to the breakdown
+  - Re-measured coverage figures
+  - Version fields and the ARCHITECTURE footer now reflect v1.1.1
+  - Roadmap: new v1.1.1 entry; v1.2.0 lists the milestone issues; PostgreSQL
+    `RefreshStore` moved to Future
+  - Correlation example samples captured from a real run: log levels, order, and
+    fields; startup output; the refresh token shown as an opaque value, not a JWT
+  - ARCHITECTURE notes that only `RedisRefreshStore.Cleanup` sets `removed_count`
+  - The Postgres `Store` sample gains the `audience` parameter
 - The `token-audit` and `audience-revocation` examples print a `tokenRef` digest
   (first 16 hex characters of SHA-256, matching the library's `tokenRef` log field)
   instead of the first 8 characters of each refresh token, and their README sample
