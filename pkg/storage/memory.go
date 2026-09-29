@@ -637,6 +637,7 @@ func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, coun
 	ctx, span := m.startSpan(ctx, "ListTokens")
 	defer span.End()
 	span.SetAttribute("cursor_ref", tokenref.Ref(cursor))
+	span.SetAttribute("cursor_length", len(cursor))
 	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
@@ -747,7 +748,8 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 	ctx, span := m.startSpan(ctx, "ListTokensForUser")
 	defer span.End()
 	span.SetAttribute("user_id", userID)
-	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("cursor_ref", tokenref.Ref(cursor))
+	span.SetAttribute("cursor_length", len(cursor))
 	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
@@ -855,7 +857,8 @@ func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience
 	ctx, span := m.startSpan(ctx, "ListTokensForAudience")
 	defer span.End()
 	span.SetAttribute("audience", audience)
-	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("cursor_ref", tokenref.Ref(cursor))
+	span.SetAttribute("cursor_length", len(cursor))
 	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====

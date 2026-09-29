@@ -676,6 +676,22 @@ var _ = Describe("Refresh token leak regression", func() {
 					expectNoLeak()
 				})
 
+				// A caller that passes a refresh token as the cursor — by
+				// mistake or from a pre-#282 MemoryRefreshStore cursor — must
+				// not have it echoed by the Manager or either store.
+				It("ListTokens, ListTokensForUser, ListTokensForAudience — refresh token as cursor", func() {
+					tok := track(must(mgr.IssueRefreshToken(ctx, "user-1")))
+
+					_, _, err1 := mgr.ListTokens(ctx, tok, 10)
+					_, _, err2 := mgr.ListTokensForUser(ctx, "user-1", tok, 10)
+					_, _, err3 := mgr.ListTokensForAudience(ctx, "leak-aud", tok, 10)
+					Expect(err1).NotTo(HaveOccurred())
+					Expect(err2).NotTo(HaveOccurred())
+					Expect(err3).NotTo(HaveOccurred())
+					expectNoLeak(err1, err2, err3)
+					Expect(rec.snapshot()).To(ContainElement("cursor_length"))
+				})
+
 				It("CleanupExpiredTokens", func() {
 					issueExpired()
 					issueExpired()

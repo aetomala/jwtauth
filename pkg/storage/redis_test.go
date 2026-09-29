@@ -7,6 +7,7 @@ package storage_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -510,4 +511,80 @@ var _ = Describe("RedisRefreshStore — Phase 10: Tracing", func() {
 			Expect(store.Store(ctx, "trace-ns-token", "user1", nil, time.Now().Add(time.Hour), nil)).To(Succeed())
 		})
 	})
+})
+
+// ===== Invalid Cursor =====
+var _ = Describe("RedisRefreshStore — Invalid Cursor", func() {
+	var (
+		mr     *miniredis.Miniredis
+		client *redis.Client
+		rec    *memRecordingLogger
+		store  *storage.RedisRefreshStore
+		ctx    context.Context
+	)
+
+	BeforeEach(func() {
+		var err error
+		mr, err = miniredis.Run()
+		Expect(err).NotTo(HaveOccurred())
+		client = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		rec = newMemRecordingLogger()
+		store, err = storage.NewRedisRefreshStore(storage.RedisRefreshStoreConfig{Client: client, Logger: rec})
+		Expect(err).NotTo(HaveOccurred())
+		ctx = context.Background()
+		for i := 0; i < 5; i++ {
+			Expect(store.Store(ctx, opaqueTokenID(), "user-1", []string{"aud-1"}, time.Now().Add(time.Hour), nil)).To(Succeed())
+		}
+	})
+
+	AfterEach(func() {
+		_ = client.Close()
+		mr.Close()
+	})
+
+	// Ordered slice — Ginkgo requires a deterministic spec tree.
+	cases := []struct {
+		name string
+		list func(cursor string) ([]*storage.RefreshToken, error)
+	}{
+		{"ListTokens", func(c string) ([]*storage.RefreshToken, error) {
+			tokens, _, err := store.ListTokens(ctx, c, 100)
+			return tokens, err
+		}},
+		{"ListTokensForUser", func(c string) ([]*storage.RefreshToken, error) {
+			tokens, _, err := store.ListTokensForUser(ctx, "user-1", c, 100)
+			return tokens, err
+		}},
+		{"ListTokensForAudience", func(c string) ([]*storage.RefreshToken, error) {
+			tokens, _, err := store.ListTokensForAudience(ctx, "aud-1", c, 100)
+			return tokens, err
+		}},
+	}
+
+	for _, c := range cases {
+		It("should restart from 0 and log only cursor_ref and cursor_length — "+c.name, func() {
+			fromStart, err := c.list("")
+			Expect(err).NotTo(HaveOccurred())
+
+			cursor := opaqueTokenID() // shaped like a refresh token, not a SCAN cursor
+			restarted, err := c.list(cursor)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(restarted).To(HaveLen(len(fromStart)), "an invalid cursor restarts iteration")
+
+			var warned bool
+			for _, e := range rec.snapshot() {
+				for _, v := range e.kv {
+					Expect(fmt.Sprint(v)).NotTo(ContainSubstring(cursor), "raw cursor logged in %q", e.msg)
+				}
+				if e.level == "warn" && strings.Contains(e.msg, "invalid cursor") {
+					ref, _ := e.field("cursor_ref")
+					length, _ := e.field("cursor_length")
+					Expect(ref).To(Equal(tokenref.Ref(cursor)))
+					Expect(length).To(Equal(len(cursor)))
+					warned = true
+				}
+			}
+			Expect(warned).To(BeTrue(), "invalid cursor warning not logged")
+		})
+	}
 })

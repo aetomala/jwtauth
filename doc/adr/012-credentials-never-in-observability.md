@@ -80,8 +80,11 @@ retention, and consider rotating outstanding refresh tokens.
 
 **Redis integer cursors lose direct readability at the Manager layer.** The Manager
 cannot know whether a store's cursor encodes a token, so it emits `cursor_ref` for every
-backend. `RedisRefreshStore` still emits its numeric `SCAN` cursor under `cursor` at the
-store layer.
+backend. The stores do the same for the cursor a caller passes in (#283): it is
+caller-controlled input that could be a token, so every store list span and
+invalid-cursor warning carries `cursor_ref` and `cursor_length`, never the value. Cursors the stores
+generate themselves — Redis `SCAN` positions and in-memory integer offsets, logged
+under `next_cursor` — never contain a token and are emitted as-is.
 
 **Stored data is unchanged.** Tokens are still stored and keyed as-is; hashing tokens at
 rest is a separate decision outside this ADR. Because stored keys remain raw tokens,
