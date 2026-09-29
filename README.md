@@ -9,7 +9,7 @@
 
 **You verify identity. jwtauth manages everything after:** zero-downtime key rotation, access token issuance, refresh token lifecycle, and instant revocation across horizontal scale.
 
-> **API Stability**: v1.1.1 is released. The public API is stable — semver enforced from here. See `doc/UPGRADING.md` for breaking changes from v0.7.x.
+> **API Stability**: v1.1.2 is released. The public API is stable — semver enforced from here. See `doc/UPGRADING.md` for breaking changes from v0.7.x.
 
 ## Overview
 
@@ -390,10 +390,10 @@ logger := yourCustomAdapter{}                         // Your own logger
 ## Installation
 
 ```bash
-go get github.com/aetomala/jwtauth@v1.1.1
+go get github.com/aetomala/jwtauth@v1.1.2
 ```
 
-**Current Status**: v1.1.1 — stable, production-ready.
+**Current Status**: v1.1.2 — stable, production-ready.
 
 ## Quick Start
 
@@ -1244,7 +1244,7 @@ the prior full-store scan:
   implementation-defined
 - 962 specs (902 unit + 60 integration), race-detection clean
 
-### v1.1.1 (Current — Stable) ✅
+### v1.1.1
 Security release for advisory [GHSA-hwqw-6hv9-q5v6](https://github.com/aetomala/jwtauth/security/advisories/GHSA-hwqw-6hv9-q5v6):
 refresh tokens were written in plaintext to logs and trace span attributes.
 
@@ -1253,6 +1253,22 @@ refresh tokens were written in plaintext to logs and trace span attributes.
 - `RefreshStore` contract forbids a token ID in errors, logs, span attributes, or metric labels
 - Credential leak-regression suite exercising every refresh-token path on both backends
 - 1062 specs (1002 unit + 60 integration), race-detection clean
+
+### v1.1.2 (Current — Stable) ✅
+Hardening and documentation follow-ups from the v1.1.1 security review:
+
+- `RefreshStore` errors are scrubbed of the refresh token — replaced by its `tokenRef`
+  digest — before the Manager logs, traces, or returns them; `errors.Is` / `errors.As`
+  are unchanged (#281)
+- `MemoryRefreshStore.ListTokens` cursors are the token's SHA-256 digest, never the token;
+  exactly-once pagination is unchanged, and full pagination is 93–99% faster at
+  N ≥ 1,000 via a lazily rebuilt digest index (#282)
+- `RefreshStore` list methods emit `cursor_ref` / `cursor_length`, never a caller-supplied
+  cursor (#283)
+- Examples print `tokenRef` digests instead of token prefixes (#284); documentation
+  reconciled with the code (#285); SECURITY.md support policy updated — v1.0.x
+  unsupported (#280)
+- 1087 specs (1027 unit + 60 integration), race-detection clean
 
 ### v1.2.0 (Planned)
 - Failure-safe refresh token rotation — `RefreshTokenPair` stores the replacement before revoking the presented token (#278)
@@ -1366,8 +1382,8 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 
 ---
 
-**Status**: v1.1.1 — stable, production-ready
-**Version**: v1.1.1
+**Status**: v1.1.2 — stable, production-ready
+**Version**: v1.1.2
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
 **Test Coverage**: 1087 specs (1027 unit + 60 integration) — KeyManager ~82%, TokenManager ~92%, RefreshStore ~86%, Metrics 100%, Logging 100%, Tracing ~84%, TokenRef 100% — all passing, race-detection enabled
 **Last Updated**: September 29, 2026

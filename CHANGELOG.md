@@ -51,8 +51,8 @@ All notable changes to this project will be documented in this file.
     integration), with the TokenRef suite and the credential leak-regression,
     digest-index, and invalid-cursor specs added to the breakdown
   - Re-measured coverage figures
-  - Version fields and the ARCHITECTURE footer now reflect v1.1.1
-  - Roadmap: new v1.1.1 entry; v1.2.0 lists the milestone issues; PostgreSQL
+  - Version fields and the ARCHITECTURE banner and footer now name v1.1.2
+  - Roadmap: new v1.1.1 and v1.1.2 entries; v1.2.0 lists the milestone issues; PostgreSQL
     `RefreshStore` moved to Future
   - Correlation example samples captured from a real run: log levels, order, and
     fields; startup output; the refresh token shown as an opaque value, not a JWT

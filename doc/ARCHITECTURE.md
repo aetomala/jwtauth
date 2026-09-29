@@ -97,7 +97,7 @@ Build what's needed now:
 
 `internal/testutil` holds shared mocks and test utilities — not part of the public API.
 
-> ✅ **Stable** — v1.1.1 released. API stability guaranteed; semver enforced.
+> ✅ **Stable** — v1.1.2 released. API stability guaranteed; semver enforced.
 
 ---
 
@@ -1169,5 +1169,5 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 ---
 
 **Last Updated**: September 29, 2026
-**Version**: v1.1.1
+**Version**: v1.1.2
 **Status**: Stable — all components fully instrumented (KeyManager, DiskKeyStore, RedisKeyStore, MemoryRefreshStore, RedisRefreshStore, Metrics [Prometheus, 18 metrics], Logging [Correlation ID], Distributed Tracing, TokenManager)
