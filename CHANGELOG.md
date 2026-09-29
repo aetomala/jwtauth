@@ -44,10 +44,17 @@ All notable changes to this project will be documented in this file.
   `ListTokensForUser` / `ListTokensForAudience` 4–11% more — both under the 15%
   regression gate (#282)
 
+### Fixed
+
+- `MemoryRefreshStore.ListTokensForUser` / `ListTokensForAudience` log a warning — as
+  `cursor_ref` / `cursor_length`, never the value — when given a cursor that is not a
+  non-negative integer, matching the other list methods; iteration still restarts from
+  the beginning (#296)
+
 ### Documentation
 
 - Reconcile documentation with the code (#285):
-  - README spec counts and per-suite breakdown (1087 specs: 1027 unit + 60
+  - README spec counts and per-suite breakdown (1095 specs: 1035 unit + 60
     integration), with the TokenRef suite and the credential leak-regression,
     digest-index, and invalid-cursor specs added to the breakdown
   - Re-measured coverage figures
