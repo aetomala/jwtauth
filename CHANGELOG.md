@@ -46,6 +46,13 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+- The `token-audit` and `audience-revocation` examples print a `tokenRef` digest
+  (first 16 hex characters of SHA-256, matching the library's `tokenRef` log field)
+  instead of the first 8 characters of each refresh token, and their README sample
+  output is now captured from real runs (#284)
+- Fix the `audience-revocation` example exiting at its atomicity check: it tested for
+  `storage.ErrTokenRevoked`, but `Manager.RefreshAccessToken` returns
+  `tokens.ErrTokenRevoked` (#284)
 - SECURITY.md: v1.0.x is no longer supported — support ended with
   GHSA-hwqw-6hv9-q5v6, which was fixed only in v1.1.1; v1.0.x users should upgrade
   to v1.1.x (#280)

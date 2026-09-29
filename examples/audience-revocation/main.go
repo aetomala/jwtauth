@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -109,8 +111,8 @@ func main() {
 		log.Fatal("ListTokensForAudience:", err)
 	}
 	for _, tok := range toks {
-		fmt.Printf("  tokenID=%.8s… userID=%-6s audiences=%v revoked=%v\n",
-			tok.TokenID, tok.UserID, tok.Audience, tok.Revoked)
+		fmt.Printf("  tokenRef=%s userID=%-6s audiences=%v revoked=%v\n",
+			tokenRef(tok.TokenID), tok.UserID, tok.Audience, tok.Revoked)
 	}
 	fmt.Println()
 
@@ -137,7 +139,7 @@ func main() {
 	// Attempting to refresh with the old refresh token returns ErrTokenRevoked.
 	fmt.Println("=== Atomicity check: refresh with alice's revoked token ===")
 	_, err = mgr.RefreshAccessToken(ctx, aliceRefresh)
-	if errors.Is(err, storage.ErrTokenRevoked) {
+	if errors.Is(err, tokens.ErrTokenRevoked) {
 		fmt.Println("  RefreshAccessToken → ErrTokenRevoked (expected)")
 	} else {
 		log.Fatal("unexpected error:", err)
@@ -151,8 +153,8 @@ func main() {
 		log.Fatal("ListTokensForAudience:", err)
 	}
 	for _, tok := range toks {
-		fmt.Printf("  tokenID=%.8s… userID=%-6s audiences=%v revoked=%v\n",
-			tok.TokenID, tok.UserID, tok.Audience, tok.Revoked)
+		fmt.Printf("  tokenRef=%s userID=%-6s audiences=%v revoked=%v\n",
+			tokenRef(tok.TokenID), tok.UserID, tok.Audience, tok.Revoked)
 	}
 	fmt.Println()
 
@@ -174,8 +176,16 @@ func main() {
 		log.Fatal("ListTokensForAudience:", err)
 	}
 	for _, tok := range toks {
-		fmt.Printf("  tokenID=%.8s… userID=%-6s audiences=%v revoked=%v\n",
-			tok.TokenID, tok.UserID, tok.Audience, tok.Revoked)
+		fmt.Printf("  tokenRef=%s userID=%-6s audiences=%v revoked=%v\n",
+			tokenRef(tok.TokenID), tok.UserID, tok.Audience, tok.Revoked)
 	}
 	fmt.Println("Done.")
+}
+
+// tokenRef returns a non-reversible reference to a refresh token for display —
+// the first 16 hex characters of its SHA-256 digest. It matches the tokenRef
+// field in jwtauth's own logs, so a printed reference can be correlated with them.
+func tokenRef(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])[:16]
 }

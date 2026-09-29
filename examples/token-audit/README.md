@@ -30,20 +30,25 @@ Expected output:
 Seeded 6 refresh tokens for 3 users
 
 === Global token audit (ListTokens, pageSize=2) ===
-  [page 1] tokenID=3f8a1b2c… userID=alice revoked=false
-  [page 1] tokenID=7e4d9c01… userID=alice revoked=false
-  [page 2] tokenID=a1f3b820… userID=alice revoked=false
-  [page 2] tokenID=c2d4e5f6… userID=bob   revoked=false
-  [page 3] tokenID=d9e0f1a2… userID=bob   revoked=false
-  [page 3] tokenID=e3f2a1b0… userID=carol revoked=false
+  [page 1] tokenRef=36e2703d708d85b4 userID=carol revoked=false
+  [page 1] tokenRef=3fd1eaf7e29b784d userID=bob revoked=false
+  [page 2] tokenRef=e15e2018ec7084a2 userID=alice revoked=false
+  [page 2] tokenRef=e48c094f202d97b9 userID=alice revoked=false
+  [page 3] tokenRef=ec433e2988616d4e userID=bob revoked=false
+  [page 3] tokenRef=ed72523ec4ba804b userID=alice revoked=false
 Total tokens: 6
 
 === User-scoped audit for "alice" (ListTokensForUser, pageSize=2) ===
-  [page 1] tokenID=3f8a1b2c… expires=2026-05-06T22:00:00Z
-  [page 1] tokenID=7e4d9c01… expires=2026-05-06T22:00:00Z
-  [page 2] tokenID=a1f3b820… expires=2026-05-06T22:00:00Z
+  [page 1] tokenRef=e48c094f202d97b9 expires=2026-10-06T16:53:40Z
+  [page 1] tokenRef=ed72523ec4ba804b expires=2026-10-06T16:53:40Z
+  [page 2] tokenRef=e15e2018ec7084a2 expires=2026-10-06T16:53:40Z
 Total tokens for "alice": 3
 ```
+
+Token references, their order, and expiry times differ on every run. Each token is shown as
+a `tokenRef` — the first 16 hex characters of its SHA-256 digest, never any part of the token
+itself. It is the same value jwtauth writes under `tokenRef` in its own logs, so an audited
+token can be matched to log entries.
 
 ## How It Works
 

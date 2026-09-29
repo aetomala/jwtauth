@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"log/slog"
@@ -97,8 +99,8 @@ func main() {
 			log.Fatal("ListTokens:", err)
 		}
 		for _, tok := range toks {
-			fmt.Printf("  [page %d] tokenID=%.8s… userID=%s revoked=%v\n",
-				page, tok.TokenID, tok.UserID, tok.Revoked)
+			fmt.Printf("  [page %d] tokenRef=%s userID=%s revoked=%v\n",
+				page, tokenRef(tok.TokenID), tok.UserID, tok.Revoked)
 		}
 		total += len(toks)
 		if next == "" {
@@ -121,8 +123,8 @@ func main() {
 			log.Fatal("ListTokensForUser:", err)
 		}
 		for _, tok := range toks {
-			fmt.Printf("  [page %d] tokenID=%.8s… expires=%s\n",
-				page, tok.TokenID, tok.ExpiresAt.UTC().Format(time.RFC3339))
+			fmt.Printf("  [page %d] tokenRef=%s expires=%s\n",
+				page, tokenRef(tok.TokenID), tok.ExpiresAt.UTC().Format(time.RFC3339))
 		}
 		userTotal += len(toks)
 		if next == "" {
@@ -132,4 +134,12 @@ func main() {
 		page++
 	}
 	fmt.Printf("Total tokens for %q: %d\n", auditUser, userTotal)
+}
+
+// tokenRef returns a non-reversible reference to a refresh token for display —
+// the first 16 hex characters of its SHA-256 digest. It matches the tokenRef
+// field in jwtauth's own logs, so a printed reference can be correlated with them.
+func tokenRef(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])[:16]
 }
