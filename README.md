@@ -312,7 +312,7 @@ You've already verified identity and need **production-grade token machinery** f
   - Idempotent revocation (safe to call multiple times)
   - Comprehensive context handling with cancellation propagation
   - Structured logging for audit trail
-  - **242 total storage specs** — the shared suite run against both implementations, plus Memory- and Redis-specific specs
+  - **250 total storage specs** — the shared suite run against both implementations, plus Memory- and Redis-specific specs
 
 ## Architecture Highlights
 
@@ -1092,7 +1092,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 
 ### Test Coverage
 
-**Current**: 1087 comprehensive specs (1027 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~82%, TokenManager ~92%, RefreshStore ~86%, Metrics 100%, Logging 100%, Tracing ~84%, TokenRef 100%)
+**Current**: 1095 comprehensive specs (1035 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~82%, TokenManager ~92%, RefreshStore ~86%, Metrics 100%, Logging 100%, Tracing ~84%, TokenRef 100%)
 
 **KeyManager** (3 test suites — 172 total specs):
 - **9-phase Manager tests** (MockKeyStore — no I/O):
@@ -1134,7 +1134,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 - **Concurrent Operations**: parallel token issuance and service state safety
 - **Credential Leak Regression** (ADR-012): recording logger, tracer, and metrics wired into the Manager and both stores; every refresh-token path — issuance, refresh, revocation, introspection, listing (including returned cursors and a token passed as a cursor), cleanup, and contract-violating store errors — fails the suite if any part of a token reaches observability output or a returned error
 
-**RefreshStore** (242 total specs across both implementations):
+**RefreshStore** (250 total specs across both implementations):
 - **Shared Test Suite** (runs against both Memory and Redis):
   - **Phase 1**: Constructor initialization
   - **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
@@ -1150,7 +1150,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - **Phase 12**: `ListTokens` — global cursor-based pagination (empty store, single page, multi-page, empty cursor, exhausted cursor, cancelled context)
   - **Phase 13**: `ListTokensForUser` — user-scoped cursor-based pagination (user isolation, empty userID validation, multi-page, cancelled context)
   - **Phase 14**: `ListTokensForAudience` — audience-scoped cursor-based pagination (audience isolation, SSCAN passthrough on Redis, multi-page, cancelled context)
-- **Memory-specific**: digest-index consistency across every public method (sequential and concurrent), digest cursor shape, exactly-once pagination under concurrent Store/Cleanup, invalid-cursor handling
+- **Memory-specific**: digest-index consistency across every public method (sequential and concurrent), digest cursor shape, exactly-once pagination under concurrent Store/Cleanup, invalid-cursor handling for all three list methods — restart and a warning carrying only `cursor_ref` / `cursor_length`
 - **Redis-specific**: invalid-cursor handling for all three list methods — restart from 0, logged only as `cursor_ref` / `cursor_length`
 - **Test Suite Architecture**: Single parameterized suite eliminates 800+ lines of duplication, ensures both implementations have identical semantics
 
@@ -1268,7 +1268,7 @@ Hardening and documentation follow-ups from the v1.1.1 security review:
 - Examples print `tokenRef` digests instead of token prefixes (#284); documentation
   reconciled with the code (#285); SECURITY.md support policy updated — v1.0.x
   unsupported (#280)
-- 1087 specs (1027 unit + 60 integration), race-detection clean
+- 1095 specs (1035 unit + 60 integration), race-detection clean
 
 ### v1.2.0 (Planned)
 - Failure-safe refresh token rotation — `RefreshTokenPair` stores the replacement before revoking the presented token (#278)
@@ -1385,5 +1385,5 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 **Status**: v1.1.2 — stable, production-ready
 **Version**: v1.1.2
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
-**Test Coverage**: 1087 specs (1027 unit + 60 integration) — KeyManager ~82%, TokenManager ~92%, RefreshStore ~86%, Metrics 100%, Logging 100%, Tracing ~84%, TokenRef 100% — all passing, race-detection enabled
+**Test Coverage**: 1095 specs (1035 unit + 60 integration) — KeyManager ~82%, TokenManager ~92%, RefreshStore ~86%, Metrics 100%, Logging 100%, Tracing ~84%, TokenRef 100% — all passing, race-detection enabled
 **Last Updated**: September 29, 2026

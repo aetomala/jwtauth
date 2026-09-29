@@ -55,11 +55,11 @@ type MemoryRefreshStore struct {
 
 	// ===== Storage =====
 	tokens         map[string]memoryRecord // tokenID  -> token and its SHA-256 digest; the digest is the ListTokens keyset
-	sortedDigests  []digestEntry            // digests of tokens in ascending order; valid only while digestsSorted is true
-	digestsSorted  bool                     // cleared by Store (new key) and Cleanup (removal); ListTokens rebuilds sortedDigests under the write lock
-	userTokens     map[string][]string      // userID   -> []tokenID
-	audienceTokens map[string][]string      // audience -> []tokenID
-	expiryHeap     *tokenExpiryHeap         // min-heap of {tokenID, expiresAt}, ordered by expiresAt; lets Cleanup discover expired tokens without ranging tokens
+	sortedDigests  []digestEntry           // digests of tokens in ascending order; valid only while digestsSorted is true
+	digestsSorted  bool                    // cleared by Store (new key) and Cleanup (removal); ListTokens rebuilds sortedDigests under the write lock
+	userTokens     map[string][]string     // userID   -> []tokenID
+	audienceTokens map[string][]string     // audience -> []tokenID
+	expiryHeap     *tokenExpiryHeap        // min-heap of {tokenID, expiresAt}, ordered by expiresAt; lets Cleanup discover expired tokens without ranging tokens
 
 	// ===== Observability =====
 	logger  logging.Logger  // never nil; defaults to NoOpLogger
@@ -742,8 +742,10 @@ func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, coun
 // All tokens are returned regardless of revocation or expiry status — the
 // caller is responsible for filtering. The cursor is an integer offset into
 // the stable insertion-order slice for userID — best-effort when tokens are
-// added or removed between pages. Returns ErrInvalidUserID if userID is empty.
-// Returns the context error if the context is cancelled.
+// added or removed between pages. A cursor that is not a non-negative integer
+// is logged as a warning — only as cursor_ref and cursor_length — and
+// iteration restarts from the beginning. Returns ErrInvalidUserID if userID is
+// empty. Returns the context error if the context is cancelled.
 func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID string, cursor string, count int) ([]*RefreshToken, string, error) {
 	ctx, span := m.startSpan(ctx, "ListTokensForUser")
 	defer span.End()
@@ -775,7 +777,12 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 	// ===== STEP 4: Parse Cursor as Integer Offset =====
 	offset := 0
 	if cursor != "" {
-		if parsed, err := strconv.Atoi(cursor); err == nil && parsed > 0 {
+		parsed, err := strconv.Atoi(cursor)
+		if err != nil || parsed < 0 {
+			m.logger.Warn("listTokensForUser: invalid cursor — starting from beginning", ctx,
+				"cursor_ref", tokenref.Ref(cursor),
+				"cursor_length", len(cursor))
+		} else {
 			offset = parsed
 		}
 	}
@@ -850,7 +857,9 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 // caller is responsible for filtering. A token issued with multiple audiences
 // appears in the listing for each of its audience values. The cursor is an
 // integer offset into the stable insertion-order slice for audience —
-// best-effort when tokens are added or removed between pages. Returns
+// best-effort when tokens are added or removed between pages. A cursor that is
+// not a non-negative integer is logged as a warning — only as cursor_ref and
+// cursor_length — and iteration restarts from the beginning. Returns
 // ErrInvalidAudience if audience is empty. Returns the context error if the
 // context is cancelled.
 func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience string, cursor string, count int) ([]*RefreshToken, string, error) {
@@ -884,7 +893,12 @@ func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience
 	// ===== STEP 4: Parse Cursor as Integer Offset =====
 	offset := 0
 	if cursor != "" {
-		if parsed, err := strconv.Atoi(cursor); err == nil && parsed > 0 {
+		parsed, err := strconv.Atoi(cursor)
+		if err != nil || parsed < 0 {
+			m.logger.Warn("listTokensForAudience: invalid cursor — starting from beginning", ctx,
+				"cursor_ref", tokenref.Ref(cursor),
+				"cursor_length", len(cursor))
+		} else {
 			offset = parsed
 		}
 	}

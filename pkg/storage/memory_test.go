@@ -507,3 +507,89 @@ var _ = Describe("MemoryRefreshStore — ListTokens Digest Cursor", func() {
 	})
 })
 
+// ===== Offset Cursor Validation =====
+var _ = Describe("MemoryRefreshStore — Offset Cursor Validation", func() {
+	var (
+		ctx   context.Context
+		rec   *memRecordingLogger
+		store *storage.MemoryRefreshStore
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		rec = newMemRecordingLogger()
+		store = storage.NewMemoryRefreshStore(storage.MemoryRefreshStoreConfig{Logger: rec})
+		for i := 0; i < 5; i++ {
+			Expect(store.Store(ctx, opaqueTokenID(), "user-1", []string{"aud-1"}, time.Now().Add(time.Hour), nil)).To(Succeed())
+		}
+	})
+
+	// invalidCursorWarnings returns the "invalid cursor" warnings logged for method.
+	invalidCursorWarnings := func(method string) []memLogEntry {
+		var warnings []memLogEntry
+		for _, e := range rec.snapshot() {
+			if e.level == "warn" && strings.HasPrefix(e.msg, method+": invalid cursor") {
+				warnings = append(warnings, e)
+			}
+		}
+		return warnings
+	}
+
+	// Ordered slice — Ginkgo requires a deterministic spec tree.
+	methods := []struct {
+		name string // log message prefix
+		list func(cursor string) ([]*storage.RefreshToken, string, error)
+	}{
+		{"listTokensForUser", func(c string) ([]*storage.RefreshToken, string, error) {
+			return store.ListTokensForUser(ctx, "user-1", c, 2)
+		}},
+		{"listTokensForAudience", func(c string) ([]*storage.RefreshToken, string, error) {
+			return store.ListTokensForAudience(ctx, "aud-1", c, 2)
+		}},
+	}
+
+	invalidCursors := []struct {
+		name   string
+		cursor func() string
+	}{
+		{"a non-integer", func() string { return "not-an-offset" }},
+		{"a negative integer", func() string { return "-424242" }},
+		{"a raw token ID", func() string { return opaqueTokenID() }},
+	}
+
+	for _, m := range methods {
+		for _, c := range invalidCursors {
+			It("should restart and warn with only cursor_ref and cursor_length for "+c.name+" — "+m.name, func() {
+				firstPage, _, err := m.list("")
+				Expect(err).NotTo(HaveOccurred())
+
+				cursor := c.cursor()
+				restarted, _, err := m.list(cursor)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(restarted).To(Equal(firstPage), "an invalid cursor restarts iteration")
+
+				warnings := invalidCursorWarnings(m.name)
+				Expect(warnings).To(HaveLen(1))
+				ref, _ := warnings[0].field("cursor_ref")
+				length, _ := warnings[0].field("cursor_length")
+				Expect(ref).To(Equal(tokenref.Ref(cursor)))
+				Expect(length).To(Equal(len(cursor)))
+
+				for _, e := range rec.snapshot() {
+					for _, v := range e.kv {
+						Expect(fmt.Sprint(v)).NotTo(ContainSubstring(cursor), "raw cursor logged in %q", e.msg)
+					}
+				}
+			})
+		}
+
+		It("should not warn for \"0\" or a store-issued cursor — "+m.name, func() {
+			_, next, err := m.list("0")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(next).NotTo(BeEmpty())
+			_, _, err = m.list(next)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(invalidCursorWarnings(m.name)).To(BeEmpty())
+		})
+	}
+})
