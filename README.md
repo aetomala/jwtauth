@@ -1052,7 +1052,7 @@ mgr, _ := tokens.NewManager(tokens.TokenManagerConfig{
 | Component | Attributes |
 |-----------|-----------|
 | `DiskKeyStore` / `RedisKeyStore` | `storage_backend` (`"disk"` / `"redis"`), `namespace`, `key_id` |
-| `MemoryRefreshStore` / `RedisRefreshStore` | `storage_backend` (`"memory"` / `"redis"`), `namespace` (Redis only), `token_ref` (Store, Retrieve, Revoke), `user_id`, `audience`, `count`, `result_count`, `cursor_ref` (Memory `ListTokens`) or `cursor` (other list calls), `removed_count` / `indexed_count` (Redis Cleanup, BackfillExpiryIndex) |
+| `MemoryRefreshStore` / `RedisRefreshStore` | `storage_backend` (`"memory"` / `"redis"`), `namespace` (Redis only), `token_ref` (Store, Retrieve, Revoke), `user_id`, `audience`, `count`, `result_count`, `cursor_ref`, `cursor_length` (list calls), `removed_count` / `indexed_count` (Redis Cleanup, BackfillExpiryIndex) |
 | `KeyManager` | `namespace`, `key_id`, `key_count` |
 | `TokenManager` | `namespace`, `user_id`, `audience`, `token_id` — access-token `jti` (IssueAccessToken\*, ValidateAccessToken\*), `token_ref` — refresh-token operations (IssueRefreshToken\*, IssueTokenPair\*, RefreshAccessToken\*, RevokeRefreshToken, IntrospectToken), `active` (IntrospectToken), `deleted_count` (CleanupExpiredTokens), `cursor_ref`, `count`, `result_count` (ListTokens\*) |
 

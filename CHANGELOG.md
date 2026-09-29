@@ -25,6 +25,12 @@ All notable changes to this project will be documented in this file.
   exactly-once guarantee for tokens present throughout an iteration is unchanged. An
   invalid cursor restarts iteration and is logged only as `cursor_ref` /
   `cursor_length` (#282)
+- `RefreshStore` list methods no longer emit the caller-supplied cursor. The span
+  attribute `cursor` on `RedisRefreshStore.ListTokens*` and
+  `MemoryRefreshStore.ListTokensForUser` / `ListTokensForAudience`, and the `cursor`
+  field of the Redis "invalid cursor" warning, are replaced by `cursor_ref` and
+  `cursor_length`, so a token passed as a cursor never reaches logs or traces.
+  Operators with queries on the old keys should update them — see UPGRADING.md (#283)
 
 ### Performance
 

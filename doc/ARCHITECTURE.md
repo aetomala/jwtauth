@@ -384,9 +384,9 @@ type Span interface {
 | `*.RevokeAllForAudience` | `audience` |
 | `*.RevokeAllForUserAndAudience` | `user_id`, `audience` |
 | `*.Cleanup` | `removed_count` |
-| `*.ListTokens` | `cursor_ref` (MemoryRefreshStore) or `cursor` (RedisRefreshStore), `count`, `result_count` |
-| `*.ListTokensForUser` | `user_id`, `cursor`, `count`, `result_count` |
-| `*.ListTokensForAudience` | `audience`, `cursor`, `count`, `result_count` |
+| `*.ListTokens` | `cursor_ref`, `cursor_length`, `count`, `result_count` |
+| `*.ListTokensForUser` | `user_id`, `cursor_ref`, `cursor_length`, `count`, `result_count` |
+| `*.ListTokensForAudience` | `audience`, `cursor_ref`, `cursor_length`, `count`, `result_count` |
 
 **Status conventions**: `StatusOK` on all success paths; `RecordError(err)` + `StatusError` on all error paths. Wrapped errors (via `fmt.Errorf("...: %w", err)`) are passed to `RecordError` so the full message propagates to the trace backend.
 

@@ -978,7 +978,8 @@ func (r *RedisRefreshStore) BackfillExpiryIndex(ctx context.Context) (removed, i
 func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count int) ([]*RefreshToken, string, error) {
 	ctx, span := r.startSpan(ctx, "ListTokens")
 	defer span.End()
-	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("cursor_ref", tokenref.Ref(cursor))
+	span.SetAttribute("cursor_length", len(cursor))
 	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
@@ -994,7 +995,9 @@ func (r *RedisRefreshStore) ListTokens(ctx context.Context, cursor string, count
 	if cursor != "" {
 		parsed, err := strconv.ParseUint(cursor, 10, 64)
 		if err != nil {
-			r.logger.Warn("listTokens: invalid cursor — starting from 0", ctx, "cursor", cursor)
+			r.logger.Warn("listTokens: invalid cursor — starting from 0", ctx,
+				"cursor_ref", tokenref.Ref(cursor),
+				"cursor_length", len(cursor))
 		} else {
 			redisCursor = parsed
 		}
@@ -1059,7 +1062,8 @@ func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string
 	ctx, span := r.startSpan(ctx, "ListTokensForUser")
 	defer span.End()
 	span.SetAttribute("user_id", userID)
-	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("cursor_ref", tokenref.Ref(cursor))
+	span.SetAttribute("cursor_length", len(cursor))
 	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
@@ -1083,7 +1087,9 @@ func (r *RedisRefreshStore) ListTokensForUser(ctx context.Context, userID string
 	if cursor != "" {
 		parsed, err := strconv.ParseUint(cursor, 10, 64)
 		if err != nil {
-			r.logger.Warn("listTokensForUser: invalid cursor — starting from 0", ctx, "cursor", cursor)
+			r.logger.Warn("listTokensForUser: invalid cursor — starting from 0", ctx,
+				"cursor_ref", tokenref.Ref(cursor),
+				"cursor_length", len(cursor))
 		} else {
 			redisCursor = parsed
 		}
@@ -1433,7 +1439,8 @@ func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience 
 	ctx, span := r.startSpan(ctx, "ListTokensForAudience")
 	defer span.End()
 	span.SetAttribute("audience", audience)
-	span.SetAttribute("cursor", cursor)
+	span.SetAttribute("cursor_ref", tokenref.Ref(cursor))
+	span.SetAttribute("cursor_length", len(cursor))
 	span.SetAttribute("count", count)
 
 	// ===== STEP 1: Check Context =====
@@ -1457,7 +1464,9 @@ func (r *RedisRefreshStore) ListTokensForAudience(ctx context.Context, audience 
 	if cursor != "" {
 		parsed, err := strconv.ParseUint(cursor, 10, 64)
 		if err != nil {
-			r.logger.Warn("listTokensForAudience: invalid cursor — starting from 0", ctx, "cursor", cursor)
+			r.logger.Warn("listTokensForAudience: invalid cursor — starting from 0", ctx,
+				"cursor_ref", tokenref.Ref(cursor),
+				"cursor_length", len(cursor))
 		} else {
 			redisCursor = parsed
 		}
