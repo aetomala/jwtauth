@@ -40,10 +40,18 @@ go run main.go
 You'll see output like:
 
 ```
-{"time":"2026-04-14T10:30:00Z","level":"INFO","msg":"correlation-example server starting","addr":":8080"}
-{"time":"2026-04-14T10:30:00Z","level":"INFO","msg":"key manager started","active_keys":1,"current_key_id":"20260414_103000"}
-{"time":"2026-04-14T10:30:00Z","level":"INFO","msg":"token manager started","issuer":"correlation-example"}
+{"time":"...","level":"INFO","msg":"starting token service"}
+{"time":"...","level":"INFO","msg":"loaded keys from disk","count":0}
+{"time":"...","level":"INFO","msg":"saved key to disk","keyID":"179f8b13-b0cf-4500-b26b-d7a7d19ed470"}
+{"time":"...","level":"INFO","msg":"generated new RSA key pair","keyID":"179f8b13-b0cf-4500-b26b-d7a7d19ed470","keySize":2048}
+{"time":"...","level":"INFO","msg":"key manager started","rotationInterval":2592000000000000}
+{"time":"...","level":"INFO","msg":"token service started"}
+2026/09/29 13:06:09 INFO correlation-example server starting addr=:8080
+2026/09/29 13:06:09 INFO try: curl -s -X POST http://localhost:8080/login -d '{"user_id":"alice"}' -H 'X-Correlation-ID: req-001'
 ```
+
+The JSON lines come from jwtauth through the correlation-aware logger; the last two come from the
+example's own standard-library logger. On later runs, keys load from `./keys` and no new key is generated.
 
 ## Testing the API
 
@@ -60,16 +68,23 @@ Response:
 ```json
 {
   "access_token": "eyJhbGci...",
-  "refresh_token": "eyJhbGci..."
+  "refresh_token": "foqrMS..."
 }
 ```
+
+The access token is an RS256 JWT; the refresh token is an opaque 43-character random value, not a JWT.
 
 Every log line the server emits while handling this request includes `"correlation_id":"req-001"`:
 
 ```json
-{"time":"...","level":"INFO","msg":"token pair issued","userID":"alice","correlation_id":"req-001"}
-{"time":"...","level":"DEBUG","msg":"refresh token stored","tokenRef":"5d699dd34a86ef68","correlation_id":"req-001"}
+{"time":"...","level":"DEBUG","msg":"issuing token pair","userID":"alice","correlation_id":"req-001"}
+{"time":"...","level":"DEBUG","msg":"getting current signing key","correlation_id":"req-001"}
+{"time":"...","level":"DEBUG","msg":"storing token in memory","tokenRef":"496ca0ca3e2bbdd2","userID":"alice","correlation_id":"req-001"}
+{"time":"...","level":"INFO","msg":"refresh token stored","tokenRef":"496ca0ca3e2bbdd2","userID":"alice","expiresAt":"...","correlation_id":"req-001"}
+{"time":"...","level":"INFO","msg":"token pair issued","userID":"alice","tokenRef":"496ca0ca3e2bbdd2","expiresAt":"...","correlation_id":"req-001"}
 ```
+
+The refresh token never appears in the logs — only its `tokenRef`, a non-reversible digest (ADR-012).
 
 ### 2. Login — no correlation ID supplied
 
@@ -82,7 +97,7 @@ curl -s -X POST http://localhost:8080/login \
 The server generates an ID automatically and echoes it back in the `X-Correlation-ID` response header:
 
 ```
-X-Correlation-ID: 3f2a1b0c-4d5e
+X-Correlation-ID: 2c4b219f-e2a7
 ```
 
 ### 3. Refresh Token

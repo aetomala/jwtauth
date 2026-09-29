@@ -9,7 +9,7 @@
 
 **You verify identity. jwtauth manages everything after:** zero-downtime key rotation, access token issuance, refresh token lifecycle, and instant revocation across horizontal scale.
 
-> **API Stability**: v1.1.0 is released. The public API is stable — semver enforced from here. See `doc/UPGRADING.md` for breaking changes from v0.7.x.
+> **API Stability**: v1.1.2 is released. The public API is stable — semver enforced from here. See `doc/UPGRADING.md` for breaking changes from v0.7.x.
 
 ## Overview
 
@@ -284,7 +284,7 @@ You've already verified identity and need **production-grade token machinery** f
 - **Service state management** ensuring tokens only issue when service is running
 - **OpenTelemetry distributed tracing** — `Tracer` field wires spans into all token operations; defaults to `NoOpTracer` for zero-config use
 - **Namespace labeling** — `Namespace` field propagates an opaque label through all logs, spans, and metric labels for multi-tenant and multi-instance deployments
-- **Comprehensive BDD test coverage** (259 tests covering lifecycle, issuance, validation, clock skew, custom claims, refresh, revocation, and introspection; ~92% statement coverage)
+- **Comprehensive BDD test coverage** (363 specs covering lifecycle, issuance, validation, clock skew, custom claims, refresh, revocation, introspection, and credential-leak regression; ~92% statement coverage)
 
 **RefreshTokenStore** ✅
 - **Two implementations**: Memory (in-process) and Redis (distributed)
@@ -312,7 +312,7 @@ You've already verified identity and need **production-grade token machinery** f
   - Idempotent revocation (safe to call multiple times)
   - Comprehensive context handling with cancellation propagation
   - Structured logging for audit trail
-  - **231 total storage specs** — the shared suite run against both implementations, plus Redis-specific specs
+  - **242 total storage specs** — the shared suite run against both implementations, plus Memory- and Redis-specific specs
 
 ## Architecture Highlights
 
@@ -390,10 +390,10 @@ logger := yourCustomAdapter{}                         // Your own logger
 ## Installation
 
 ```bash
-go get github.com/aetomala/jwtauth@v1.1.0
+go get github.com/aetomala/jwtauth@v1.1.2
 ```
 
-**Current Status**: v1.1.0 — stable, production-ready.
+**Current Status**: v1.1.2 — stable, production-ready.
 
 ## Quick Start
 
@@ -1092,7 +1092,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 
 ### Test Coverage
 
-**Current**: 962 comprehensive specs (902 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~82%, TokenManager ~92%, RefreshStore ~85%, Metrics 100%, Logging 100%, Tracing ~84%)
+**Current**: 1087 comprehensive specs (1027 unit + 60 integration) across all packages, all passing with race detection (KeyManager ~82%, TokenManager ~92%, RefreshStore ~86%, Metrics 100%, Logging 100%, Tracing ~84%, TokenRef 100%)
 
 **KeyManager** (3 test suites — 172 total specs):
 - **9-phase Manager tests** (MockKeyStore — no I/O):
@@ -1112,7 +1112,7 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - Error handling: corrupt metadata, missing metadata entry, Redis unavailability via SetError
   - Concurrency, metrics recording (storage_backend: "redis")
 
-**TokenManager** (7 test suites, 259 total specs):
+**TokenManager** (5 test suites, 363 total specs):
 - **Lifecycle Management Tests**:
   - Start: idempotency, logging, background cleanup, failure handling, context cancellation
   - Shutdown: logging, cleanup termination, goroutine coordination, timeout respect, idempotency, restart after clean shutdown
@@ -1132,8 +1132,9 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - CleanupExpiredTokens: manual sweep with error handling
 - **Enumeration Tests**: ListTokens, ListTokensForUser, ListTokensForAudience — cursor-based pagination, audience isolation
 - **Concurrent Operations**: parallel token issuance and service state safety
+- **Credential Leak Regression** (ADR-012): recording logger, tracer, and metrics wired into the Manager and both stores; every refresh-token path — issuance, refresh, revocation, introspection, listing (including returned cursors and a token passed as a cursor), cleanup, and contract-violating store errors — fails the suite if any part of a token reaches observability output or a returned error
 
-**RefreshStore** (231 total specs across both implementations):
+**RefreshStore** (242 total specs across both implementations):
 - **Shared Test Suite** (runs against both Memory and Redis):
   - **Phase 1**: Constructor initialization
   - **Phase 2**: Happy paths (Store, Retrieve) with metadata preservation
@@ -1149,6 +1150,8 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
   - **Phase 12**: `ListTokens` — global cursor-based pagination (empty store, single page, multi-page, empty cursor, exhausted cursor, cancelled context)
   - **Phase 13**: `ListTokensForUser` — user-scoped cursor-based pagination (user isolation, empty userID validation, multi-page, cancelled context)
   - **Phase 14**: `ListTokensForAudience` — audience-scoped cursor-based pagination (audience isolation, SSCAN passthrough on Redis, multi-page, cancelled context)
+- **Memory-specific**: digest-index consistency across every public method (sequential and concurrent), digest cursor shape, exactly-once pagination under concurrent Store/Cleanup, invalid-cursor handling
+- **Redis-specific**: invalid-cursor handling for all three list methods — restart from 0, logged only as `cursor_ref` / `cursor_length`
 - **Test Suite Architecture**: Single parameterized suite eliminates 800+ lines of duplication, ensures both implementations have identical semantics
 
 **Logging** (104 specs):
@@ -1168,6 +1171,10 @@ See [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md#project-structure) for the package
 - `NoOpTracer` / `NoOpSpan` — no-op implementation, race-detection clean
 - `OtelTracer` adapter — bridges `pkg/tracing.Tracer` to `go.opentelemetry.io/otel`
 - All `StatusCode` enum values exercised
+
+**TokenRef** (10 specs, `internal/tokenref`):
+- `Ref` — deterministic 16-hex SHA-256 prefix, empty input, never contains the input
+- `Scrub` — replaces every exact occurrence of a token with its reference, leaves other text and empty tokens unchanged
 
 **Integration Tests** (60 specs, `pkg/tokens/integration/`):
 - Runs against both disk+memory and Redis backends (miniredis)
@@ -1223,7 +1230,7 @@ The full token lifecycle is implemented and the API is stable. Highlights:
 - `examples/telemetry/` — runnable Prometheus, OTLP, and structured-logging wiring examples
 - 956 specs (unit + integration), race-detection clean
 
-### v1.1.0 (Current — Stable) ✅
+### v1.1.0
 `RefreshStore.Cleanup` rewritten to an expiry-indexed sweep on both backends, replacing
 the prior full-store scan:
 
@@ -1237,7 +1244,39 @@ the prior full-store scan:
   implementation-defined
 - 962 specs (902 unit + 60 integration), race-detection clean
 
+### v1.1.1
+Security release for advisory [GHSA-hwqw-6hv9-q5v6](https://github.com/aetomala/jwtauth/security/advisories/GHSA-hwqw-6hv9-q5v6):
+refresh tokens were written in plaintext to logs and trace span attributes.
+
+- Refresh tokens are emitted only as a non-reversible `tokenRef` / `token_ref` digest — the
+  first 16 hex characters of their SHA-256 — never raw or in part (ADR-012)
+- `RefreshStore` contract forbids a token ID in errors, logs, span attributes, or metric labels
+- Credential leak-regression suite exercising every refresh-token path on both backends
+- 1062 specs (1002 unit + 60 integration), race-detection clean
+
+### v1.1.2 (Current — Stable) ✅
+Hardening and documentation follow-ups from the v1.1.1 security review:
+
+- `RefreshStore` errors are scrubbed of the refresh token — replaced by its `tokenRef`
+  digest — before the Manager logs, traces, or returns them; `errors.Is` / `errors.As`
+  are unchanged (#281)
+- `MemoryRefreshStore.ListTokens` cursors are the token's SHA-256 digest, never the token;
+  exactly-once pagination is unchanged, and full pagination is 93–99% faster at
+  N ≥ 1,000 via a lazily rebuilt digest index (#282)
+- `RefreshStore` list methods emit `cursor_ref` / `cursor_length`, never a caller-supplied
+  cursor (#283)
+- Examples print `tokenRef` digests instead of token prefixes (#284); documentation
+  reconciled with the code (#285); SECURITY.md support policy updated — v1.0.x
+  unsupported (#280)
+- 1087 specs (1027 unit + 60 integration), race-detection clean
+
 ### v1.2.0 (Planned)
+- Failure-safe refresh token rotation — `RefreshTokenPair` stores the replacement before revoking the presented token (#278)
+- Distinct errors for invalid, expired, and store-failure cases on the refresh path (#286)
+- `TokenID` redaction when `RefreshToken` / `TokenMetadata` are logged or formatted (#287)
+- Context passed to loggers through an optional `ContextLogger` interface instead of a key-value element (#288)
+
+### Future
 - PostgreSQL `RefreshStore` implementation — durable, transactional token storage for deployments that already operate a PostgreSQL cluster and want to avoid a Redis dependency
 
 ## Ecosystem
@@ -1343,8 +1382,8 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 
 ---
 
-**Status**: v1.1.0 — stable, production-ready
-**Version**: v1.1.0
+**Status**: v1.1.2 — stable, production-ready
+**Version**: v1.1.2
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
-**Test Coverage**: 962 specs (902 unit + 60 integration) — KeyManager ~82%, TokenManager ~92%, RefreshStore ~85%, Metrics 100%, Logging 100%, Tracing ~84% — all passing, race-detection enabled
-**Last Updated**: June 29, 2026
+**Test Coverage**: 1087 specs (1027 unit + 60 integration) — KeyManager ~82%, TokenManager ~92%, RefreshStore ~86%, Metrics 100%, Logging 100%, Tracing ~84%, TokenRef 100% — all passing, race-detection enabled
+**Last Updated**: September 29, 2026

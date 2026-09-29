@@ -341,14 +341,21 @@ token, err := mgr.IssueAccessTokenWithClaims(ctx, userID, claims)
 Replace the in-memory store with a database:
 
 ```go
-// Implement your own RefreshStore
+// Implement your own RefreshStore — every method of storage.RefreshStore is
+// required. See custom-store/ for a complete implementation of all 11 methods.
+// tokenID is the refresh token itself: never put it in errors, logs, span
+// attributes, or metric labels (ADR-012).
 type PostgresRefreshStore struct {
     db *sql.DB
 }
 
-func (s *PostgresRefreshStore) Store(ctx context.Context, tokenID, userID string, expiresAt time.Time, metadata map[string]interface{}) error {
+func (s *PostgresRefreshStore) Store(ctx context.Context, tokenID, userID string, audience []string, expiresAt time.Time, metadata map[string]interface{}) error {
     // Store in database
 }
+
+// ... Retrieve, Revoke, RevokeAllForUser, RevokeAllForAudience,
+// RevokeAllForUserAndAudience, Cleanup, ListTokens, ListTokensForUser,
+// ListTokensForAudience, Namespace
 
 // Use it in the manager
 store := &PostgresRefreshStore{db: db}

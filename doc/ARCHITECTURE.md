@@ -97,7 +97,7 @@ Build what's needed now:
 
 `internal/testutil` holds shared mocks and test utilities — not part of the public API.
 
-> ✅ **Stable** — v1.0.1 released. API stability guaranteed; semver enforced.
+> ✅ **Stable** — v1.1.2 released. API stability guaranteed; semver enforced.
 
 ---
 
@@ -383,7 +383,7 @@ type Span interface {
 | `*.RevokeAllForUser` | `user_id` |
 | `*.RevokeAllForAudience` | `audience` |
 | `*.RevokeAllForUserAndAudience` | `user_id`, `audience` |
-| `*.Cleanup` | `removed_count` |
+| `*.Cleanup` | `removed_count` (RedisRefreshStore only) |
 | `*.ListTokens` | `cursor_ref`, `cursor_length`, `count`, `result_count` |
 | `*.ListTokensForUser` | `user_id`, `cursor_ref`, `cursor_length`, `count`, `result_count` |
 | `*.ListTokensForAudience` | `audience`, `cursor_ref`, `cursor_length`, `count`, `result_count` |
@@ -1168,6 +1168,6 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 
 ---
 
-**Last Updated**: June 29, 2026
-**Version**: v1.0.1
+**Last Updated**: September 29, 2026
+**Version**: v1.1.2
 **Status**: Stable — all components fully instrumented (KeyManager, DiskKeyStore, RedisKeyStore, MemoryRefreshStore, RedisRefreshStore, Metrics [Prometheus, 18 metrics], Logging [Correlation ID], Distributed Tracing, TokenManager)
