@@ -635,13 +635,16 @@ var _ = Describe("Refresh token leak regression", func() {
 				})
 
 				// paginate walks every page with a page size of 1 so that
-				// non-empty cursors are produced and passed back in.
+				// non-empty cursors are produced and passed back in. Every
+				// returned cursor is recorded, so expectNoLeak checks cursors
+				// handed to the caller as well as observability output.
 				paginate := func(list func(cursor string) (string, error)) {
 					GinkgoHelper()
 					cursor := ""
 					for i := 0; i < 50; i++ {
 						next, err := list(cursor)
 						Expect(err).NotTo(HaveOccurred())
+						rec.add(next)
 						if next == "" {
 							return
 						}

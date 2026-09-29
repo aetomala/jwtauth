@@ -10,13 +10,22 @@
 The cursor type is `string` in all cases, but the encoding differs across backends and
 methods:
 
-- `MemoryRefreshStore.ListTokens` — cursor is the `tokenID` of the last token in the
-  previous page; the next call filters to tokens with `tokenID > cursor` in a
-  deterministically sorted slice.
+- `MemoryRefreshStore.ListTokens` — cursor is the lowercase hex SHA-256 digest of the
+  `tokenID` of the last token in the previous page; the next call resumes at the first
+  token whose digest is greater than the cursor, in a slice sorted by digest. See the
+  note below.
 - `MemoryRefreshStore.ListTokensForUser` / `ListTokensForAudience` — cursor is a base-10
   integer string encoding a positional offset into a sorted token ID slice.
 - `RedisRefreshStore` (all three methods) — cursor is a base-10 uint64 string that
   transparently passes through the value returned by Redis `SCAN` or `SSCAN`.
+
+> **Note (#282):** the `MemoryRefreshStore.ListTokens` keyset changed from the token ID
+> to the token's SHA-256 digest. Token IDs are the refresh tokens themselves, so the
+> previous cursor was a live credential; the digest cursor never contains any part of a
+> token. The guarantee is unchanged: a token present for the whole iteration is returned
+> exactly once, even when tokens are stored or removed between pages. A cursor that is
+> not 64 lowercase hex characters restarts iteration from the beginning and is logged
+> only as `cursor_ref` and `cursor_length`.
 
 Callers receive cursors only from previous list call responses, but the consistency
 guarantees — ordering stability, duplicate visibility, behaviour under concurrent

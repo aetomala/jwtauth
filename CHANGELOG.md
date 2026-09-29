@@ -20,6 +20,23 @@ All notable changes to this project will be documented in this file.
   token in its error text no longer leaks it. `errors.Is` / `errors.As` on the
   returned error are unchanged. Only exact occurrences are replaced; the contract
   still applies (#281)
+- `MemoryRefreshStore.ListTokens` no longer returns a refresh token as its page
+  cursor. Cursors are now the SHA-256 digest of the last token on the page; the
+  exactly-once guarantee for tokens present throughout an iteration is unchanged. An
+  invalid cursor restarts iteration and is logged only as `cursor_ref` /
+  `cursor_length` (#282)
+
+### Performance
+
+- **`MemoryRefreshStore.ListTokens` sorted digest index** — the store keeps each
+  token's SHA-256 digest in its record and a digest-sorted index that is rebuilt
+  only after `Store` adds a token or `Cleanup` removes one, so pagination no
+  longer sorts the full token set on every page. Confirmed via `benchstat`
+  (dev baseline vs. candidate, interleaved, `-count=6`): full pagination improves
+  93% at N=1,000 and 99.4% at N=10,000 (79.5 ms → 0.47 ms), with 92% less memory.
+  `MemoryRefreshStore.Store` costs ~9% more (one SHA-256 per new token), and
+  `ListTokensForUser` / `ListTokensForAudience` 4–11% more — both under the 15%
+  regression gate (#282)
 
 ### Documentation
 

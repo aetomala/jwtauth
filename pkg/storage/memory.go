@@ -5,8 +5,12 @@
 package storage
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,10 +54,12 @@ type MemoryRefreshStore struct {
 	mu sync.RWMutex
 
 	// ===== Storage =====
-	tokens         map[string]*RefreshToken // tokenID  -> token
+	tokens         map[string]memoryRecord // tokenID  -> token and its SHA-256 digest; the digest is the ListTokens keyset
+	sortedDigests  []digestEntry            // digests of tokens in ascending order; valid only while digestsSorted is true
+	digestsSorted  bool                     // cleared by Store (new key) and Cleanup (removal); ListTokens rebuilds sortedDigests under the write lock
 	userTokens     map[string][]string      // userID   -> []tokenID
 	audienceTokens map[string][]string      // audience -> []tokenID
-	expiryHeap     *tokenExpiryHeap          // min-heap of {tokenID, expiresAt}, ordered by expiresAt; lets Cleanup discover expired tokens without ranging tokens
+	expiryHeap     *tokenExpiryHeap         // min-heap of {tokenID, expiresAt}, ordered by expiresAt; lets Cleanup discover expired tokens without ranging tokens
 
 	// ===== Observability =====
 	logger  logging.Logger  // never nil; defaults to NoOpLogger
@@ -79,7 +85,7 @@ func NewMemoryRefreshStore(cfg MemoryRefreshStoreConfig) *MemoryRefreshStore {
 	}
 
 	return &MemoryRefreshStore{
-		tokens:         make(map[string]*RefreshToken),
+		tokens:         make(map[string]memoryRecord),
 		userTokens:     make(map[string][]string),
 		audienceTokens: make(map[string][]string),
 		expiryHeap:     &tokenExpiryHeap{},
@@ -199,6 +205,9 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 		}
 	}
 
+	// Hash outside the lock; the digest keys ListTokens pagination.
+	digest := sha256.Sum256([]byte(tokenID))
+
 	// ===== STEP 4: Acquire Write Lock =====
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -217,7 +226,10 @@ func (m *MemoryRefreshStore) Store(ctx context.Context, tokenID, userID string, 
 		Audience:  audienceCopy,
 		Metadata:  newMetadata,
 	}
-	m.tokens[tokenID] = token
+	if _, exists := m.tokens[tokenID]; !exists {
+		m.digestsSorted = false // new key — ListTokens rebuilds the sorted index
+	}
+	m.tokens[tokenID] = memoryRecord{token: token, digest: digest}
 	m.userTokens[userID] = append(m.userTokens[userID], tokenID)
 	for _, aud := range token.Audience {
 		m.audienceTokens[aud] = append(m.audienceTokens[aud], tokenID)
@@ -297,7 +309,7 @@ func (m *MemoryRefreshStore) Retrieve(ctx context.Context, tokenID string) (*Ref
 		"tokenRef", tokenRef)
 
 	// ===== STEP 4: Look Up Token =====
-	token, found := m.tokens[tokenID]
+	token, found := m.lookup(tokenID)
 	if !found {
 		status = "not_found"
 		errorType = "not_found"
@@ -416,7 +428,7 @@ func (m *MemoryRefreshStore) Revoke(ctx context.Context, tokenID string) error {
 	defer m.mu.Unlock()
 
 	// ===== STEP 4: Look Up Token =====
-	token, found := m.tokens[tokenID]
+	token, found := m.lookup(tokenID)
 	if !found {
 		status = "success" // idempotent: not-found is not an error
 		errorType = ""
@@ -494,7 +506,7 @@ func (m *MemoryRefreshStore) RevokeAllForUser(ctx context.Context, userID string
 	// ===== STEP 4: Revoke All Tokens for User =====
 	tokensIDs := m.userTokens[userID]
 	for _, tokenID := range tokensIDs {
-		if token, exists := m.tokens[tokenID]; exists {
+		if token, exists := m.lookup(tokenID); exists {
 			m.logger.Debug("revoking token for user", ctx,
 				"tokenRef", tokenref.Ref(tokenID),
 				"userID", userID)
@@ -574,7 +586,7 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 	for m.expiryHeap.Len() > 0 && !(*m.expiryHeap)[0].expiresAt.After(now) {
 		entry := heap.Pop(m.expiryHeap).(*expiryEntry)
 
-		token, exists := m.tokens[entry.tokenID]
+		token, exists := m.lookup(entry.tokenID)
 		if !exists || !token.ExpiresAt.Equal(entry.expiresAt) {
 			// Stale entry: the token was already removed, or was
 			// re-stored under the same tokenID with a different expiry —
@@ -587,6 +599,7 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 			"tokenRef", tokenref.Ref(token.TokenID),
 			"expiredAt", token.ExpiresAt)
 		delete(m.tokens, entry.tokenID)
+		m.digestsSorted = false // key removed — ListTokens rebuilds the sorted index
 		m.removeFromUserTokens(token.UserID, entry.tokenID)
 		m.removeFromAudienceTokens(token.Audience, entry.tokenID)
 		count++
@@ -610,9 +623,16 @@ func (m *MemoryRefreshStore) Cleanup(ctx context.Context) (int, error) {
 // exhausted.
 //
 // All tokens are returned regardless of revocation or expiry status — the
-// caller is responsible for filtering. Cursor semantics are best-effort: a
-// non-empty cursor resumes after the last token ID seen on the previous page.
-// Returns the context error if the context is cancelled.
+// caller is responsible for filtering. Tokens are ordered by the SHA-256 digest
+// of their tokenID, and the cursor is the lowercase hex digest of the last token
+// on the previous page — it never contains a token. A token present for the
+// whole iteration is returned exactly once, even when tokens are stored or
+// removed between pages. The digest-sorted index is kept between calls and
+// rebuilt only after Store adds a token or Cleanup removes one — the rebuilding
+// call holds the write lock. A cursor that is not 64 lowercase hex characters is
+// logged as a warning — only as cursor_ref and cursor_length — and iteration
+// restarts from the beginning. Returns the context error if the context is
+// cancelled.
 func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, count int) ([]*RefreshToken, string, error) {
 	ctx, span := m.startSpan(ctx, "ListTokens")
 	defer span.End()
@@ -627,40 +647,54 @@ func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, coun
 		return nil, "", err
 	}
 
-	// ===== STEP 2: Acquire Read Lock and Snapshot =====
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	// ===== STEP 3: Sort Token IDs for Stable Iteration =====
-	tokenIDs := make([]string, 0, len(m.tokens))
-	for id := range m.tokens {
-		tokenIDs = append(tokenIDs, id)
+	// ===== STEP 2: Validate Cursor =====
+	after, resume := parseDigestCursor(cursor)
+	if cursor != "" && !resume {
+		m.logger.Warn("listTokens: invalid cursor — starting from beginning", ctx,
+			"cursor_ref", tokenref.Ref(cursor),
+			"cursor_length", len(cursor))
 	}
-	sort.Strings(tokenIDs)
 
-	// ===== STEP 4: Advance Past Cursor =====
-	start2 := 0
-	if cursor != "" {
-		for i, id := range tokenIDs {
-			if id > cursor {
-				start2 = i
-				break
-			}
-			// cursor was the last element — exhausted
-			start2 = len(tokenIDs)
+	// ===== STEP 3: Acquire Lock =====
+	// The read lock suffices while the sorted index is current. After a Store
+	// or Cleanup changed the key set, this call takes the write lock and holds
+	// it for the whole call, so the index cannot change under the page it builds.
+	m.mu.RLock()
+	if m.digestsSorted {
+		defer m.mu.RUnlock()
+	} else {
+		m.mu.RUnlock()
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		// ===== STEP 4: Rebuild Sorted Index if Stale =====
+		if !m.digestsSorted {
+			m.rebuildSortedDigests()
 		}
 	}
+	entries := m.sortedDigests
 
-	// ===== STEP 5: Build Page =====
-	end := start2 + count
-	if count <= 0 || end > len(tokenIDs) {
-		end = len(tokenIDs)
+	// ===== STEP 5: Advance Past Cursor =====
+	start := 0
+	if resume {
+		start = sort.Search(len(entries), func(i int) bool {
+			return bytes.Compare(entries[i].digest[:], after[:]) > 0
+		})
 	}
-	page := tokenIDs[start2:end]
+
+	// ===== STEP 6: Build Page =====
+	end := start + count
+	if count <= 0 || end > len(entries) {
+		end = len(entries)
+	}
+	page := entries[start:end]
 
 	tokens := make([]*RefreshToken, 0, len(page))
-	for _, id := range page {
-		t := m.tokens[id]
+	for _, entry := range page {
+		t, ok := m.lookup(entry.tokenID)
+		if !ok {
+			continue
+		}
 		cp := &RefreshToken{
 			TokenID:   t.TokenID,
 			UserID:    t.UserID,
@@ -681,13 +715,14 @@ func (m *MemoryRefreshStore) ListTokens(ctx context.Context, cursor string, coun
 		tokens = append(tokens, cp)
 	}
 
-	// ===== STEP 6: Compute Next Cursor =====
+	// ===== STEP 7: Compute Next Cursor =====
+	// Hex-encode only here — the cursor is the digest of the last token on the page.
 	nextCursor := ""
-	if end < len(tokenIDs) {
-		nextCursor = tokenIDs[end-1]
+	if end < len(entries) {
+		nextCursor = hex.EncodeToString(entries[end-1].digest[:])
 	}
 
-	// ===== STEP 7: Log and Return =====
+	// ===== STEP 8: Log and Return =====
 	resultCount := len(tokens)
 	span.SetAttribute("result_count", resultCount)
 	span.SetStatus(tracing.StatusOK, "")
@@ -762,7 +797,7 @@ func (m *MemoryRefreshStore) ListTokensForUser(ctx context.Context, userID strin
 
 	tokens := make([]*RefreshToken, 0, len(page))
 	for _, id := range page {
-		t, ok := m.tokens[id]
+		t, ok := m.lookup(id)
 		if !ok {
 			continue
 		}
@@ -870,7 +905,7 @@ func (m *MemoryRefreshStore) ListTokensForAudience(ctx context.Context, audience
 
 	tokens := make([]*RefreshToken, 0, len(page))
 	for _, id := range page {
-		t, ok := m.tokens[id]
+		t, ok := m.lookup(id)
 		if !ok {
 			continue
 		}
@@ -945,6 +980,65 @@ func (m *MemoryRefreshStore) removeFromAudienceTokens(audiences []string, tokenI
 			delete(m.audienceTokens, aud)
 		}
 	}
+}
+
+// digestEntry pairs a tokenID with its SHA-256 digest for ListTokens ordering.
+type digestEntry struct {
+	digest  [32]byte // SHA-256(tokenID); sort and cursor key
+	tokenID string   // key into MemoryRefreshStore.tokens
+}
+
+// memoryRecord is a stored token together with the SHA-256 digest of its
+// tokenID, computed once at Store. Keeping the digest in the record means the
+// ListTokens keyset can never drift from the token map.
+type memoryRecord struct {
+	token  *RefreshToken // stored token; never exposed — callers receive defensive copies
+	digest [32]byte      // SHA-256(tokenID); ListTokens sort and cursor key
+}
+
+// lookup returns the stored token for tokenID and whether it exists. The
+// caller must hold mu.
+func (m *MemoryRefreshStore) lookup(tokenID string) (*RefreshToken, bool) {
+	rec, ok := m.tokens[tokenID]
+	if !ok {
+		return nil, false
+	}
+	return rec.token, true
+}
+
+// rebuildSortedDigests rebuilds sortedDigests from the digests in tokens,
+// ordered by digest, reusing the slice's capacity, and marks the index
+// current. The caller must hold mu for writing.
+func (m *MemoryRefreshStore) rebuildSortedDigests() {
+	m.sortedDigests = m.sortedDigests[:0]
+	for id, rec := range m.tokens {
+		m.sortedDigests = append(m.sortedDigests, digestEntry{digest: rec.digest, tokenID: id})
+	}
+	slices.SortFunc(m.sortedDigests, func(a, b digestEntry) int {
+		return bytes.Compare(a.digest[:], b.digest[:])
+	})
+	m.digestsSorted = true
+}
+
+// parseDigestCursor decodes a ListTokens cursor. It returns the digest and true
+// only for exactly 64 lowercase hex characters — hex.DecodeString alone would
+// also accept uppercase. It returns false for an empty cursor and for any
+// other value, which the caller treats as an invalid cursor.
+func parseDigestCursor(cursor string) ([32]byte, bool) {
+	var digest [32]byte
+	if len(cursor) != hex.EncodedLen(len(digest)) {
+		return digest, false
+	}
+	for i := 0; i < len(cursor); i++ {
+		c := cursor[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return digest, false
+		}
+	}
+	if _, err := hex.Decode(digest[:], []byte(cursor)); err != nil {
+		return digest, false
+	}
+	return digest, true
 }
 
 // expiryEntry pairs a tokenID with the expiresAt it was pushed onto the
@@ -1037,7 +1131,7 @@ func (m *MemoryRefreshStore) RevokeAllForAudience(ctx context.Context, audience 
 	// ===== STEP 4: Revoke All Tokens for Audience =====
 	count := 0
 	for _, tokenID := range m.audienceTokens[audience] {
-		if token, exists := m.tokens[tokenID]; exists {
+		if token, exists := m.lookup(tokenID); exists {
 			m.logger.Debug("revoking token for audience", ctx,
 				"tokenRef", tokenref.Ref(tokenID),
 				"audience", audience)
@@ -1125,7 +1219,7 @@ func (m *MemoryRefreshStore) RevokeAllForUserAndAudience(ctx context.Context, us
 	// ===== STEP 4: Revoke Tokens for User Within Audience =====
 	count := 0
 	for _, tokenID := range m.audienceTokens[audience] {
-		if token, exists := m.tokens[tokenID]; exists && token.UserID == userID {
+		if token, exists := m.lookup(tokenID); exists && token.UserID == userID {
 			m.logger.Debug("revoking token for user and audience", ctx,
 				"tokenRef", tokenref.Ref(tokenID),
 				"userID", userID,
