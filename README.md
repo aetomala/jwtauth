@@ -1063,16 +1063,18 @@ All spans set `StatusOK` on success and `RecordError` + `StatusError` on failure
 
 ## Performance
 
-Measured on Apple M4 Max, Go 1.26.2, `GOMAXPROCS=16`. Redis numbers use in-process miniredis — add your Redis network RTT for real deployments.
+Measured on Apple M4 Max, Go 1.26.8, `GOMAXPROCS=16` (v1.1.2). Redis numbers use in-process miniredis — add your Redis network RTT for real deployments. Rows marked *parallel* are throughput across 16 goroutines; the others are single-call latency.
 
 | Operation | ns/op | B/op | allocs/op |
 |---|---|---|---|
-| `IssueAccessToken` | 61,640 | 6,624 | 70 |
-| `ValidateAccessToken` | 4,184 | 6,352 | 96 |
-| `IssueTokenPair` | 58,485 | 8,347 | 83 |
-| `RefreshAccessToken` | 702,740 | 10,414 | 111 |
-| `Store` (Memory) | 797 | 2,094 | 22 |
-| `Store` (Redis/miniredis) | 36,330 | 7,004 | 159 |
+| `IssueAccessToken` — parallel | 62,411 | 6,631 | 70 |
+| `ValidateAccessToken` — parallel | 4,498 | 6,352 | 96 |
+| `IssueTokenPair` — parallel | 58,803 | 8,968 | 91 |
+| `RefreshAccessToken` | 719,066 | 10,943 | 120 |
+| `Store` (Memory) | 951 | 2,358 | 24 |
+| `Store` (Redis/miniredis) | 36,139 | 7,152 | 161 |
+
+`RefreshAccessToken`'s figure is one serial RSA-2048 signature (~0.7 ms on this machine); the parallel issuance rows amortize the same signature across 16 cores.
 
 The rotation-under-load benchmark (`BenchmarkValidateAccessToken_DuringRotation`) runs parallel validators against a key manager rotating every 50 ms — quantifying validation latency variance during the key overlap window. This is the library's primary differentiator: zero-downtime key rotation cannot be reproduced by single-key JWT libraries.
 
