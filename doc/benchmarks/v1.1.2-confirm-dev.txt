@@ -1,0 +1,105 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/storage
+cpu: Apple M4 Max
+BenchmarkStore/Memory-16         	 1273551	       937.8 ns/op	    2349 B/op	      24 allocs/op
+BenchmarkRetrieve/Memory-16      	 2399781	       494.7 ns/op	    1456 B/op	      16 allocs/op
+BenchmarkRevoke/Memory-16        	 1000000	      1270 ns/op	    1264 B/op	      13 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/storage	56.645s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/storage
+cpu: Apple M4 Max
+BenchmarkRevokeAllForUser/N=10/Memory-16   	  412076	      3047 ns/op	    3568 B/op	      60 allocs/op
+BenchmarkRevokeAllForUser/N=100/Memory-16  	   56749	     21299 ns/op	   25168 B/op	     510 allocs/op
+BenchmarkRevokeAllForUser/N=1000/Memory-16 	    7648	    172548 ns/op	  241184 B/op	    5011 allocs/op
+BenchmarkRevokeAllForAudience/N=10/Memory-16         	  380659	      3227 ns/op	    3584 B/op	      61 allocs/op
+BenchmarkRevokeAllForAudience/N=100/Memory-16        	   53522	     22100 ns/op	   25184 B/op	     511 allocs/op
+BenchmarkRevokeAllForAudience/N=1000/Memory-16       	    7228	    179347 ns/op	  241200 B/op	    5012 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10/Memory-16  	  358404	      3530 ns/op	    4128 B/op	      73 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100/Memory-16 	   48340	     24501 ns/op	   30048 B/op	     613 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000/Memory-16         	    6667	    192666 ns/op	  289264 B/op	    6014 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/storage	141.285s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/tokens
+cpu: Apple M4 Max
+BenchmarkRevokeRefreshToken-16     	  807768	      1951 ns/op	    2608 B/op	      27 allocs/op
+BenchmarkIntrospectToken-16        	 3291798	       379.4 ns/op	    2752 B/op	      32 allocs/op
+BenchmarkRevokeAllUserTokens/N=10-16         	  277388	      3742 ns/op	    4688 B/op	      70 allocs/op
+BenchmarkRevokeAllUserTokens/N=100-16        	   53098	     22361 ns/op	   26288 B/op	     520 allocs/op
+BenchmarkRevokeAllUserTokens/N=1000-16       	    7915	    173996 ns/op	  242304 B/op	    5021 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/tokens	627.629s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/storage
+cpu: Apple M4 Max
+BenchmarkStore/Memory-16         	 1000000	      1009 ns/op	    2408 B/op	      24 allocs/op
+BenchmarkRetrieve/Memory-16      	 2353159	       506.7 ns/op	    1456 B/op	      16 allocs/op
+BenchmarkRevoke/Memory-16        	 1000000	      1298 ns/op	    1264 B/op	      13 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/storage	56.437s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/storage
+cpu: Apple M4 Max
+BenchmarkRevokeAllForUser/N=10/Memory-16   	  407938	      3113 ns/op	    3568 B/op	      60 allocs/op
+BenchmarkRevokeAllForUser/N=100/Memory-16  	   56936	     21544 ns/op	   25168 B/op	     510 allocs/op
+BenchmarkRevokeAllForUser/N=1000/Memory-16 	    7448	    177888 ns/op	  241184 B/op	    5011 allocs/op
+BenchmarkRevokeAllForAudience/N=10/Memory-16         	  355441	      3272 ns/op	    3584 B/op	      61 allocs/op
+BenchmarkRevokeAllForAudience/N=100/Memory-16        	   53709	     22145 ns/op	   25184 B/op	     511 allocs/op
+BenchmarkRevokeAllForAudience/N=1000/Memory-16       	    7072	    181128 ns/op	  241200 B/op	    5012 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10/Memory-16  	  345382	      3555 ns/op	    4128 B/op	      73 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100/Memory-16 	   47955	     24661 ns/op	   30048 B/op	     613 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000/Memory-16         	    6818	    203337 ns/op	  289264 B/op	    6014 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/storage	142.236s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/tokens
+cpu: Apple M4 Max
+BenchmarkRevokeRefreshToken-16     	  738691	      2028 ns/op	    2608 B/op	      27 allocs/op
+BenchmarkIntrospectToken-16        	 3239192	       379.0 ns/op	    2752 B/op	      32 allocs/op
+BenchmarkRevokeAllUserTokens/N=10-16         	  276592	      3785 ns/op	    4688 B/op	      70 allocs/op
+BenchmarkRevokeAllUserTokens/N=100-16        	   52304	     22628 ns/op	   26288 B/op	     520 allocs/op
+BenchmarkRevokeAllUserTokens/N=1000-16       	    7868	    178938 ns/op	  242304 B/op	    5021 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/tokens	583.852s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/storage
+cpu: Apple M4 Max
+BenchmarkStore/Memory-16         	 1269620	       934.3 ns/op	    2350 B/op	      24 allocs/op
+BenchmarkRetrieve/Memory-16      	 2398255	       498.3 ns/op	    1456 B/op	      16 allocs/op
+BenchmarkRevoke/Memory-16        	 1000000	      1281 ns/op	    1264 B/op	      13 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/storage	56.770s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/storage
+cpu: Apple M4 Max
+BenchmarkRevokeAllForUser/N=10/Memory-16   	  409584	      3048 ns/op	    3568 B/op	      60 allocs/op
+BenchmarkRevokeAllForUser/N=100/Memory-16  	   56686	     21210 ns/op	   25168 B/op	     510 allocs/op
+BenchmarkRevokeAllForUser/N=1000/Memory-16 	    7440	    172969 ns/op	  241184 B/op	    5011 allocs/op
+BenchmarkRevokeAllForAudience/N=10/Memory-16         	  366663	      3270 ns/op	    3584 B/op	      61 allocs/op
+BenchmarkRevokeAllForAudience/N=100/Memory-16        	   52800	     22113 ns/op	   25184 B/op	     511 allocs/op
+BenchmarkRevokeAllForAudience/N=1000/Memory-16       	    7322	    183378 ns/op	  241200 B/op	    5012 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10/Memory-16  	  325998	      3635 ns/op	    4128 B/op	      73 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100/Memory-16 	   48181	     24651 ns/op	   30048 B/op	     613 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000/Memory-16         	    6591	    196054 ns/op	  289264 B/op	    6014 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/storage	139.231s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/tokens
+cpu: Apple M4 Max
+BenchmarkRevokeRefreshToken-16     	  727888	      1990 ns/op	    2608 B/op	      27 allocs/op
+BenchmarkIntrospectToken-16        	 3125011	       384.5 ns/op	    2752 B/op	      32 allocs/op
+BenchmarkRevokeAllUserTokens/N=10-16         	  284029	      3831 ns/op	    4688 B/op	      70 allocs/op
+BenchmarkRevokeAllUserTokens/N=100-16        	   52069	     22710 ns/op	   26288 B/op	     520 allocs/op
+BenchmarkRevokeAllUserTokens/N=1000-16       	    7788	    179395 ns/op	  242304 B/op	    5021 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/tokens	575.151s

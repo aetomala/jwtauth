@@ -76,6 +76,17 @@ All notable changes to this project will be documented in this file.
   GHSA-hwqw-6hv9-q5v6, which was fixed only in v1.1.1; v1.0.x users should upgrade
   to v1.1.x (#280)
 - SECURITY.md: list ADR-012 among the security design decisions (#280)
+- Regenerate `doc/PERFORMANCE.md` and the README performance table from the v1.1.2
+  performance gate (v1.1.1 vs. dev, interleaved, Go 1.26.8); raw results and the gate
+  report are in `doc/benchmarks/` (#297):
+  - Correct the `RefreshAccessToken` description: it revokes the presented refresh
+    token and returns only an access token — it does not store a new refresh token
+  - Mark which benchmarks run in parallel: their ns/op is throughput across 16
+    goroutines, not single-call latency — `RefreshAccessToken`'s ~0.7 ms is one serial
+    RSA-2048 signature, not extra work
+  - Document the in-memory store cost of v1.1.1's `tokenref` digests (16–21% on
+    `Store` / `Retrieve` / `Revoke`, about double on bulk revocation, vs. v1.1.0),
+    accepted as the cost of the GHSA-hwqw-6hv9-q5v6 fix; optimization tracked in #300
 
 ## [v1.1.1] — 2026-09-23
 
