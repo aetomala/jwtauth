@@ -97,7 +97,7 @@ Build what's needed now:
 
 `internal/testutil` holds shared mocks and test utilities — not part of the public API.
 
-> ✅ **Stable** — v1.0.1 released. API stability guaranteed; semver enforced.
+> ✅ **Stable** — v1.1.2 released. API stability guaranteed; semver enforced.
 
 ---
 
@@ -383,10 +383,10 @@ type Span interface {
 | `*.RevokeAllForUser` | `user_id` |
 | `*.RevokeAllForAudience` | `audience` |
 | `*.RevokeAllForUserAndAudience` | `user_id`, `audience` |
-| `*.Cleanup` | `removed_count` |
-| `*.ListTokens` | `cursor_ref` (MemoryRefreshStore) or `cursor` (RedisRefreshStore), `count`, `result_count` |
-| `*.ListTokensForUser` | `user_id`, `cursor`, `count`, `result_count` |
-| `*.ListTokensForAudience` | `audience`, `cursor`, `count`, `result_count` |
+| `*.Cleanup` | `removed_count` (RedisRefreshStore only) |
+| `*.ListTokens` | `cursor_ref`, `cursor_length`, `count`, `result_count` |
+| `*.ListTokensForUser` | `user_id`, `cursor_ref`, `cursor_length`, `count`, `result_count` |
+| `*.ListTokensForAudience` | `audience`, `cursor_ref`, `cursor_length`, `count`, `result_count` |
 
 **Status conventions**: `StatusOK` on all success paths; `RecordError(err)` + `StatusError` on all error paths. Wrapped errors (via `fmt.Errorf("...: %w", err)`) are passed to `RecordError` so the full message propagates to the trace backend.
 
@@ -1129,7 +1129,7 @@ func (c *Component) Operation() error {
 1. Identify what to log/measure
 2. Assign `NoOpLogger` / `NoOpMetrics` / `NoOpTracer` at construction when caller passes `nil`
 3. Add unconditional calls at appropriate points — no nil guards at call sites
-4. Never emit a credential — see [ADR-012](adr/012-credentials-never-in-observability.md). A refresh token is also its own store key, so any value that is, or may be, a refresh token, a refresh-store key, or a cursor derived from one is logged as `"tokenRef"` / traced as `"token_ref"` (or `cursor_ref` / `next_cursor_ref`) using `tokenref.Ref(value)`, computed once per function. `"tokenID"` / `"token_id"` are reserved for an access-token `jti`. Credentials never appear in metric labels or error messages.
+4. Never emit a credential — see [ADR-012](adr/012-credentials-never-in-observability.md). A refresh token is also its own store key, so any value that is, or may be, a refresh token, a refresh-store key, or a cursor derived from one is logged as `"tokenRef"` / traced as `"token_ref"` (or `cursor_ref` / `next_cursor_ref`) using `tokenref.Ref(value)`, computed once per function. `"tokenID"` / `"token_id"` are reserved for an access-token `jti`. Credentials never appear in metric labels or error messages. An error from a `RefreshStore` call that was given the token passes through `scrubStoreError` first, as the first statement of the error branch, before it is logged, traced, or returned.
 5. Write tests verifying logs/metrics — new refresh-token code paths belong in the leak-regression suite (`pkg/tokens/leak_regression_test.go`)
 6. Update documentation
 
@@ -1168,6 +1168,6 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 
 ---
 
-**Last Updated**: June 29, 2026
-**Version**: v1.0.1
+**Last Updated**: October 1, 2026
+**Version**: v1.1.2
 **Status**: Stable — all components fully instrumented (KeyManager, DiskKeyStore, RedisKeyStore, MemoryRefreshStore, RedisRefreshStore, Metrics [Prometheus, 18 metrics], Logging [Correlation ID], Distributed Tracing, TokenManager)

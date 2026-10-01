@@ -4,6 +4,34 @@ This document describes breaking changes and the mechanical steps required to up
 
 ---
 
+## v1.1.1 → v1.1.2
+
+### Store list spans and invalid-cursor warnings no longer carry the caller's cursor
+
+The cursor a caller passes to a `RefreshStore` list method is caller-controlled input and
+could be a refresh token. The stores now emit a non-reversible reference and the cursor's
+length in its place (#283, ADR-012). No Go API changes; no stored data changes; cursor
+values and pagination behaviour are unchanged.
+
+| Where | Old key (raw cursor) | New keys |
+|---|---|---|
+| Span attribute — `RedisRefreshStore.ListTokens` / `ListTokensForUser` / `ListTokensForAudience`, `MemoryRefreshStore.ListTokensForUser` / `ListTokensForAudience` | `cursor` | `cursor_ref`, `cursor_length` |
+| `RedisRefreshStore` "invalid cursor — starting from 0" warning | `cursor` | `cursor_ref`, `cursor_length` |
+
+`MemoryRefreshStore.ListTokens` already emitted `cursor_ref` and now also emits
+`cursor_length`. Store-generated `next_cursor` values in logs are unchanged.
+
+`MemoryRefreshStore.ListTokensForUser` / `ListTokensForAudience` now log a Warn —
+"invalid cursor — starting from beginning", carrying `cursor_ref` and `cursor_length` —
+when given a cursor that is not a non-negative integer, matching the other list methods.
+Iteration still restarts from the beginning (#296).
+
+**Action required:** update trace queries, dashboards, or alerts that read the store-layer
+`cursor` span attribute or the `cursor` field of the invalid-cursor warning. To find a
+specific cursor, compute its reference (`sha256`, first 16 hex characters).
+
+---
+
 ## v1.1.0 → v1.1.1
 
 ### Security: refresh tokens no longer appear in logs or traces — log keys and span attributes renamed

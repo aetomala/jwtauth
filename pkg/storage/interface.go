@@ -29,8 +29,10 @@ import (
 // The tokenID argument is the refresh token itself — a bearer credential.
 // Implementations must not include it, or any value derived from it other than
 // a tokenref-style digest (see ADR-012), in returned error messages, logs, span
-// attributes, or metric labels. The Manager logs store errors verbatim, so a
-// token in an error message reaches observability output.
+// attributes, or metric labels. The Manager replaces exact occurrences of the
+// token in store errors before logging, tracing, or returning them, but the
+// contract still applies — encoded or transformed forms of the token are not
+// detected, and the original error remains reachable through errors.Unwrap.
 type RefreshStore interface {
 	// Store saves a refresh token with its metadata.
 	//

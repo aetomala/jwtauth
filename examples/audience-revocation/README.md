@@ -35,26 +35,33 @@ Issued tokens:
   bob   — audiences: [svc-reports]
 
 === ListTokensForAudience("svc-payments") ===
-  tokenID=3f8a1b2c… userID=alice   audiences=[svc-payments svc-reports] revoked=false
+  tokenRef=22d7dd9d2f9628cc userID=alice  audiences=[svc-payments svc-reports] revoked=false
 
 === RevokeAllForAudience("svc-payments") ===
   Revoked all tokens touching svc-payments
 
 === Atomicity check: refresh with alice's revoked token ===
+time=2026-09-29T12:54:28.025-04:00 level=WARN msg="retrieve: token has been revoked" tokenRef=22d7dd9d2f9628cc userID=alice
+time=2026-09-29T12:54:28.025-04:00 level=WARN msg="refresh token not found in store" error="refresh token has been revoked"
   RefreshAccessToken → ErrTokenRevoked (expected)
 
 === ListTokensForAudience("svc-reports") after svc-payments revocation ===
-  tokenID=3f8a1b2c… userID=alice   audiences=[svc-payments svc-reports] revoked=true
-  tokenID=a7c2d9e1… userID=bob     audiences=[svc-reports] revoked=false
+  tokenRef=22d7dd9d2f9628cc userID=alice  audiences=[svc-payments svc-reports] revoked=true
+  tokenRef=456c48dd52df6331 userID=bob    audiences=[svc-reports] revoked=false
 
 === RevokeAllForUserAndAudience("bob", "svc-reports") ===
   Revoked bob's svc-reports tokens
 
 === Final state: ListTokensForAudience("svc-reports") ===
-  tokenID=3f8a1b2c… userID=alice   audiences=[svc-payments svc-reports] revoked=true
-  tokenID=a7c2d9e1… userID=bob     audiences=[svc-reports] revoked=true
+  tokenRef=22d7dd9d2f9628cc userID=alice  audiences=[svc-payments svc-reports] revoked=true
+  tokenRef=456c48dd52df6331 userID=bob    audiences=[svc-reports] revoked=true
 Done.
 ```
+
+Token references and timestamps differ on every run. Each token is shown as a `tokenRef`
+— the first 16 hex characters of its SHA-256 digest, never any part of the token itself.
+It is the same value jwtauth writes under `tokenRef` in its own logs: the library's `WARN`
+line above carries alice's reference, so a printed token can be matched to log entries.
 
 ## How It Works
 

@@ -1,0 +1,318 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/keys
+cpu: Apple M4 Max
+BenchmarkGetPublicKey_CacheHit-16     	 7434094	       151.6 ns/op	     440 B/op	       6 allocs/op
+BenchmarkGetPublicKey_CacheMiss-16    	    8002	    148104 ns/op	   16290 B/op	     113 allocs/op
+BenchmarkRotateKeys-16                	      44	  48071772 ns/op	  716898 B/op	    6514 allocs/op
+BenchmarkGetCurrentKeyInfo-16         	 7166697	       166.8 ns/op	     504 B/op	       5 allocs/op
+BenchmarkGetJWKS-16                   	 6764726	       176.2 ns/op	     496 B/op	       6 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/keys	8.214s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/storage
+cpu: Apple M4 Max
+BenchmarkStore/Memory-16                   	 1342453	       890.2 ns/op	    2215 B/op	      24 allocs/op
+BenchmarkStore/Redis-16                    	   31496	     37844 ns/op	    7170 B/op	     161 allocs/op
+BenchmarkStore_WithAudience/Memory-16      	 1250208	       950.4 ns/op	    2334 B/op	      25 allocs/op
+BenchmarkStore_WithAudience/Redis-16       	   25364	     44714 ns/op	    8301 B/op	     205 allocs/op
+BenchmarkRetrieve/Memory-16                	 2386326	       502.2 ns/op	    1456 B/op	      16 allocs/op
+BenchmarkRetrieve/Redis-16                 	   45843	     25006 ns/op	    2987 B/op	      74 allocs/op
+BenchmarkRevoke/Memory-16                  	  968160	      1285 ns/op	    1264 B/op	      13 allocs/op
+BenchmarkRevoke/Redis-16                   	   23884	     51253 ns/op	    2222 B/op	      54 allocs/op
+BenchmarkRevokeAllForUser/N=10/Memory-16   	  383785	      3101 ns/op	    3568 B/op	      60 allocs/op
+BenchmarkRevokeAllForUser/N=10/Redis-16    	   14008	     87120 ns/op	    8451 B/op	     286 allocs/op
+BenchmarkRevokeAllForUser/N=100/Memory-16  	   58849	     20367 ns/op	   25168 B/op	     510 allocs/op
+BenchmarkRevokeAllForUser/N=100/Redis-16   	    3015	    407773 ns/op	   67392 B/op	    2449 allocs/op
+BenchmarkRevokeAllForUser/N=1000/Memory-16 	    8076	    170259 ns/op	  241184 B/op	    5011 allocs/op
+BenchmarkRevokeAllForUser/N=1000/Redis-16  	     321	   3704094 ns/op	  644253 B/op	   24055 allocs/op
+BenchmarkRevokeAllForAudience/N=10/Memory-16         	  399025	      3173 ns/op	    3584 B/op	      61 allocs/op
+BenchmarkRevokeAllForAudience/N=10/Redis-16          	   12794	     93889 ns/op	   12125 B/op	     347 allocs/op
+BenchmarkRevokeAllForAudience/N=100/Memory-16        	   54950	     21667 ns/op	   25184 B/op	     511 allocs/op
+BenchmarkRevokeAllForAudience/N=100/Redis-16         	    2617	    470731 ns/op	   86382 B/op	    2595 allocs/op
+BenchmarkRevokeAllForAudience/N=1000/Memory-16       	    7221	    178893 ns/op	  241200 B/op	    5012 allocs/op
+BenchmarkRevokeAllForAudience/N=1000/Redis-16        	     214	   5604565 ns/op	 1282150 B/op	   25000 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10/Memory-16  	  324808	      3586 ns/op	    4128 B/op	      73 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10/Redis-16   	   13729	     89098 ns/op	    8675 B/op	     290 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100/Memory-16 	   48776	     24388 ns/op	   30048 B/op	     613 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100/Redis-16  	    2991	    413305 ns/op	   67614 B/op	    2453 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000/Memory-16         	    6274	    194577 ns/op	  289264 B/op	    6014 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000/Redis-16          	     315	   3796338 ns/op	  644419 B/op	   24059 allocs/op
+BenchmarkListTokens/N=100/Memory-16                           	  181552	      6290 ns/op	   15952 B/op	     107 allocs/op
+BenchmarkListTokens/N=100/Redis-16                            	    2004	    532808 ns/op	  181575 B/op	    6027 allocs/op
+BenchmarkListTokens/N=1000/Memory-16                          	    1780	    669368 ns/op	  308032 B/op	    1124 allocs/op
+BenchmarkListTokens/N=1000/Redis-16                           	     243	   4860508 ns/op	 1737179 B/op	   59150 allocs/op
+BenchmarkListTokens/N=10000/Memory-16                         	      14	  79646893 ns/op	17828512 B/op	   11294 allocs/op
+BenchmarkListTokens/N=10000/Redis-16                          	      24	  48479358 ns/op	18056246 B/op	  590192 allocs/op
+BenchmarkListTokensForUser/N=100/Memory-16                    	  331701	      3669 ns/op	   14240 B/op	     108 allocs/op
+BenchmarkListTokensForUser/N=100/Redis-16                     	    1902	    582479 ns/op	  188479 B/op	    6103 allocs/op
+BenchmarkListTokensForUser/N=1000/Memory-16                   	   27979	     42511 ns/op	  142718 B/op	    1107 allocs/op
+BenchmarkListTokensForUser/N=1000/Redis-16                    	     150	   7388692 ns/op	 2302053 B/op	   60307 allocs/op
+BenchmarkListTokensForUser/N=10000/Memory-16                  	    2952	    409575 ns/op	 1427564 B/op	   11097 allocs/op
+BenchmarkListTokensForUser/N=10000/Redis-16                   	       5	 228270967 ns/op	101173233 B/op	  602895 allocs/op
+BenchmarkListTokensForAudience/N=100/Memory-16                	  264951	      4772 ns/op	   15840 B/op	     208 allocs/op
+BenchmarkListTokensForAudience/N=100/Redis-16                 	    1684	    609776 ns/op	  214974 B/op	    6803 allocs/op
+BenchmarkListTokensForAudience/N=1000/Memory-16               	   22125	     56283 ns/op	  158718 B/op	    2107 allocs/op
+BenchmarkListTokensForAudience/N=1000/Redis-16                	     166	   7130577 ns/op	 2565348 B/op	   67302 allocs/op
+BenchmarkListTokensForAudience/N=10000/Memory-16              	    2125	    568567 ns/op	 1587564 B/op	   21097 allocs/op
+BenchmarkListTokensForAudience/N=10000/Redis-16               	       5	 230944050 ns/op	103804830 B/op	  672839 allocs/op
+BenchmarkCleanup/N=100/Memory-16                              	 2271690	       532.6 ns/op	    1776 B/op	      13 allocs/op
+BenchmarkCleanup/N=100/Redis-16                               	   23650	     50169 ns/op	    5791 B/op	      69 allocs/op
+BenchmarkCleanup/N=1000/Memory-16                             	 2094278	       568.0 ns/op	    1776 B/op	      13 allocs/op
+BenchmarkCleanup/N=1000/Redis-16                              	    8990	    132254 ns/op	   27724 B/op	      70 allocs/op
+BenchmarkCleanup/N=10000/Memory-16                            	 2271265	       516.9 ns/op	    1776 B/op	      13 allocs/op
+BenchmarkCleanup/N=10000/Redis-16                             	    1122	   1146875 ns/op	  248937 B/op	      70 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/storage	386.832s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/tokens
+cpu: Apple M4 Max
+BenchmarkIssueAccessToken-16                        	   18898	     63410 ns/op	    6649 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_WithAudience-16           	   18570	     64838 ns/op	    6830 B/op	      73 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Small-16        	   17546	     68257 ns/op	    8394 B/op	      89 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Medium-16       	   16876	     73982 ns/op	   11479 B/op	     108 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Large-16        	   12687	     94702 ns/op	   29870 B/op	     198 allocs/op
+BenchmarkValidateAccessToken-16                     	  260026	      4478 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessTokenWithClaims-16           	  218473	      5729 ns/op	    9512 B/op	     151 allocs/op
+BenchmarkIssueTokenPair-16                          	   18492	     59416 ns/op	    8795 B/op	      90 allocs/op
+BenchmarkRefreshAccessToken-16                      	    1630	    713643 ns/op	   10944 B/op	     120 allocs/op
+BenchmarkRevokeRefreshToken-16                      	  619713	      2136 ns/op	    2608 B/op	      27 allocs/op
+BenchmarkIntrospectToken-16                         	 3052688	       402.1 ns/op	    2752 B/op	      32 allocs/op
+BenchmarkRevokeAllUserTokens/N=10-16                	  292090	      3720 ns/op	    4688 B/op	      70 allocs/op
+BenchmarkRevokeAllUserTokens/N=100-16               	   55135	     21740 ns/op	   26288 B/op	     520 allocs/op
+BenchmarkRevokeAllUserTokens/N=1000-16              	    8066	    170931 ns/op	  242304 B/op	    5021 allocs/op
+BenchmarkRevokeAllForAudience/N=10-16               	  289958	      3787 ns/op	    4752 B/op	      71 allocs/op
+BenchmarkRevokeAllForAudience/N=100-16              	   54452	     22304 ns/op	   26352 B/op	     521 allocs/op
+BenchmarkRevokeAllForAudience/N=1000-16             	    7857	    178499 ns/op	  242368 B/op	    5023 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10-16        	  269784	      4097 ns/op	    5360 B/op	      85 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100-16       	   48577	     24854 ns/op	   31280 B/op	     625 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000-16      	    7072	    193673 ns/op	  290496 B/op	    6027 allocs/op
+BenchmarkListTokensForAudience/N=100-16             	  267709	      4997 ns/op	   17040 B/op	     218 allocs/op
+BenchmarkListTokensForAudience/N=1000-16            	   20130	     57553 ns/op	  173308 B/op	    2261 allocs/op
+BenchmarkListTokensForAudience/N=10000-16           	    1999	    623160 ns/op	 1736069 B/op	   22691 allocs/op
+BenchmarkValidateAccessToken_DuringRotation-16      	  577696	      8393 ns/op	    6440 B/op	      96 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/NoOp-16  	   21328	     56223 ns/op	    6568 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/PrometheusMetrics-16         	   21282	     56219 ns/op	    6568 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/OtelTracer-16                	   21374	     56198 ns/op	    7048 B/op	      79 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/NoOp-16                   	  578211	      2386 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/OtelTracer-16             	  568154	      2483 ns/op	    6832 B/op	     105 allocs/op
+BenchmarkSign_GolangJWT-16                                              	   21130	     56545 ns/op	    3384 B/op	      30 allocs/op
+BenchmarkVerify_GolangJWT-16                                            	  618026	      2121 ns/op	    4288 B/op	      62 allocs/op
+BenchmarkIssueAccessToken_jwtauth-16                                    	   21236	     56384 ns/op	    6568 B/op	      70 allocs/op
+BenchmarkValidateAccessToken_jwtauth-16                                 	  580012	      2397 ns/op	    6352 B/op	      96 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/tokens	629.585s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/keys
+cpu: Apple M4 Max
+BenchmarkGetPublicKey_CacheHit-16     	 7290998	       154.0 ns/op	     440 B/op	       6 allocs/op
+BenchmarkGetPublicKey_CacheMiss-16    	    7712	    151426 ns/op	   16258 B/op	     113 allocs/op
+BenchmarkRotateKeys-16                	      70	  36954736 ns/op	  519890 B/op	    4724 allocs/op
+BenchmarkGetCurrentKeyInfo-16         	 7120286	       166.5 ns/op	     504 B/op	       5 allocs/op
+BenchmarkGetJWKS-16                   	 6774753	       176.9 ns/op	     496 B/op	       6 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/keys	8.637s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/storage
+cpu: Apple M4 Max
+BenchmarkStore/Memory-16                   	 1308966	       874.5 ns/op	    2220 B/op	      24 allocs/op
+BenchmarkStore/Redis-16                    	   32776	     36157 ns/op	    7134 B/op	     161 allocs/op
+BenchmarkStore_WithAudience/Memory-16      	 1300651	       933.3 ns/op	    2322 B/op	      25 allocs/op
+BenchmarkStore_WithAudience/Redis-16       	   26563	     43427 ns/op	    8284 B/op	     205 allocs/op
+BenchmarkRetrieve/Memory-16                	 2401092	       503.0 ns/op	    1456 B/op	      16 allocs/op
+BenchmarkRetrieve/Redis-16                 	   46501	     24689 ns/op	    2987 B/op	      74 allocs/op
+BenchmarkRevoke/Memory-16                  	 1000000	      1256 ns/op	    1264 B/op	      13 allocs/op
+BenchmarkRevoke/Redis-16                   	   24668	     48708 ns/op	    2223 B/op	      54 allocs/op
+BenchmarkRevokeAllForUser/N=10/Memory-16   	  421509	      3058 ns/op	    3568 B/op	      60 allocs/op
+BenchmarkRevokeAllForUser/N=10/Redis-16    	   13881	     89268 ns/op	    8451 B/op	     286 allocs/op
+BenchmarkRevokeAllForUser/N=100/Memory-16  	   57754	     20457 ns/op	   25168 B/op	     510 allocs/op
+BenchmarkRevokeAllForUser/N=100/Redis-16   	    2884	    412881 ns/op	   67389 B/op	    2449 allocs/op
+BenchmarkRevokeAllForUser/N=1000/Memory-16 	    7653	    172646 ns/op	  241184 B/op	    5011 allocs/op
+BenchmarkRevokeAllForUser/N=1000/Redis-16  	     315	   3874759 ns/op	  644188 B/op	   24055 allocs/op
+BenchmarkRevokeAllForAudience/N=10/Memory-16         	  382335	      3215 ns/op	    3584 B/op	      61 allocs/op
+BenchmarkRevokeAllForAudience/N=10/Redis-16          	   12799	     94668 ns/op	   12125 B/op	     347 allocs/op
+BenchmarkRevokeAllForAudience/N=100/Memory-16        	   54874	     21535 ns/op	   25184 B/op	     511 allocs/op
+BenchmarkRevokeAllForAudience/N=100/Redis-16         	    2583	    473014 ns/op	   86384 B/op	    2595 allocs/op
+BenchmarkRevokeAllForAudience/N=1000/Memory-16       	    7485	    179105 ns/op	  241200 B/op	    5012 allocs/op
+BenchmarkRevokeAllForAudience/N=1000/Redis-16        	     210	   5781626 ns/op	 1282128 B/op	   25001 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10/Memory-16  	  326416	      3562 ns/op	    4128 B/op	      73 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10/Redis-16   	   13501	     89351 ns/op	    8675 B/op	     290 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100/Memory-16 	   48780	     24282 ns/op	   30048 B/op	     613 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100/Redis-16  	    2988	    411255 ns/op	   67611 B/op	    2453 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000/Memory-16         	    6799	    195915 ns/op	  289264 B/op	    6014 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000/Redis-16          	     318	   3827903 ns/op	  644433 B/op	   24059 allocs/op
+BenchmarkListTokens/N=100/Memory-16                           	  182673	      6315 ns/op	   15952 B/op	     107 allocs/op
+BenchmarkListTokens/N=100/Redis-16                            	    1965	    534930 ns/op	  181565 B/op	    6027 allocs/op
+BenchmarkListTokens/N=1000/Memory-16                          	    1759	    668926 ns/op	  308032 B/op	    1124 allocs/op
+BenchmarkListTokens/N=1000/Redis-16                           	     243	   4914111 ns/op	 1737216 B/op	   59150 allocs/op
+BenchmarkListTokens/N=10000/Memory-16                         	      14	  79396101 ns/op	17828512 B/op	   11294 allocs/op
+BenchmarkListTokens/N=10000/Redis-16                          	      24	  48794752 ns/op	18056041 B/op	  590189 allocs/op
+BenchmarkListTokensForUser/N=100/Memory-16                    	  334131	      3589 ns/op	   14240 B/op	     108 allocs/op
+BenchmarkListTokensForUser/N=100/Redis-16                     	    1838	    577421 ns/op	  188482 B/op	    6103 allocs/op
+BenchmarkListTokensForUser/N=1000/Memory-16                   	   28819	     41813 ns/op	  142718 B/op	    1107 allocs/op
+BenchmarkListTokensForUser/N=1000/Redis-16                    	     171	   7153352 ns/op	 2301859 B/op	   60305 allocs/op
+BenchmarkListTokensForUser/N=10000/Memory-16                  	    2954	    409702 ns/op	 1427564 B/op	   11097 allocs/op
+BenchmarkListTokensForUser/N=10000/Redis-16                   	       5	 225172108 ns/op	101169820 B/op	  602845 allocs/op
+BenchmarkListTokensForAudience/N=100/Memory-16                	  263649	      4841 ns/op	   15840 B/op	     208 allocs/op
+BenchmarkListTokensForAudience/N=100/Redis-16                 	    1794	    604430 ns/op	  214944 B/op	    6803 allocs/op
+BenchmarkListTokensForAudience/N=1000/Memory-16               	   21390	     56095 ns/op	  158718 B/op	    2107 allocs/op
+BenchmarkListTokensForAudience/N=1000/Redis-16                	     163	   7440293 ns/op	 2565705 B/op	   67305 allocs/op
+BenchmarkListTokensForAudience/N=10000/Memory-16              	    2126	    559492 ns/op	 1587564 B/op	   21097 allocs/op
+BenchmarkListTokensForAudience/N=10000/Redis-16               	       5	 229528067 ns/op	103802952 B/op	  672813 allocs/op
+BenchmarkCleanup/N=100/Memory-16                              	 2273836	       549.4 ns/op	    1776 B/op	      13 allocs/op
+BenchmarkCleanup/N=100/Redis-16                               	   23926	     51265 ns/op	    5791 B/op	      69 allocs/op
+BenchmarkCleanup/N=1000/Memory-16                             	 2082151	       575.7 ns/op	    1776 B/op	      13 allocs/op
+BenchmarkCleanup/N=1000/Redis-16                              	    9044	    131573 ns/op	   27723 B/op	      70 allocs/op
+BenchmarkCleanup/N=10000/Memory-16                            	 2302129	       518.0 ns/op	    1776 B/op	      13 allocs/op
+BenchmarkCleanup/N=10000/Redis-16                             	    1120	   1141849 ns/op	  248935 B/op	      70 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/storage	389.410s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/tokens
+cpu: Apple M4 Max
+BenchmarkIssueAccessToken-16                        	   19588	     61607 ns/op	    6624 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_WithAudience-16           	   19200	     64103 ns/op	    6806 B/op	      73 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Small-16        	   17998	     67390 ns/op	    8365 B/op	      89 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Medium-16       	   15420	     79913 ns/op	   11604 B/op	     109 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Large-16        	   12674	     94689 ns/op	   29815 B/op	     197 allocs/op
+BenchmarkValidateAccessToken-16                     	  249092	      4463 ns/op	    6353 B/op	      96 allocs/op
+BenchmarkValidateAccessTokenWithClaims-16           	  206749	      5659 ns/op	    9512 B/op	     151 allocs/op
+BenchmarkIssueTokenPair-16                          	   18088	     60703 ns/op	    8797 B/op	      90 allocs/op
+BenchmarkRefreshAccessToken-16                      	    1627	    713067 ns/op	   10949 B/op	     120 allocs/op
+BenchmarkRevokeRefreshToken-16                      	  699889	      1896 ns/op	    2608 B/op	      27 allocs/op
+BenchmarkIntrospectToken-16                         	 3111416	       402.1 ns/op	    2752 B/op	      32 allocs/op
+BenchmarkRevokeAllUserTokens/N=10-16                	  290325	      3658 ns/op	    4688 B/op	      70 allocs/op
+BenchmarkRevokeAllUserTokens/N=100-16               	   55231	     21705 ns/op	   26288 B/op	     520 allocs/op
+BenchmarkRevokeAllUserTokens/N=1000-16              	    8109	    174415 ns/op	  242304 B/op	    5021 allocs/op
+BenchmarkRevokeAllForAudience/N=10-16               	  301982	      3717 ns/op	    4752 B/op	      71 allocs/op
+BenchmarkRevokeAllForAudience/N=100-16              	   55066	     22246 ns/op	   26352 B/op	     521 allocs/op
+BenchmarkRevokeAllForAudience/N=1000-16             	    8203	    176545 ns/op	  242368 B/op	    5023 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10-16        	  257530	      4201 ns/op	    5360 B/op	      85 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100-16       	   48717	     25269 ns/op	   31280 B/op	     625 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000-16      	    7122	    203512 ns/op	  290496 B/op	    6027 allocs/op
+BenchmarkListTokensForAudience/N=100-16             	  271762	      5087 ns/op	   17040 B/op	     218 allocs/op
+BenchmarkListTokensForAudience/N=1000-16            	   19669	     57849 ns/op	  173308 B/op	    2261 allocs/op
+BenchmarkListTokensForAudience/N=10000-16           	    1917	    667429 ns/op	 1736069 B/op	   22691 allocs/op
+BenchmarkValidateAccessToken_DuringRotation-16      	  562340	      8168 ns/op	    6436 B/op	      96 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/NoOp-16  	   20463	     57770 ns/op	    6568 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/PrometheusMetrics-16         	   21253	     56654 ns/op	    6568 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/OtelTracer-16                	   21297	     56453 ns/op	    7048 B/op	      79 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/NoOp-16                   	  453997	      2402 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/OtelTracer-16             	  564765	      2488 ns/op	    6832 B/op	     105 allocs/op
+BenchmarkSign_GolangJWT-16                                              	   20886	     56894 ns/op	    3384 B/op	      30 allocs/op
+BenchmarkVerify_GolangJWT-16                                            	  615913	      2154 ns/op	    4288 B/op	      62 allocs/op
+BenchmarkIssueAccessToken_jwtauth-16                                    	   20932	     56500 ns/op	    6568 B/op	      70 allocs/op
+BenchmarkValidateAccessToken_jwtauth-16                                 	  577992	      2394 ns/op	    6352 B/op	      96 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/tokens	680.740s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/keys
+cpu: Apple M4 Max
+BenchmarkGetPublicKey_CacheHit-16     	 7522574	       152.9 ns/op	     440 B/op	       6 allocs/op
+BenchmarkGetPublicKey_CacheMiss-16    	    8324	    145300 ns/op	   16274 B/op	     113 allocs/op
+BenchmarkRotateKeys-16                	      30	  50590411 ns/op	  724823 B/op	    6585 allocs/op
+BenchmarkGetCurrentKeyInfo-16         	 7164595	       167.3 ns/op	     504 B/op	       5 allocs/op
+BenchmarkGetJWKS-16                   	 6837942	       177.3 ns/op	     496 B/op	       6 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/keys	8.539s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/storage
+cpu: Apple M4 Max
+BenchmarkStore/Memory-16                   	 1359874	       882.1 ns/op	    2212 B/op	      24 allocs/op
+BenchmarkStore/Redis-16                    	   31750	     36212 ns/op	    7160 B/op	     161 allocs/op
+BenchmarkStore_WithAudience/Memory-16      	 1281678	       930.4 ns/op	    2327 B/op	      25 allocs/op
+BenchmarkStore_WithAudience/Redis-16       	   26353	     43730 ns/op	    8279 B/op	     205 allocs/op
+BenchmarkRetrieve/Memory-16                	 2408562	       499.7 ns/op	    1456 B/op	      16 allocs/op
+BenchmarkRetrieve/Redis-16                 	   46557	     24449 ns/op	    2987 B/op	      74 allocs/op
+BenchmarkRevoke/Memory-16                  	 1000000	      1274 ns/op	    1264 B/op	      13 allocs/op
+BenchmarkRevoke/Redis-16                   	   23634	     51569 ns/op	    2223 B/op	      54 allocs/op
+BenchmarkRevokeAllForUser/N=10/Memory-16   	  380883	      3104 ns/op	    3568 B/op	      60 allocs/op
+BenchmarkRevokeAllForUser/N=10/Redis-16    	   13760	     92901 ns/op	    8451 B/op	     286 allocs/op
+BenchmarkRevokeAllForUser/N=100/Memory-16  	   58582	     20580 ns/op	   25168 B/op	     510 allocs/op
+BenchmarkRevokeAllForUser/N=100/Redis-16   	    2932	    419887 ns/op	   67389 B/op	    2449 allocs/op
+BenchmarkRevokeAllForUser/N=1000/Memory-16 	    7552	    183239 ns/op	  241184 B/op	    5011 allocs/op
+BenchmarkRevokeAllForUser/N=1000/Redis-16  	     302	   3918109 ns/op	  644187 B/op	   24055 allocs/op
+BenchmarkRevokeAllForAudience/N=10/Memory-16         	  330121	      3385 ns/op	    3584 B/op	      61 allocs/op
+BenchmarkRevokeAllForAudience/N=10/Redis-16          	   12648	     97024 ns/op	   12125 B/op	     347 allocs/op
+BenchmarkRevokeAllForAudience/N=100/Memory-16        	   54658	     21999 ns/op	   25184 B/op	     511 allocs/op
+BenchmarkRevokeAllForAudience/N=100/Redis-16         	    2274	    488138 ns/op	   86372 B/op	    2595 allocs/op
+BenchmarkRevokeAllForAudience/N=1000/Memory-16       	    7328	    182203 ns/op	  241200 B/op	    5012 allocs/op
+BenchmarkRevokeAllForAudience/N=1000/Redis-16        	     207	   5814806 ns/op	 1282109 B/op	   25000 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10/Memory-16  	  327361	      3605 ns/op	    4128 B/op	      73 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10/Redis-16   	   13576	     89363 ns/op	    8674 B/op	     290 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100/Memory-16 	   48686	     24401 ns/op	   30048 B/op	     613 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100/Redis-16  	    2937	    418382 ns/op	   67611 B/op	    2453 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000/Memory-16         	    6608	    197994 ns/op	  289264 B/op	    6014 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000/Redis-16          	     313	   3864279 ns/op	  644395 B/op	   24059 allocs/op
+BenchmarkListTokens/N=100/Memory-16                           	  182382	      6601 ns/op	   15952 B/op	     107 allocs/op
+BenchmarkListTokens/N=100/Redis-16                            	    1980	    553639 ns/op	  181587 B/op	    6027 allocs/op
+BenchmarkListTokens/N=1000/Memory-16                          	    1760	    691643 ns/op	  308032 B/op	    1124 allocs/op
+BenchmarkListTokens/N=1000/Redis-16                           	     235	   5036039 ns/op	 1737372 B/op	   59151 allocs/op
+BenchmarkListTokens/N=10000/Memory-16                         	      14	  79218321 ns/op	17828512 B/op	   11294 allocs/op
+BenchmarkListTokens/N=10000/Redis-16                          	      24	  49054134 ns/op	18056672 B/op	  590194 allocs/op
+BenchmarkListTokensForUser/N=100/Memory-16                    	  331864	      3672 ns/op	   14240 B/op	     108 allocs/op
+BenchmarkListTokensForUser/N=100/Redis-16                     	    1828	    591554 ns/op	  188474 B/op	    6103 allocs/op
+BenchmarkListTokensForUser/N=1000/Memory-16                   	   28465	     42757 ns/op	  142718 B/op	    1107 allocs/op
+BenchmarkListTokensForUser/N=1000/Redis-16                    	     171	   6958611 ns/op	 2301624 B/op	   60303 allocs/op
+BenchmarkListTokensForUser/N=10000/Memory-16                  	    2948	    406323 ns/op	 1427564 B/op	   11097 allocs/op
+BenchmarkListTokensForUser/N=10000/Redis-16                   	       5	 225178075 ns/op	101171640 B/op	  602864 allocs/op
+BenchmarkListTokensForAudience/N=100/Memory-16                	  265002	      4799 ns/op	   15840 B/op	     208 allocs/op
+BenchmarkListTokensForAudience/N=100/Redis-16                 	    1789	    610820 ns/op	  214946 B/op	    6803 allocs/op
+BenchmarkListTokensForAudience/N=1000/Memory-16               	   21901	     55734 ns/op	  158718 B/op	    2107 allocs/op
+BenchmarkListTokensForAudience/N=1000/Redis-16                	     166	   7177647 ns/op	 2565666 B/op	   67305 allocs/op
+BenchmarkListTokensForAudience/N=10000/Memory-16              	    2127	    564892 ns/op	 1587564 B/op	   21097 allocs/op
+BenchmarkListTokensForAudience/N=10000/Redis-16               	       5	 229944800 ns/op	103803977 B/op	  672840 allocs/op
+BenchmarkCleanup/N=100/Memory-16                              	 2247496	       524.6 ns/op	    1776 B/op	      13 allocs/op
+BenchmarkCleanup/N=100/Redis-16                               	   23724	     51295 ns/op	    5791 B/op	      69 allocs/op
+BenchmarkCleanup/N=1000/Memory-16                             	 2143591	       569.9 ns/op	    1776 B/op	      13 allocs/op
+BenchmarkCleanup/N=1000/Redis-16                              	    8707	    132827 ns/op	   27724 B/op	      70 allocs/op
+BenchmarkCleanup/N=10000/Memory-16                            	 2302270	       521.2 ns/op	    1776 B/op	      13 allocs/op
+BenchmarkCleanup/N=10000/Redis-16                             	    1111	   1153652 ns/op	  248936 B/op	      70 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/storage	384.789s
+goos: darwin
+goarch: arm64
+pkg: github.com/aetomala/jwtauth/pkg/tokens
+cpu: Apple M4 Max
+BenchmarkIssueAccessToken-16                        	   18088	     62194 ns/op	    6626 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_WithAudience-16           	   18690	     64548 ns/op	    6818 B/op	      73 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Small-16        	   18198	     67143 ns/op	    8380 B/op	      89 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Medium-16       	   15115	     78551 ns/op	   11576 B/op	     108 allocs/op
+BenchmarkIssueAccessTokenWithClaims/Large-16        	   12535	     96048 ns/op	   29986 B/op	     198 allocs/op
+BenchmarkValidateAccessToken-16                     	  260989	      4591 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessTokenWithClaims-16           	  217621	      5702 ns/op	    9512 B/op	     151 allocs/op
+BenchmarkIssueTokenPair-16                          	   18487	     58718 ns/op	    8803 B/op	      90 allocs/op
+BenchmarkRefreshAccessToken-16                      	    1621	    721738 ns/op	   10947 B/op	     120 allocs/op
+BenchmarkRevokeRefreshToken-16                      	  709687	      2033 ns/op	    2608 B/op	      27 allocs/op
+BenchmarkIntrospectToken-16                         	 3066156	       399.8 ns/op	    2752 B/op	      32 allocs/op
+BenchmarkRevokeAllUserTokens/N=10-16                	  285603	      3757 ns/op	    4688 B/op	      70 allocs/op
+BenchmarkRevokeAllUserTokens/N=100-16               	   54499	     21840 ns/op	   26288 B/op	     520 allocs/op
+BenchmarkRevokeAllUserTokens/N=1000-16              	    7819	    173778 ns/op	  242304 B/op	    5021 allocs/op
+BenchmarkRevokeAllForAudience/N=10-16               	  291570	      3796 ns/op	    4752 B/op	      71 allocs/op
+BenchmarkRevokeAllForAudience/N=100-16              	   54123	     22597 ns/op	   26352 B/op	     521 allocs/op
+BenchmarkRevokeAllForAudience/N=1000-16             	    7784	    182960 ns/op	  242368 B/op	    5023 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=10-16        	  268755	      4171 ns/op	    5360 B/op	      85 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=100-16       	   47698	     25302 ns/op	   31280 B/op	     625 allocs/op
+BenchmarkRevokeAllForUserAndAudience/N=1000-16      	    7317	    204039 ns/op	  290496 B/op	    6027 allocs/op
+BenchmarkListTokensForAudience/N=100-16             	  263817	      5066 ns/op	   17040 B/op	     218 allocs/op
+BenchmarkListTokensForAudience/N=1000-16            	   19880	     57953 ns/op	  173308 B/op	    2261 allocs/op
+BenchmarkListTokensForAudience/N=10000-16           	    2065	    630009 ns/op	 1736069 B/op	   22691 allocs/op
+BenchmarkValidateAccessToken_DuringRotation-16      	  574532	      8249 ns/op	    6437 B/op	      96 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/NoOp-16  	   20980	     56404 ns/op	    6568 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/PrometheusMetrics-16         	   21325	     56841 ns/op	    6568 B/op	      70 allocs/op
+BenchmarkIssueAccessToken_ObservabilityTax/OtelTracer-16                	   20898	     56732 ns/op	    7048 B/op	      79 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/NoOp-16                   	  571366	      2445 ns/op	    6352 B/op	      96 allocs/op
+BenchmarkValidateAccessToken_ObservabilityTax/OtelTracer-16             	  569100	      2487 ns/op	    6832 B/op	     105 allocs/op
+BenchmarkSign_GolangJWT-16                                              	   21057	     59561 ns/op	    3384 B/op	      30 allocs/op
+BenchmarkVerify_GolangJWT-16                                            	  583111	      2154 ns/op	    4288 B/op	      62 allocs/op
+BenchmarkIssueAccessToken_jwtauth-16                                    	   21224	     56393 ns/op	    6568 B/op	      70 allocs/op
+BenchmarkValidateAccessToken_jwtauth-16                                 	  577108	      2392 ns/op	    6352 B/op	      96 allocs/op
+PASS
+ok  	github.com/aetomala/jwtauth/pkg/tokens	688.707s

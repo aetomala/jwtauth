@@ -7,6 +7,7 @@ package tokenref
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 )
 
 // refLen is the number of hex characters kept from the SHA-256 digest.
@@ -20,4 +21,14 @@ func Ref(token string) string {
 	}
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])[:refLen]
+}
+
+// Scrub returns text with every exact occurrence of token replaced by Ref(token).
+// It returns text unchanged if token is "" or does not occur in text. Encoded or
+// otherwise transformed forms of token are not detected.
+func Scrub(text, token string) string {
+	if token == "" || !strings.Contains(text, token) {
+		return text
+	}
+	return strings.ReplaceAll(text, token, Ref(token))
 }

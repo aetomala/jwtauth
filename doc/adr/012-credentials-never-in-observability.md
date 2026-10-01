@@ -80,8 +80,11 @@ retention, and consider rotating outstanding refresh tokens.
 
 **Redis integer cursors lose direct readability at the Manager layer.** The Manager
 cannot know whether a store's cursor encodes a token, so it emits `cursor_ref` for every
-backend. `RedisRefreshStore` still emits its numeric `SCAN` cursor under `cursor` at the
-store layer.
+backend. The stores do the same for the cursor a caller passes in (#283): it is
+caller-controlled input that could be a token, so every store list span and
+invalid-cursor warning carries `cursor_ref` and `cursor_length`, never the value. Cursors the stores
+generate themselves — Redis `SCAN` positions and in-memory integer offsets, logged
+under `next_cursor` — never contain a token and are emitted as-is.
 
 **Stored data is unchanged.** Tokens are still stored and keyed as-is; hashing tokens at
 rest is a separate decision outside this ADR. Because stored keys remain raw tokens,
@@ -91,9 +94,15 @@ rest.
 
 **The rule extends to `RefreshStore` implementations.** The `RefreshStore` interface
 contract forbids a `tokenID`, or any value derived from it other than a `tokenref`-style
-digest, in returned errors, logs, span attributes, or metric labels. The Manager logs
-store errors verbatim, so a custom store that embeds the token in its error text leaks
-it; the library does not currently redact third-party error text.
+digest, in returned errors, logs, span attributes, or metric labels. As a second line of
+defence, the Manager scrubs every store error it receives from a call that was given the
+token: each exact occurrence of the token in the error text is replaced by its
+`tokenref.Ref` digest before the error is logged, recorded on a span, or returned
+(`scrubStoreError`, #281). The scrubbed error still unwraps to the original, so
+`errors.Is` / `errors.As` are unaffected. Scrubbing has limits, and the contract
+still applies: encoded or otherwise transformed forms of the token are not detected,
+and a caller that unwraps the error and prints the original cause sees the store's
+unscrubbed text.
 
 **Enforced by test.** `pkg/tokens/leak_regression_test.go` wires recording
 implementations of `logging.Logger`, `tracing.Tracer`, and `metrics.Metrics` into

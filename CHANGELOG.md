@@ -12,6 +12,84 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v1.1.2] — 2026-10-01
+
+### Security
+
+- `tokens.Manager` now replaces the refresh token with its `tokenref` digest in
+  `RefreshStore` errors before logging them, recording them on spans, or returning
+  them. A custom store that violates the `RefreshStore` contract by embedding the
+  token in its error text no longer leaks it. `errors.Is` / `errors.As` on the
+  returned error are unchanged. Only exact occurrences are replaced; the contract
+  still applies (#281)
+- `MemoryRefreshStore.ListTokens` no longer returns a refresh token as its page
+  cursor. Cursors are now the SHA-256 digest of the last token on the page; the
+  exactly-once guarantee for tokens present throughout an iteration is unchanged. An
+  invalid cursor restarts iteration and is logged only as `cursor_ref` /
+  `cursor_length` (#282)
+- `RefreshStore` list methods no longer emit the caller-supplied cursor. The span
+  attribute `cursor` on `RedisRefreshStore.ListTokens*` and
+  `MemoryRefreshStore.ListTokensForUser` / `ListTokensForAudience`, and the `cursor`
+  field of the Redis "invalid cursor" warning, are replaced by `cursor_ref` and
+  `cursor_length`, so a token passed as a cursor never reaches logs or traces.
+  Operators with queries on the old keys should update them — see UPGRADING.md (#283)
+
+### Performance
+
+- **`MemoryRefreshStore.ListTokens` sorted digest index** — the store keeps each
+  token's SHA-256 digest in its record and a digest-sorted index that is rebuilt
+  only after `Store` adds a token or `Cleanup` removes one, so pagination no
+  longer sorts the full token set on every page. Confirmed via `benchstat`
+  (dev baseline vs. candidate, interleaved, `-count=6`): full pagination improves
+  93% at N=1,000 and 99.4% at N=10,000 (79.5 ms → 0.47 ms), with 92% less memory.
+  `MemoryRefreshStore.Store` costs ~9% more (one SHA-256 per new token), and
+  `ListTokensForUser` / `ListTokensForAudience` 4–11% more — both under the 15%
+  regression gate (#282)
+
+### Fixed
+
+- `MemoryRefreshStore.ListTokensForUser` / `ListTokensForAudience` log a warning — as
+  `cursor_ref` / `cursor_length`, never the value — when given a cursor that is not a
+  non-negative integer, matching the other list methods; iteration still restarts from
+  the beginning (#296)
+
+### Documentation
+
+- Reconcile documentation with the code (#285):
+  - README spec counts and per-suite breakdown (1095 specs: 1035 unit + 60
+    integration), with the TokenRef suite and the credential leak-regression,
+    digest-index, and invalid-cursor specs added to the breakdown
+  - Re-measured coverage figures
+  - Version fields and the ARCHITECTURE banner and footer now name v1.1.2
+  - Roadmap: new v1.1.1 and v1.1.2 entries; v1.2.0 lists the milestone issues; PostgreSQL
+    `RefreshStore` moved to Future
+  - Correlation example samples captured from a real run: log levels, order, and
+    fields; startup output; the refresh token shown as an opaque value, not a JWT
+  - ARCHITECTURE notes that only `RedisRefreshStore.Cleanup` sets `removed_count`
+  - The Postgres `Store` sample gains the `audience` parameter
+- The `token-audit` and `audience-revocation` examples print a `tokenRef` digest
+  (first 16 hex characters of SHA-256, matching the library's `tokenRef` log field)
+  instead of the first 8 characters of each refresh token, and their README sample
+  output is now captured from real runs (#284)
+- Fix the `audience-revocation` example exiting at its atomicity check: it tested for
+  `storage.ErrTokenRevoked`, but `Manager.RefreshAccessToken` returns
+  `tokens.ErrTokenRevoked` (#284)
+- SECURITY.md: v1.0.x is no longer supported — support ended with
+  GHSA-hwqw-6hv9-q5v6, which was fixed only in v1.1.1; v1.0.x users should upgrade
+  to v1.1.x (#280)
+- SECURITY.md: list ADR-012 among the security design decisions (#280)
+- Regenerate `doc/PERFORMANCE.md` and the README performance table from the v1.1.2
+  performance gate (v1.1.1 vs. dev, interleaved, Go 1.26.8); raw results and the gate
+  report are in `doc/benchmarks/` (#297):
+  - Correct the `RefreshAccessToken` description: it revokes the presented refresh
+    token and returns only an access token — it does not store a new refresh token
+  - Mark which benchmarks run in parallel: their ns/op is throughput across 16
+    goroutines, not single-call latency — `RefreshAccessToken`'s ~0.7 ms is one serial
+    RSA-2048 signature, not extra work
+  - Document the in-memory store cost of v1.1.1's `tokenref` digests (16–21% on
+    `Store` / `Retrieve` / `Revoke`, about double on bulk revocation, vs. v1.1.0),
+    accepted as the cost of the GHSA-hwqw-6hv9-q5v6 fix; optimization tracked in #300
+
 ## [v1.1.1] — 2026-09-23
 
 ### Security
