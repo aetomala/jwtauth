@@ -1270,6 +1270,10 @@ Hardening and documentation follow-ups from the v1.1.1 security review:
 - Examples print `tokenRef` digests instead of token prefixes (#284); documentation
   reconciled with the code (#285); SECURITY.md support policy updated — v1.0.x
   unsupported (#280)
+- In-memory `ListTokensForUser` / `ListTokensForAudience` warn on an invalid cursor
+  instead of silently restarting (#296)
+- Performance baselines refreshed from the v1.1.2 gate, including the in-memory cost of
+  v1.1.1's `tokenRef` digests; optimization tracked for v1.2.0 (#297, #300)
 - 1095 specs (1035 unit + 60 integration), race-detection clean
 
 ### v1.2.0 (Planned)
@@ -1388,4 +1392,4 @@ Built by a Senior Platform Engineer with deep experience in distributed systems 
 **Version**: v1.1.2
 **Components**: KeyManager ✅ | TokenManager ✅ | RefreshStore (Memory + Redis) ✅ | Metrics (Prometheus) ✅ | Logging (Correlation ID) ✅ | Tracing ✅
 **Test Coverage**: 1095 specs (1035 unit + 60 integration) — KeyManager ~82%, TokenManager ~92%, RefreshStore ~86%, Metrics 100%, Logging 100%, Tracing ~84%, TokenRef 100% — all passing, race-detection enabled
-**Last Updated**: September 29, 2026
+**Last Updated**: October 1, 2026

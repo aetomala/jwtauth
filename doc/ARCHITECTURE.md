@@ -1168,6 +1168,6 @@ Key design decisions are captured in `doc/adr/`. Each ADR documents the context,
 
 ---
 
-**Last Updated**: September 29, 2026
+**Last Updated**: October 1, 2026
 **Version**: v1.1.2
 **Status**: Stable — all components fully instrumented (KeyManager, DiskKeyStore, RedisKeyStore, MemoryRefreshStore, RedisRefreshStore, Metrics [Prometheus, 18 metrics], Logging [Correlation ID], Distributed Tracing, TokenManager)

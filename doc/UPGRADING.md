@@ -21,6 +21,11 @@ values and pagination behaviour are unchanged.
 `MemoryRefreshStore.ListTokens` already emitted `cursor_ref` and now also emits
 `cursor_length`. Store-generated `next_cursor` values in logs are unchanged.
 
+`MemoryRefreshStore.ListTokensForUser` / `ListTokensForAudience` now log a Warn —
+"invalid cursor — starting from beginning", carrying `cursor_ref` and `cursor_length` —
+when given a cursor that is not a non-negative integer, matching the other list methods.
+Iteration still restarts from the beginning (#296).
+
 **Action required:** update trace queries, dashboards, or alerts that read the store-layer
 `cursor` span attribute or the `cursor` field of the invalid-cursor warning. To find a
 specific cursor, compute its reference (`sha256`, first 16 hex characters).
